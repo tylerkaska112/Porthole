@@ -1,0 +1,84 @@
+--- /tmp/server_window_ios.c.before-0160	2026-10-18 07:08:27
++++ vendor/Madeira/build/wineserver/window_ios.c	2026-10-18 07:08:49
+@@ -22,6 +22,7 @@
+ 
+ #include <assert.h>
+ #include <stdarg.h>
++#include <stdio.h>
+ 
+ #include "ntstatus.h"
+ #include "windef.h"
+@@ -30,6 +31,7 @@
+ 
+ #include "object.h"
+ #include "file.h"
++#include "handle.h"
+ #include "request.h"
+ #include "thread.h"
+ #include "process.h"
+@@ -613,6 +615,49 @@
+ }
+ 
+ /* create a new window structure (note: the window is not linked in the window tree) */
++#ifdef WINE_IOS
++/* ml1402 / patch 0160: a thread created late (the SDL3 "SDLRawInput" thread of Counter-Strike 2 makes a message-only window and ends when that fails) can find itself with no
++ * usable desktop handle: create_window then fails with STATUS_INVALID_HANDLE (last error 6) and the program never registers raw mouse input, so its look stops at the screen
++ * edge. Give such a thread the desktop its process uses, or the input desktop (the only one there is on iOS), instead of failing. Logs what it did. */
++static struct desktop *ml1402_adopt_desktop( struct thread *thread, unsigned int access )
++{
++    struct process *process = thread->process;
++    struct winstation *winstation;
++    struct desktop *desktop;
++    obj_handle_t handle;
++    static unsigned said;
++    int say = said++ < 20;
++
++    if (say) fprintf( stderr, "[desktop-diag] ml1402 thread %04x of process %04x has no usable desktop (thread handle %x, process handle %x)\n",
++                      (unsigned)thread->id, (unsigned)process->id, (unsigned)thread->desktop, (unsigned)process->desktop );
++    clear_error();
++    if (process->desktop && (desktop = get_desktop_obj( process, process->desktop, access )))
++    {
++        thread->desktop = 0;
++        set_thread_default_desktop( thread, desktop, process->desktop );
++        if (say) { fprintf( stderr, "[desktop-diag] ml1402 adopted the process's desktop\n" ); fflush( stderr ); }
++        return desktop;
++    }
++    clear_error();
++    if ((winstation = get_visible_winstation()) && (desktop = get_input_desktop( winstation )))
++    {
++        if ((handle = alloc_handle( process, desktop, 0xf01ff /* DESKTOP_ALL_ACCESS */, 0 )))
++        {
++            process->desktop = 0;
++            thread->desktop = 0;
++            set_process_default_desktop( process, desktop, handle );
++            if (say) { fprintf( stderr, "[desktop-diag] ml1402 gave the process the input desktop (handle %x)\n", (unsigned)handle ); fflush( stderr ); }
++            return desktop;
++        }
++        release_object( desktop );
++    }
++    if (say) { fprintf( stderr, "[desktop-diag] ml1402 no desktop to adopt\n" ); fflush( stderr ); }
++    set_error( STATUS_INVALID_HANDLE );
++    return NULL;
++}
++#endif
++
++
+ static struct window *create_window( struct window *parent, struct window *owner, atom_t atom,
+                                      mod_handle_t class_instance, mod_handle_t instance )
+ {
+@@ -622,7 +667,14 @@
+     struct window_class *class;
+     struct obj_locator class_locator;
+ 
+-    if (!(desktop = get_thread_desktop( current, DESKTOP_CREATEWINDOW ))) return NULL;
++    if (!(desktop = get_thread_desktop( current, DESKTOP_CREATEWINDOW )))
++    {
++#ifdef WINE_IOS
++        if (!(desktop = ml1402_adopt_desktop( current, DESKTOP_CREATEWINDOW ))) return NULL;
++#else
++        return NULL;
++#endif
++    }
+ 
+     if (!(class = grab_class( current->process, atom, class_instance, &extra_bytes, &class_locator )))
+     {

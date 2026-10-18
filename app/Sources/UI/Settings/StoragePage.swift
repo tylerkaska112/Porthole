@@ -30,6 +30,7 @@ struct StoragePage: View {
         if game.store == .epic { return "Epic Games" }
         if game.store == .gog { return "GOG" }
         if game.store == .itch { return "itch.io" }
+        if game.store == .amazon { return "Amazon Games" }
         if game.store == .steam { return "Steam" }
         return "Imported"
     }
@@ -91,6 +92,7 @@ struct StoragePage: View {
         if let appName = game.epicAppName { epic.uninstall(appName) }
         else if let id = game.gogID { GogInstaller.shared.uninstall(id) }
         else if let id = game.itchID { ItchInstaller.shared.uninstall(id) }
+        else if let id = game.amazonID { AmazonInstaller.shared.uninstall(id) }
         else {
             if let id = game.dockAppID, let owned = steam.owned.first(where: { $0.id == id }) { steam.uninstall(owned) }
             model.remove(game)

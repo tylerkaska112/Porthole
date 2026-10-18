@@ -38,6 +38,7 @@ enum ShortcutRouter {
         case "vpn":
             // The Shortcut that turns the person's VPN back on ends here: the app is in front again, so see whether it worked.
             Task { @MainActor in
+                VPNGuard.shared.shortcutReturned()      // a launch waiting for the VPN carries on
                 try? await Task.sleep(for: .seconds(1.5))
                 VPNGuard.shared.recheck()
             }

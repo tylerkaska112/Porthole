@@ -65,6 +65,7 @@ final class GameImporter: @unchecked Sendable {
         }
         if let coordError { throw coordError }
         if let failure { throw failure }
+        LogStore.shared.log("[import] \(name): \(files.count) file(s), \(dirs.count) folder(s), \(ImportError.size(total)); access to the folder: \(scoped ? "granted" : "not needed or refused")")
         if files.isEmpty && dirs.isEmpty { throw ImportError.unreadable(name) }
 
         let free = (try? AppModel.driveC.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) ?? Int64.max

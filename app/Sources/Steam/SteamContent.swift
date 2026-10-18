@@ -26,6 +26,35 @@ struct SteamDepot: Equatable {
     var fromApp: Int?
     var dlcApp: Int?
     var optionalDLC = false
+    /// The depot's manifest on every branch Steam lists it for (the public one is also in `manifest`, `size` and `download` above).
+    var branchManifests: [String: SteamDepotManifestEntry] = [:]
+    /// Manifests of branches that need a password (a private beta): the id is encrypted with the branch's key, which Steam gives for the right password.
+    var encryptedManifests: [String: SteamEncryptedManifest] = [:]
+}
+
+struct SteamDepotManifestEntry: Equatable {
+    var gid: UInt64
+    var size: UInt64?
+    var download: UInt64?
+}
+
+struct SteamEncryptedManifest: Equatable {
+    /// The manifest id, encrypted (raw bytes, decoded from the hex Steam writes).
+    var gid: Data
+    var size: UInt64?
+    var download: UInt64?
+}
+
+/// A version of a game Steam offers: "public" (the normal one) or a beta such as "beta", "experimental" or "previous_version".
+struct SteamBranch: Equatable, Identifiable {
+    var name: String
+    var buildID: String?
+    var description = ""
+    /// The branch needs a password to be seen or installed.
+    var passwordRequired = false
+    var updated: Date?
+    var id: String { name }
+    static let publicName = "public"
 }
 
 /// One way Steam says a game can be started (config/launch in its product information).
@@ -81,6 +110,14 @@ struct SteamAppInfo: Equatable {
     /// "game", "dlc", "tool", "demo", "music", ... (common/type), lowercased; empty when Steam does not say.
     var type: String = ""
     var launches: [SteamLaunchOption] = []
+    /// Every branch of the game, "public" first, the rest by name.
+    var branches: [SteamBranch] = []
+    /// The DLC apps whose files are part of this game's depots (what the install can add), by app id.
+    var dlcApps: [Int] = []
+    /// The DLC apps the game lists as its own (extended/listofdlc), which can include DLC without files of its own.
+    var listedDLC: [Int] = []
+    /// The depot the app's Workshop items are stored in (`depots/workshopdepot`); nil means the app's own id.
+    var workshopDepot: Int?
 }
 
 enum SteamAppInfoParser {
@@ -102,12 +139,18 @@ enum SteamAppInfoParser {
             depot.osArch = (depotConfig?["osarch"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             depot.language = (depotConfig?["language"] as? String).flatMap { $0.isEmpty ? nil : $0.lowercased() }
             let manifests = node["manifests"] as? [String: Any]
-            if let entry = manifests?["public"] {
-                if let gid = entry as? String { depot.manifest = UInt64(gid) }
-                else if let dict = entry as? [String: Any] {
-                    depot.manifest = (dict["gid"] as? String).flatMap { UInt64($0) }
-                    depot.size = (dict["size"] as? String).flatMap { UInt64($0) }
-                    depot.download = (dict["download"] as? String).flatMap { UInt64($0) }
+            for (branch, entry) in manifests ?? [:] {
+                if let gid = (entry as? String).flatMap({ UInt64($0) }) { depot.branchManifests[branch] = SteamDepotManifestEntry(gid: gid) }
+                else if let dict = entry as? [String: Any], let gid = (dict["gid"] as? String).flatMap({ UInt64($0) }) {
+                    depot.branchManifests[branch] = SteamDepotManifestEntry(gid: gid, size: (dict["size"] as? String).flatMap { UInt64($0) },
+                                                                            download: (dict["download"] as? String).flatMap { UInt64($0) })
+                }
+            }
+            if let entry = depot.branchManifests[SteamBranch.publicName] { depot.manifest = entry.gid; depot.size = entry.size; depot.download = entry.download }
+            for (branch, entry) in (node["encryptedmanifests"] as? [String: Any]) ?? [:] {
+                if let dict = entry as? [String: Any], let hex = dict["gid"] as? String, let bytes = Self.bytes(fromHex: hex), !bytes.isEmpty {
+                    depot.encryptedManifests[branch] = SteamEncryptedManifest(gid: bytes, size: (dict["size"] as? String).flatMap { UInt64($0) },
+                                                                              download: (dict["download"] as? String).flatMap { UInt64($0) })
                 }
             }
             depot.fromApp = (node["depotfromapp"] as? String).flatMap { Int($0) }
@@ -118,6 +161,16 @@ enum SteamAppInfoParser {
         depots.sort { $0.id < $1.id }
         let branches = depotsNode["branches"] as? [String: Any]
         let buildID = ((branches?["public"] as? [String: Any])?["buildid"]) as? String
+        var branchList: [SteamBranch] = []
+        for (name, value) in branches ?? [:] {
+            guard let node = value as? [String: Any] else { continue }
+            branchList.append(SteamBranch(name: name, buildID: node["buildid"] as? String, description: (node["description"] as? String) ?? "",
+                                          passwordRequired: (node["pwdrequired"] as? String) == "1",
+                                          updated: (node["timeupdated"] as? String).flatMap { Double($0) }.map { Date(timeIntervalSince1970: $0) }))
+        }
+        branchList.sort { ($0.name == SteamBranch.publicName ? "" : "x" + $0.name) < ($1.name == SteamBranch.publicName ? "" : "x" + $1.name) }
+        let dlcApps = Array(Set(depots.compactMap(\.dlcApp))).sorted()
+        let listed = (((app["extended"] as? [String: Any])?["listofdlc"] as? String) ?? "").split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
         var launches: [SteamLaunchOption] = []
         if let launch = config?["launch"] as? [String: Any] {
             for key in launch.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
@@ -129,7 +182,22 @@ enum SteamAppInfoParser {
             }
         }
         return SteamAppInfo(appid: appid, name: (common?["name"] as? String) ?? "App \(appid)", installDirectory: config?["installdir"] as? String,
-                            buildID: buildID, depots: depots, type: ((common?["type"] as? String) ?? "").lowercased(), launches: launches)
+                            buildID: buildID, depots: depots, type: ((common?["type"] as? String) ?? "").lowercased(), launches: launches,
+                            branches: branchList, dlcApps: dlcApps, listedDLC: listed,
+                            workshopDepot: (depotsNode["workshopdepot"] as? String).flatMap { Int($0) })
+    }
+
+    static func bytes(fromHex text: String) -> Data? {
+        let hex = Array(text.utf8)
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data(capacity: hex.count / 2)
+        func nibble(_ c: UInt8) -> UInt8? { switch c { case 48...57: return c - 48; case 97...102: return c - 87; case 65...70: return c - 55; default: return nil } }
+        var i = 0
+        while i < hex.count {
+            guard let hi = nibble(hex[i]), let lo = nibble(hex[i + 1]) else { return nil }
+            out.append(hi << 4 | lo); i += 2
+        }
+        return out
     }
 }
 
@@ -141,23 +209,69 @@ struct SteamDepotJob: Equatable {
     var keyApp: Int
 }
 
+/// What to install of an app: which version (branch) and which DLC. The default is what Porthole always did: the public branch, the game's own files.
+struct SteamInstallSelection: Equatable {
+    enum DLC: Equatable { case none, all, only(Set<Int>), allExcept(Set<Int>) }
+    var branch = SteamBranch.publicName
+    /// The key of a password-protected branch (from Steam's answer to the password), needed to read that branch's encrypted manifest ids.
+    var branchKey: Data?
+    /// Which DLC depots to include. `.all` asks for every DLC depot; the ones the account does not own are skipped when their keys are refused.
+    var dlc = DLC.none
+    /// Repair: fetch the file lists of every depot even when the install record says it is current, and check the files on the disk against them.
+    var verify = false
+
+    func includes(dlcApp: Int) -> Bool {
+        switch dlc { case .none: return false; case .all: return true; case .only(let set): return set.contains(dlcApp); case .allExcept(let set): return !set.contains(dlcApp) }
+    }
+}
+
+enum SteamBetaCrypto {
+    /// A password branch writes each manifest id encrypted with the branch's key (AES-256, ECB, one block); the id is the first eight bytes, little endian.
+    static func decryptManifestID(_ encrypted: Data, key: Data) -> UInt64? {
+        guard key.count == 32, encrypted.count >= 16, encrypted.count % 16 == 0, let plain = SteamCipher.decryptECB(encrypted, key: key), plain.count >= 8 else { return nil }
+        var value: UInt64 = 0
+        for i in 0..<8 { value |= UInt64(plain[plain.startIndex + i]) << (8 * UInt64(i)) }
+        return value
+    }
+}
+
 enum SteamDepotPlanner {
-    /// The Windows depots of an app: no DLC, English, 64-bit when there is a choice. Depots shared from another app need that app's manifests.
-    static func windowsDepots(app: SteamAppInfo) -> [SteamDepot] {
-        var chosen = app.depots.filter { depot in
-            guard depot.dlcApp == nil else { return false }
-            guard depot.osList.isEmpty || depot.osList.contains("windows") else { return false }
-            guard depot.language == nil || depot.language == "english" else { return false }
-            guard depot.manifest != nil || depot.fromApp != nil else { return false }
-            return true
+    /// The manifest id of a depot on a branch: the branch's own entry, else the encrypted one when the branch's key is known. nil when the depot is not part of that branch.
+    static func manifestEntry(of depot: SteamDepot, selection: SteamInstallSelection) -> SteamDepotManifestEntry? {
+        if let entry = depot.branchManifests[selection.branch] { return entry }
+        if selection.branch == SteamBranch.publicName { return publicEntry(of: depot) }
+        if selection.branch != SteamBranch.publicName, let encrypted = depot.encryptedManifests[selection.branch], let key = selection.branchKey,
+           let gid = SteamBetaCrypto.decryptManifestID(encrypted.gid, key: key) {
+            return SteamDepotManifestEntry(gid: gid, size: encrypted.size, download: encrypted.download)
+        }
+        return nil
+    }
+
+    /// The public branch's entry, from the depot's own fields when it was built without the branch table.
+    static func publicEntry(of depot: SteamDepot) -> SteamDepotManifestEntry? {
+        depot.branchManifests[SteamBranch.publicName] ?? depot.manifest.map { SteamDepotManifestEntry(gid: $0, size: depot.size, download: depot.download) }
+    }
+
+    /// The Windows depots of an app on a branch: English, 64-bit when there is a choice, the game's own plus the DLC the selection asks for. Each comes back with the
+    /// manifest, size and download size of THAT branch. Depots shared from another app need that app's manifests (looked up on the same branch).
+    static func windowsDepots(app: SteamAppInfo, selection: SteamInstallSelection = SteamInstallSelection()) -> [SteamDepot] {
+        var chosen: [SteamDepot] = []
+        for var depot in app.depots {
+            if let dlc = depot.dlcApp, !selection.includes(dlcApp: dlc) { continue }
+            guard depot.osList.isEmpty || depot.osList.contains("windows") else { continue }
+            guard depot.language == nil || depot.language == "english" else { continue }
+            if let entry = manifestEntry(of: depot, selection: selection) { depot.manifest = entry.gid; depot.size = entry.size; depot.download = entry.download }
+            else { depot.manifest = nil; depot.size = nil; depot.download = nil }
+            guard depot.manifest != nil || depot.fromApp != nil else { continue }
+            chosen.append(depot)
         }
         if chosen.contains(where: { $0.osArch == "64" }) { chosen.removeAll { $0.osArch == "32" } }
         return chosen
     }
 
     /// What installing the app's Windows depots takes to download, and on disk. Depots shared from another app have no size here and are left out.
-    static func sizes(app: SteamAppInfo) -> (download: UInt64, disk: UInt64) {
-        let depots = windowsDepots(app: app).filter { $0.manifest != nil && $0.fromApp == nil }
+    static func sizes(app: SteamAppInfo, selection: SteamInstallSelection = SteamInstallSelection()) -> (download: UInt64, disk: UInt64) {
+        let depots = windowsDepots(app: app, selection: selection).filter { $0.manifest != nil && $0.fromApp == nil }
         return (depots.reduce(0) { $0 + ($1.download ?? $1.size ?? 0) }, depots.reduce(0) { $0 + ($1.size ?? 0) })
     }
 
@@ -300,7 +414,32 @@ protocol SteamContentBackend: AnyObject {
     func manifestCode(app: Int, depot: Int, manifest: UInt64, completion: @escaping (Result<UInt64, SteamContentError>) -> Void)
     func servers(completion: @escaping ([SteamCDNServer]) -> Void)
     func fetch(_ url: URL, completion: @escaping (Result<Data, SteamContentError>) -> Void)
+    /// Asks Steam whether a password opens a beta of the app; the answer names the branch(es) it opens and gives each one's key.
+    func checkBetaPassword(app: Int, password: String, completion: @escaping (Result<[SteamBetaPassword], SteamContentError>) -> Void)
+    /// The account's achievements and stats for an app (Steam's "get user stats"): the schema and the unlock times.
+    func userStats(app: Int, steamID: UInt64, completion: @escaping (Result<SteamUserStatsReply, SteamContentError>) -> Void)
+    /// The Workshop items the account is subscribed to for an app, with the manifest of each item's files.
+    func subscribedWorkshop(app: Int, completion: @escaping (Result<[SteamSubscribedFile], SteamContentError>) -> Void)
     func close()
+}
+
+extension SteamContentBackend {
+    func subscribedWorkshop(app: Int, completion: @escaping (Result<[SteamSubscribedFile], SteamContentError>) -> Void) {
+        completion(.failure(SteamContentError(message: "This connection cannot list subscribed Workshop items.")))
+    }
+    func userStats(app: Int, steamID: UInt64, completion: @escaping (Result<SteamUserStatsReply, SteamContentError>) -> Void) {
+        completion(.failure(SteamContentError(message: "This connection cannot read achievements.")))
+    }
+    func checkBetaPassword(app: Int, password: String, completion: @escaping (Result<[SteamBetaPassword], SteamContentError>) -> Void) {
+        completion(.failure(SteamContentError(message: "This connection cannot check beta passwords.")))
+    }
+}
+
+/// What Steam answers to a beta password: the branch it opens, and the key that reads that branch's encrypted manifest ids.
+struct SteamBetaPassword: Equatable {
+    var branch: String
+    var key: Data
+    var description = ""
 }
 
 /// The real thing: Steam's connection managers for the questions, its content servers for the files.
@@ -409,6 +548,74 @@ final class SteamCMBackend: SteamContentBackend {
                 }
             }
             self.cm.send(EMsg.getDepotDecryptionKey, body: request.data)
+        }
+    }
+
+    func checkBetaPassword(app: Int, password: String, completion: @escaping (Result<[SteamBetaPassword], SteamContentError>) -> Void) {
+        start { [weak self] started in
+            guard let self else { return }
+            if case .failure(let error) = started { completion(.failure(error)); return }
+            var request = PBWriter(); request.varint(1, UInt64(app)); request.string(2, password)
+            self.cm.wait(for: EMsg.checkAppBetaPasswordResponse, timeout: 20, match: { _ in true }) { reply in
+                switch reply {
+                case .failure(let error): completion(.failure(SteamContentError(message: error.description)))
+                case .success(let packet):
+                    let fields = PBFields(packet.body)
+                    let code = fields?.int(1) ?? 2
+                    guard code == 1 else {
+                        completion(.failure(SteamContentError(message: code == 5 ? "Steam does not accept that password." : "Steam could not check the password (error \(code)).")))
+                        return
+                    }
+                    let found = (fields?.messages(4) ?? []).compactMap { entry -> SteamBetaPassword? in
+                        guard let name = entry.string(1), !name.isEmpty, let hex = entry.string(2), let key = SteamAppInfoParser.bytes(fromHex: hex), key.count == 32 else { return nil }
+                        return SteamBetaPassword(branch: name, key: key, description: entry.string(3) ?? "")
+                    }
+                    if found.isEmpty { completion(.failure(SteamContentError(message: "That password does not open a beta of this game."))) } else { completion(.success(found)) }
+                }
+            }
+            self.cm.send(EMsg.checkAppBetaPassword, body: request.data)
+        }
+    }
+
+    func userStats(app: Int, steamID: UInt64, completion: @escaping (Result<SteamUserStatsReply, SteamContentError>) -> Void) {
+        start { [weak self] started in
+            guard let self else { return }
+            if case .failure(let error) = started { completion(.failure(error)); return }
+            // game id; crc 0 and schema version -1 ask for the whole schema; the account whose stats are wanted.
+            var request = PBWriter()
+            request.fixed64(1, UInt64(app)); request.varint(2, 0); request.int32(3, -1); request.fixed64(4, steamID)
+            self.cm.wait(for: EMsg.getUserStatsResponse, timeout: 25, match: { PBFields($0.body)?.uint(1) == UInt64(app) }) { reply in
+                switch reply {
+                case .failure(let error): completion(.failure(SteamContentError(message: error.description)))
+                case .success(let packet): completion(SteamAchievementParser.reply(from: packet.body))
+                }
+            }
+            self.cm.send(EMsg.getUserStats, body: request.data)
+        }
+    }
+
+    func subscribedWorkshop(app: Int, completion: @escaping (Result<[SteamSubscribedFile], SteamContentError>) -> Void) {
+        start { [weak self] started in
+            guard let self else { return }
+            if case .failure(let error) = started { completion(.failure(error)); return }
+            var found: [SteamSubscribedFile] = []
+            func page(_ start: Int) {
+                var request = PBWriter(); request.varint(1, UInt64(app)); request.varint(2, UInt64(start))
+                self.cm.wait(for: EMsg.enumerateSubscribedFilesResponse, timeout: 25, match: { _ in true }) { reply in
+                    switch reply {
+                    case .failure(let error): completion(.failure(SteamContentError(message: error.description)))
+                    case .success(let packet):
+                        switch SteamWorkshopParser.subscribed(from: packet.body) {
+                        case .failure(let error): completion(.failure(error))
+                        case .success(let answer):
+                            found += answer.files
+                            if answer.files.isEmpty || found.count >= answer.total || found.count > 5000 { completion(.success(found)) } else { page(found.count) }
+                        }
+                    }
+                }
+                self.cm.send(EMsg.enumerateSubscribedFiles, body: request.data)
+            }
+            page(0)
         }
     }
 

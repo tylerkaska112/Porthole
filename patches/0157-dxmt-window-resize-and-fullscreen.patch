@@ -1,0 +1,110 @@
+--- a/src/util/wsi_window_headless.cpp	2026-10-17 07:17:42
++++ b/src/util/wsi_window_headless.cpp	2026-10-17 07:17:42
+@@ -45,8 +45,52 @@
+     *pHeight = (sh > 0) ? (uint32_t)sh : 768;
+ }
+ 
++/* 0157 (Porthole): the window is resized/moved the way native DXGI does it when a program asks for it (ResizeTarget, SetFullscreenState),
++ * but ONLY when it does not already match: a window that already has the right size or already covers the screen is left exactly as before.
++ * American Truck Simulator creates a 1x1-client placeholder window, strips its border and relies on DXGI to make it screen-sized; with these
++ * no-ops it stayed 132x38 and the picture showed as a postage stamp. Everything is logged as [wsi-0157]. */
++static bool screenRect(RECT *pRect) {
++  int sw = ::GetSystemMetrics(SM_CXSCREEN), sh = ::GetSystemMetrics(SM_CYSCREEN);
++  if (sw < 320 || sh < 240)
++    return false;
++  pRect->left = 0;
++  pRect->top = 0;
++  pRect->right = sw;
++  pRect->bottom = sh;
++  return true;
++}
++
++static bool coversRect(HWND hWindow, const RECT &r) {
++  RECT w = {};
++  if (!::GetWindowRect(hWindow, &w))
++    return false;
++  return w.left <= r.left && w.top <= r.top && w.right >= r.right && w.bottom >= r.bottom;
++}
++
+ void resizeWindow(HWND hWindow, DXMTWindowState *pState, uint32_t width,
+                   uint32_t height) {
++  RECT screen = {};
++  RECT client = {};
++  if (!hWindow || !screenRect(&screen) || !::GetClientRect(hWindow, &client))
++    return;
++  if (width > (uint32_t)screen.right)
++    width = (uint32_t)screen.right;
++  if (height > (uint32_t)screen.bottom)
++    height = (uint32_t)screen.bottom;
++  if (width < 64 || height < 64)
++    return;
++  if ((uint32_t)(client.right - client.left) == width &&
++      (uint32_t)(client.bottom - client.top) == height)
++    return;
++  RECT oldRect = {};
++  ::GetWindowRect(hWindow, &oldRect);
++  RECT newRect = {0, 0, (LONG)width, (LONG)height};
++  ::AdjustWindowRectEx(&newRect, ::GetWindowLongW(hWindow, GWL_STYLE), FALSE,
++                       ::GetWindowLongW(hWindow, GWL_EXSTYLE));
++  LONG outerW = newRect.right - newRect.left, outerH = newRect.bottom - newRect.top;
++  WARN("[wsi-0157] resizeWindow ", width, "x", height, " (client was ", client.right - client.left, "x",
++       client.bottom - client.top, ")");
++  ::MoveWindow(hWindow, oldRect.left, oldRect.top, outerW, outerH, TRUE);
+ }
+ 
+ /* Headless no-op fullscreen success. Games negotiate a mode and expect
+@@ -59,11 +103,42 @@
+ bool enterFullscreenMode(HMONITOR hMonitor, HWND hWindow,
+                          DXMTWindowState *pState,
+                          [[maybe_unused]] bool modeSwitch) {
++  RECT rect = {};
++  if (!hWindow || !pState || !screenRect(&rect))
++    return true;
++  pState->style = 0;
++  if (coversRect(hWindow, rect)) {
++    WARN("[wsi-0157] enterFullscreenMode: the window already covers the screen, left as it is");
++    return true;
++  }
++  ::GetWindowRect(hWindow, &pState->rect);
++  LONG style = ::GetWindowLongW(hWindow, GWL_STYLE);
++  LONG exstyle = ::GetWindowLongW(hWindow, GWL_EXSTYLE);
++  pState->style = style ? style : 1;           /* non-zero marks "we changed this window" */
++  pState->exstyle = exstyle;
++  ::SetWindowLongW(hWindow, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
++  ::SetWindowLongW(hWindow, GWL_EXSTYLE, exstyle & ~WS_EX_OVERLAPPEDWINDOW);
++  WARN("[wsi-0157] enterFullscreenMode: window ", pState->rect.right - pState->rect.left, "x",
++       pState->rect.bottom - pState->rect.top, " -> ", rect.right - rect.left, "x", rect.bottom - rect.top);
++  ::SetWindowPos(hWindow, HWND_TOP, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
++                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+   return true;
+ }
+ 
+ bool leaveFullscreenMode(HWND hWindow, DXMTWindowState *pState,
+                          bool restoreCoordinates) {
++  /* Only a window enterFullscreenMode changed is put back. */
++  if (!hWindow || !pState || pState->style == 0)
++    return true;
++  ::SetWindowLongW(hWindow, GWL_STYLE, pState->style == 1 ? ::GetWindowLongW(hWindow, GWL_STYLE) : pState->style);
++  ::SetWindowLongW(hWindow, GWL_EXSTYLE, pState->exstyle);
++  UINT flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER;
++  const RECT rect = pState->rect;
++  if (!restoreCoordinates)
++    flags |= SWP_NOSIZE | SWP_NOMOVE;
++  WARN("[wsi-0157] leaveFullscreenMode: window back to ", rect.right - rect.left, "x", rect.bottom - rect.top);
++  ::SetWindowPos(hWindow, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, flags);
++  pState->style = 0;
+   return true;
+ }
+ 
+@@ -84,6 +159,11 @@
+ 
+ void updateFullscreenWindow(HMONITOR hMonitor, HWND hWindow,
+                             bool forceTopmost) {
++  RECT rect = {};
++  if (!hWindow || !screenRect(&rect) || coversRect(hWindow, rect))
++    return;
++  WARN("[wsi-0157] updateFullscreenWindow: window moved to cover the screen");
++  ::MoveWindow(hWindow, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
+ }
+ 
+ bool isForeground(HWND hWindow) { return true; }

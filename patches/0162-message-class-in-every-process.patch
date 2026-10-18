@@ -1,0 +1,15 @@
+--- /tmp/class_ios.c.before-0162	2026-10-18 17:46:09
++++ vendor/Madeira/build/win32u-unix/class_ios.c	2026-10-18 17:46:09
+@@ -1418,6 +1418,12 @@
+ 
+     for (i = 0; i < ARRAYSIZE(builtin_classes); i++) register_builtin( &builtin_classes[i] );
+     register_builtin( &edit_class );
++    /* ml1404 / patch 0162: the "Message" class too. init_user (register_desktop_class) registers the desktop and message classes only for the session's first pseudo-process, and
++     * the wineserver keeps classes PER PROCESS, so in a later process (a game started by Valve's client) a window of class "Message" failed with STATUS_INVALID_HANDLE (grab_class):
++     * Counter-Strike 2's SDL raw-input thread makes one, ended at once, and the game never got raw mouse input. In the session's first process this is a repeat; the server
++     * refuses the duplicate and register_builtin tolerates that. */
++    register_builtin( &message_builtin_class );
++    dprintf( 2, "[builtin-classes] 0162 the Message class registered for pid=%04x\n", (int)HandleToULong( NtCurrentTeb()->ClientId.UniqueProcess ) );
+     KeUserModeCallback( NtUserInitBuiltinClasses, NULL, 0, &ret_ptr, &ret_len );
+ }
+ 

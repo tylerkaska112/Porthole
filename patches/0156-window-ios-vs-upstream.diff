@@ -1,0 +1,138 @@
+--- wine/dlls/win32u/window.c	2026-09-30 17:42:58
++++ build/win32u-unix/window_ios.c	2026-10-17 07:10:58
+@@ -24,6 +24,9 @@
+ #endif
+ 
+ #include <assert.h>
++#ifdef WINE_IOS
++#include <unistd.h>
++#endif
+ 
+ #include "ntstatus.h"
+ #include "ntgdi_private.h"
+@@ -34,6 +37,21 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(win);
+ 
++#ifdef WINE_IOS
++/* 0156: what a program asks of its top-level windows (position, size, show, placement, style), logged raw: the first 150 calls. */
++static void ios_wlog( const char *what, HWND hwnd, int a, int b, int c, int d, unsigned e )
++{
++    static unsigned long n;
++    if (n >= 150) return;
++    if (get_window_long( hwnd, GWL_STYLE ) & WS_CHILD) return;
++    n++;
++    dprintf( STDERR_FILENO, "[winreq] 0156 #%lu %s hwnd=%p %d,%d %dx%d %#x\n", n, what, hwnd, a, b, c, d, e );
++}
++#else
++#define ios_wlog(...) ((void)0)
++#endif
++
++
+ #define USER_HANDLE_TO_INDEX(hwnd) ((LOWORD(hwnd) - FIRST_USER_HANDLE) >> 1)
+ #define USER_HANDLE_FROM_INDEX(index, generation) UlongToHandle( (index << 1) + FIRST_USER_HANDLE + (generation << 16) )
+ 
+@@ -1600,6 +1618,7 @@
+  */
+ LONG_PTR WINAPI NtUserSetWindowLongPtr( HWND hwnd, INT offset, LONG_PTR newval, BOOL ansi )
+ {
++    if (offset == GWL_STYLE || offset == GWL_EXSTYLE) ios_wlog( offset == GWL_STYLE ? "SetStyle" : "SetExStyle", hwnd, (int)newval, 0, 0, 0, 0 );
+     return set_window_long( hwnd, offset, sizeof(LONG_PTR), newval, ansi );
+ }
+ 
+@@ -2505,6 +2524,7 @@
+     int flags = SWP_NOZORDER | SWP_NOACTIVATE;
+     if (!repaint) flags |= SWP_NOREDRAW;
+     TRACE( "%p %d,%d %dx%d %d\n", hwnd, x, y, cx, cy, repaint );
++    ios_wlog( "MoveWindow", hwnd, x, y, cx, cy, repaint );
+     return NtUserSetWindowPos( hwnd, 0, x, y, cx, cy, flags );
+ }
+ 
+@@ -3087,6 +3107,8 @@
+ {
+     UINT flags = PLACE_MAX | PLACE_RECT;
+     if (!wpl) return FALSE;
++    ios_wlog( "SetWindowPlacement", hwnd, wpl->rcNormalPosition.left, wpl->rcNormalPosition.top, wpl->rcNormalPosition.right - wpl->rcNormalPosition.left,
++              wpl->rcNormalPosition.bottom - wpl->rcNormalPosition.top, wpl->showCmd );
+     if (wpl->length != sizeof(*wpl))
+     {
+         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+@@ -4021,6 +4043,7 @@
+     WINDOWPOS winpos;
+ 
+     TRACE( "hwnd %p, after %p, %d,%d (%dx%d), flags %08x\n", hwnd, after, x, y, cx, cy, flags );
++    ios_wlog( "SetWindowPos", hwnd, x, y, cx, cy, flags );
+     if(TRACE_ON(win)) dump_winpos_flags(flags);
+ 
+     if (is_broadcast( hwnd ))
+@@ -4961,6 +4984,7 @@
+ BOOL WINAPI NtUserShowWindow( HWND hwnd, INT cmd )
+ {
+     HWND full_handle;
++    ios_wlog( "ShowWindow", hwnd, cmd, 0, 0, 0, 0 );
+ 
+     if (is_broadcast(hwnd))
+     {
+@@ -5598,6 +5622,38 @@
+ 
+         if (is_default_coord( cs->cx ))
+         {
++#ifdef WINE_IOS
++            /* 0156: a default-size window was created 132x38 (American Truck Simulator: it trusts the size it is given and never resizes).
++             * The start-up size is used only when it is a usable window; otherwise 3/4 of the work area; and if that is tiny too (an empty
++             * work area), 3/4 of the screen. Every case is logged ([createwin] 0156) so the cause can be told apart. */
++            {
++                static unsigned long n;
++                BOOL startf = (params->dwFlags & STARTF_USESIZE) != 0;
++                int work_w = mon_info.rcWork.right - mon_info.rcWork.left, work_h = mon_info.rcWork.bottom - mon_info.rcWork.top;
++                int cx0, cy0, cx1, cy1;
++                if (startf && params->dwXSize >= 320 && params->dwYSize >= 240) { cs->cx = params->dwXSize; cs->cy = params->dwYSize; }
++                else
++                {
++                    cs->cx = work_w * 3 / 4 - cs->x;
++                    cs->cy = work_h * 3 / 4 - cs->y;
++                }
++                cx0 = cs->cx; cy0 = cs->cy;
++                if (cs->cx < 320 || cs->cy < 240)
++                {
++                    int sw_ = NtUserGetSystemMetrics( SM_CXSCREEN ), sh_ = NtUserGetSystemMetrics( SM_CYSCREEN );
++                    if (sw_ < 640 || sh_ < 480) { sw_ = 1920; sh_ = 1080; }
++                    cs->x = cs->y = 0;
++                    cs->cx = sw_ * 3 / 4;
++                    cs->cy = sh_ * 3 / 4;
++                }
++                cx1 = cs->cx; cy1 = cs->cy;
++                if (++n <= 12)
++                    dprintf( STDERR_FILENO, "[createwin] 0156 default size: startup flags=%#x pos=%d,%d size=%u,%u work=%d,%d,%d,%d -> %dx%d%s (at %d,%d)\n",
++                             (unsigned)params->dwFlags, (int)params->dwX, (int)params->dwY, (unsigned)params->dwXSize, (unsigned)params->dwYSize,
++                             (int)mon_info.rcWork.left, (int)mon_info.rcWork.top, (int)mon_info.rcWork.right, (int)mon_info.rcWork.bottom,
++                             cx0, cy0, (cx1 != cx0 || cy1 != cy0) ? " too small, replaced by 3/4 of the screen" : "", cs->x, cs->y );
++            }
++#else
+             if (params->dwFlags & STARTF_USESIZE)
+             {
+                 cs->cx = params->dwXSize;
+@@ -5608,6 +5664,7 @@
+                 cs->cx = (mon_info.rcWork.right - mon_info.rcWork.left) * 3 / 4 - cs->x;
+                 cs->cy = (mon_info.rcWork.bottom - mon_info.rcWork.top) * 3 / 4 - cs->y;
+             }
++#endif
+         }
+         /* neither x nor cx are default. Check the y values.
+          * In the trace we see Outlook and Outlook Express using
+@@ -5716,6 +5773,15 @@
+         }
+     }
+ 
++#ifdef WINE_IOS
++    if ((cs.style & (WS_CHILD|WS_POPUP)) != WS_CHILD)
++    {
++        static unsigned long created;
++        if (++created <= 40)
++            dprintf( STDERR_FILENO, "[createwin] 0156 #%lu style=%08x ex=%08x asked x=%d y=%d cx=%d cy=%d parent=%p\n",
++                     created, (unsigned)cs.style, (unsigned)cs.dwExStyle, (int)cs.x, (int)cs.y, (int)cs.cx, (int)cs.cy, parent );
++    }
++#endif
+     fix_cs_coordinates( &cs, &sw );
+     cs.dwExStyle = fix_exstyle( cs.style, cs.dwExStyle );
+ 

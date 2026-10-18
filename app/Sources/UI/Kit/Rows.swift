@@ -261,6 +261,8 @@ struct ActionRow: View {
     let title: String
     var subtitle: String?
     var detail: String?
+    /// A small label next to the title's end, such as "Beta", for a feature that is not finished or fully tested.
+    var badge: String?
     var info: String?
     var destructive = false
     var chevron = true
@@ -271,11 +273,26 @@ struct ActionRow: View {
     var body: some View {
         RowBase(id: id, symbol: symbol, tint: tint, title: title, subtitle: subtitle, info: info, destructive: destructive, emphasized: prominent, action: action) {
             HStack(spacing: 8) {
+                if let badge { BetaBadge(text: badge) }
                 if let detail { Text(detail).font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(1) }
                 if prominent { Image(systemName: "arrow.right.circle.fill").font(.system(size: 20)).foregroundStyle(Theme.accent) }
                 else if chevron { Image(systemName: "chevron.right").font(.footnote.weight(.bold)).foregroundStyle(Theme.textDim) }
             }
         }
+    }
+}
+
+/// A small capsule that marks something as beta: new, mostly untested.
+struct BetaBadge: View {
+    var text = "Beta"
+    var body: some View {
+        Text(text.uppercased())
+            .font(.system(size: 10, weight: .heavy, design: .rounded)).tracking(0.8)
+            .foregroundStyle(Theme.warn)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(Theme.warn.opacity(0.16)))
+            .overlay(Capsule().strokeBorder(Theme.warn.opacity(0.5), lineWidth: 1))
+            .accessibilityLabel(text)
     }
 }
 

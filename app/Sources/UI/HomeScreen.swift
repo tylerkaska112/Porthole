@@ -12,6 +12,7 @@ struct HomeScreen: View {
     @ObservedObject private var epicInstaller = EpicInstaller.shared
     @ObservedObject private var gogInstaller = GogInstaller.shared
     @ObservedObject private var itchInstaller = ItchInstaller.shared
+    @ObservedObject private var amazonInstaller = AmazonInstaller.shared
     @ObservedObject private var problemTracker = ProblemTracker.shared
     @ObservedObject private var epicLibrary = EpicLibrary.shared
     @ObservedObject private var compat = CompatStore.shared
@@ -22,6 +23,10 @@ struct HomeScreen: View {
     @State private var dismissed = Set(UserDefaults.standard.stringArray(forKey: "f4.dismissedNotices") ?? [])
     @State private var reportGame: Game?
     @State private var pickSteam: Game?
+    @ObservedObject private var friends = SteamFriendsStore.shared
+    @ObservedObject private var restarting = RestartCoordinator.shared
+    @State private var showFriends = false
+    @State private var friendsScope = FocusScope()
 
     /// Most recently played first.
     private var sortedGames: [Game] {
@@ -39,6 +44,7 @@ struct HomeScreen: View {
                          if let game = model.games.first(where: { $0.id == card.id }) { session.start(game) }
                      }, add: { router.showAdd = true },
                      menu: { card in AnyView(menu(for: card)) })
+                .safeAreaInset(edge: .top, spacing: 0) { friendsBar }
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: UUID.self) { GamePage(gameID: $0).onAppear { GuideCenter.shared.autoShow("gamepage") } }
                 .containerBackground(for: .navigation) { Color.clear }
@@ -47,6 +53,14 @@ struct HomeScreen: View {
         .environment(\.artLoader, AppArt.loader)
         .onAppear { session.refreshJIT() }
         .task(id: model.games.map(\.id)) { await controllers.refresh(ids: model.games.compactMap { $0.steamAppID ?? $0.dockAppID }) }
+        .task(id: steam.signedIn) { if steam.signedIn { await friends.refresh() } }
+        .task { await RestartCoordinator.shared.resumeIfPending(model: model) }
+        .sheet(isPresented: $showFriends) {
+            GameSubSheet(title: "Friends", scope: friendsScope, close: { showFriends = false }) {
+                if steam.signedIn { SteamFriendsList() } else { signInHint }
+            }
+            .preferredColorScheme(Theme.scheme)
+        }
         .sheet(item: $reportGame) { ReportSheet(game: $0, crashed: compat.prompt?.crashed ?? false).environmentObject(model).preferredColorScheme(Theme.scheme) }
         .sheet(item: $pickSteam) { game in
             SteamPickerView(initialTerm: SteamArt.searchTerms(name: game.name, exe: game.exe).first ?? game.name) { match in
@@ -54,6 +68,30 @@ struct HomeScreen: View {
             }
             .preferredColorScheme(Theme.scheme)
         }
+    }
+
+    /// The Friends button: on the Home Screen only (a game's page is a different screen on the stack), always there, above everything else.
+    private var friendsBar: some View {
+        HStack {
+            Spacer(minLength: 0)
+            PillButton(id: "home-friends", title: friendsTitle, symbol: "person.2.fill", style: .glass) { showFriends = true }
+        }
+        .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 4)
+    }
+
+    /// "Friends", with how many are on Steam right now once the list has loaded.
+    private var friendsTitle: String {
+        let now = friends.friends.filter(\.isOnline).count
+        return steam.signedIn && friends.loaded && now > 0 ? "Friends \u{00B7} \(now) online" : "Friends"
+    }
+
+    private var signInHint: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "person.2.slash").font(.system(size: 40)).foregroundStyle(Theme.textDim)
+            Text("Sign in to Steam to see your friends.").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+            PillButton(id: "home-friends-signin", title: "Open Steam", symbol: "arrow.right", style: .primary) { showFriends = false; router.openSteam() }
+        }
+        .frame(maxWidth: .infinity).padding(.top, 60)
     }
 
     private var preparingFeatured: Bool { session.isActive && sortedGames.first.map { $0 == session.game } == true }
@@ -80,11 +118,14 @@ struct HomeScreen: View {
             list.append(NoticeData(id: "jit", symbol: "hourglass", title: "Waiting for JIT", detail: wait, actionTitle: "Cancel", spinner: true))
         }
         if case .failed(let message) = session.state, !session.launchOverlayActive {
-            list.append(NoticeData(id: "failed", symbol: "exclamationmark.triangle.fill", title: "Couldn't start the game", detail: message, tint: Theme.bad, actionTitle: "Dismiss"))
+            list.append(NoticeData(id: "failed", symbol: "exclamationmark.triangle.fill", title: "Couldn't start the game", detail: message, tint: Theme.bad, actionTitle: session.restartAdvised ? "Close Porthole" : "Dismiss"))
         }
         if session.restartNeeded, !session.isActive, session.state != .running {
             list.append(NoticeData(id: "restart", symbol: "arrow.clockwise.circle.fill", title: "Restart to play another game",
                                    detail: "Porthole has to close and open again before the next game. Your games, saves and settings are kept.", tint: Theme.warn, actionTitle: "Close Porthole"))
+        }
+        if let name = restarting.starting {
+            list.append(NoticeData(id: "restart-pending", symbol: "arrow.clockwise.circle.fill", title: "Starting \(name) again", detail: "Finishing any Workshop downloads first.", actionTitle: "Cancel", spinner: true))
         }
         if !setupDone {
             list.append(NoticeData(id: "setup", symbol: "checklist", title: "Finish setting up", detail: "A few quick steps before games can run.", actionTitle: "Continue", dismissKey: "setup"))
@@ -139,6 +180,9 @@ struct HomeScreen: View {
         if let (id, install) = itchInstaller.installs.first(where: { $0.value.state == .active }), let game = itchInstaller.game(for: id) {
             list.append(NoticeData(id: "download-itch", symbol: "arrow.down.to.line", title: "\(game.title) \(Int(install.progress.fraction * 100))%", detail: "Downloading from itch.io. Tap to see all downloads.", actionTitle: "Open"))
         }
+        if let (id, install) = amazonInstaller.installs.first(where: { $0.value.state == .active }), let game = amazonInstaller.game(for: id) {
+            list.append(NoticeData(id: "download-amazon", symbol: "arrow.down.to.line", title: "\(game.title) \(Int(install.progress.fraction * 100))%", detail: "Downloading from Amazon Games. Tap to see all downloads.", actionTitle: "Open"))
+        }
         // The maintainer answered a problem report: the status changed, or a note was added.
         let answered = problemTracker.answered
         if let first = answered.first {
@@ -172,8 +216,9 @@ struct HomeScreen: View {
     private func act(_ notice: NoticeData) {
         switch notice.id {
         case "jit": session.cancelJITWait()
-        case "failed": session.dismiss()
+        case "failed": if session.restartAdvised { session.closeApp() } else { session.dismiss() }
         case "restart": session.closeApp()
+        case "restart-pending": RestartCoordinator.shared.cancel()
         case "setup": router.showSetup = true
         case "runtime": Task { await VCRuntimeInstaller.shared.install() }
         case "cellular": Task { await CellularGuard.shared.restoreNow() }
@@ -182,7 +227,7 @@ struct HomeScreen: View {
         case "install": router.openSettings(.accounts)
         case "installer": UserDefaults.standard.removeObject(forKey: "f4.installerRan"); installerRan = nil; router.showAdd = true
         case "steam-update": router.openSteam()
-        case "download", "download-epic", "download-gog", "download-itch": router.openDownloads()
+        case "download", "download-epic", "download-gog", "download-itch", "download-amazon": router.openDownloads()
         case "problem": router.openSettings(.report)
         case "compat": if let prompt = compat.prompt { reportGame = model.games.first { $0.id == prompt.gameID } }
         default: break

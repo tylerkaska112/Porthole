@@ -80,7 +80,7 @@ enum ProblemReport {
     /// Reads the logs off the main thread, cleans them, and puts the parts together. With `crash`, the run that ended comes first, then the game's own log when it
     /// is a different file, then the end of the launch that followed.
     @MainActor static func build(description: String, includeLog: Bool, crash: CrashEvidence.Found? = nil) async -> Built {
-        let names = [EpicAuth.shared.accountName, SteamStore.shared.accountName, GogAuth.shared.accountName, ItchAuth.shared.accountName].compactMap { $0 }.filter { !$0.isEmpty }
+        let names = [EpicAuth.shared.accountName, SteamStore.shared.accountName, GogAuth.shared.accountName, ItchAuth.shared.accountName, AmazonAuth.shared.accountName].compactMap { $0 }.filter { !$0.isEmpty }
         var note = LogCleaner.clean(description.trimmingCharacters(in: .whitespacesAndNewlines), accountNames: names)
         var facts = facts()
         if let crash {

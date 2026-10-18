@@ -214,6 +214,11 @@ enum EngineLaunch {
             if e.largeReservations == true { own = "oversize-reserve = 1\nfft-arena-patch = 1" + (own.isEmpty ? "" : "\n" + own) }
             // A known game's own lines (GameFixes), first: the person's text wins where both set a key. The app reads some of them before the runtime starts.
             if let fix = GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID), !fix.configLines.isEmpty { own = fix.configLines.joined(separator: "\n") + (own.isEmpty ? "" : "\n" + own) }
+            // A Unity game with Rewired's Windows.Gaming.Input plugin sees no controller unless the host pads are also gamepads (see GameFixes.usesRewiredWindowsGamingInput).
+            if GameFixes.usesRewiredWindowsGamingInput(program: AppModel.unixURL(forWindows: game.exe)), !own.contains("MADEIRA_WGI_HOST_PADS") {
+                own = "env.MADEIRA_WGI_HOST_PADS = 1" + (own.isEmpty ? "" : "\n" + own)
+                LogStore.shared.log("[engine] Rewired's Windows.Gaming.Input plugin found: the controller is also offered as a Windows.Gaming.Input gamepad")
+            }
             let pairs = try MadeiraConfig.applyGame(own.isEmpty ? nil : own)
             if !pairs.isEmpty { LogStore.shared.log("[game-cfg] " + pairs.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) }
         } catch {

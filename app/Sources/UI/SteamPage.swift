@@ -23,6 +23,8 @@ struct SteamGamePage: View {
     @State private var reading: Reading?
     @State private var showReports = false
     @State private var door: Door?
+    @ObservedObject private var infoStore = SteamInfoStore.shared
+    @ObservedObject private var progress = SteamAchievementProgress.shared
     @State private var doorScope = FocusScope()
     @State private var writing: Game?
     @State private var confirmRemove = false
@@ -34,9 +36,9 @@ struct SteamGamePage: View {
 
     /// The pages behind the rows at the bottom of the page, so this page stays short.
     enum Door: String, Identifiable {
-        case compat, reviews, details
+        case compat, reviews, details, versions, achievements, workshop, news
         var id: String { rawValue }
-        var title: String { switch self { case .compat: "How it runs on Porthole"; case .reviews: "Steam reviews"; case .details: "Details and files" } }
+        var title: String { switch self { case .compat: "How it runs on Porthole"; case .reviews: "Steam reviews"; case .news: "News and patch notes"; case .details: "Details and files"; case .versions: "Version and DLC"; case .achievements: "Achievements"; case .workshop: "Workshop" } }
     }
 
     private var download: SteamStore.Download? { store.downloads[game.id] }
@@ -70,6 +72,8 @@ struct SteamGamePage: View {
             page = await SteamStorePages.shared.page(appID: game.id); loading = false
             await compat.refreshSteamBadges(ids: [game.id])
         }
+        .task(id: game.id) { await infoStore.refresh(appID: game.id) }
+        .task(id: game.id) { await progress.refresh(appID: game.id, store: store) }
         .fullScreenCover(item: Binding(get: { viewing.map(ViewerIndex.init) }, set: { viewing = $0?.index })) { start in
             MediaViewer(items: page?.media ?? [], start: start.index, scope: viewerScope) { viewing = nil }
         }
@@ -79,6 +83,10 @@ struct SteamGamePage: View {
                 case .compat: compatibility
                 case .reviews: reviews
                 case .details: details; requirements; files
+                case .versions: SteamVersionsContent(game: game, store: store, installed: installed, apply: { door = nil; start() })
+                case .achievements: SteamAchievementsContent(appID: game.id, store: store)
+                case .workshop: SteamWorkshopContent(appID: game.id, name: game.name, store: store)
+                case .news: SteamNewsList(appID: game.id)
                 }
             }
             .environmentObject(model)
@@ -120,6 +128,7 @@ struct SteamGamePage: View {
                 if let level = SteamControllers.shared.level(for: game.id) { ControllerPillButton(level: level) }
                 if let r = page?.reviewSummary { chip("hand.thumbsup.fill", "\(r.label) \u{00B7} \(r.percent)%", r.percent >= 70 ? Theme.good : r.percent >= 40 ? Theme.warn : Theme.bad) }
                 if installed { chip(store.updateAvailable(game) ? "arrow.triangle.2.circlepath.circle.fill" : "checkmark.circle.fill", store.updateAvailable(game) ? "Update available" : "Installed", store.updateAvailable(game) ? Theme.accent : Theme.good) }
+                if let deck = infoStore.info(for: game.id)?.deck, deck != .unknown { chip("gamecontroller", deck.title, deck == .verified ? Theme.good : (deck == .playable ? Theme.warn : Theme.textDim)) }
                 if let m = page?.metacritic { chip("star.fill", "Metacritic \(m)", Theme.textDim) }
             }
         }
@@ -219,8 +228,23 @@ struct SteamGamePage: View {
             if let r = page?.reviewSummary {
                 ActionRow(id: "sp-door-reviews", symbol: "hand.thumbsup.fill", title: "Steam reviews", subtitle: "\(r.label) \u{00B7} \(r.percent)%") { door = .reviews }
             }
+            ActionRow(id: "sp-door-news", symbol: "newspaper.fill", title: "News and patch notes", subtitle: "From Steam") { door = .news }
+            if store.signedIn {
+                ActionRow(id: "sp-door-versions", symbol: "square.stack.3d.up.fill", title: "Version and DLC", subtitle: versionsSummary) { door = .versions }
+            }
+            if store.signedIn {
+                ActionRow(id: "sp-door-achievements", symbol: "trophy.fill", title: "Achievements", subtitle: progress.summary(for: game.id) ?? "Your progress on Steam") { door = .achievements }
+                ActionRow(id: "sp-door-workshop", symbol: "puzzlepiece.extension.fill", title: "Workshop", subtitle: "Mods and community items", badge: "Beta") { door = .workshop }
+            }
             ActionRow(id: "sp-door-details", symbol: "info.circle.fill", title: "Details and files", subtitle: installed ? "Version, requirements, delete files" : "Version, requirements") { door = .details }
         }
+    }
+
+    private var versionsSummary: String {
+        let choice = store.choice(game.id)
+        var parts = [choice.branch == SteamBranch.publicName ? "Normal version" : choice.branch]
+        if !choice.disabledDLC.isEmpty { parts.append("\(choice.disabledDLC.count) DLC off") }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private var compatSummary: String {

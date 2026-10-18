@@ -9,6 +9,10 @@ struct GamePage: View {
     @EnvironmentObject var session: SessionController
     @Environment(AppRouter.self) private var router
     @ObservedObject private var steam = SteamStore.shared
+    @ObservedObject private var friendsStore = SteamFriendsStore.shared
+    @ObservedObject private var workshopStore = SteamWorkshopStore.shared
+    @ObservedObject private var infoStore = SteamInfoStore.shared
+    @ObservedObject private var progress = SteamAchievementProgress.shared
     @ObservedObject private var compat = CompatStore.shared
     @Environment(\.focusScope) private var scope
     @Environment(\.verticalSizeClass) private var vSize
@@ -49,6 +53,12 @@ struct GamePage: View {
                     argsText = game.args
                 }
                 .task { await compat.ensureFingerprint(for: game) }
+                .task(id: steam.signedIn) { if steam.signedIn { await friendsStore.refresh() } }
+                .task(id: steam.signedIn) { if steam.signedIn, let id = game.steamAppID ?? game.dockAppID { await progress.refresh(appID: id, store: steam) } }
+                .task(id: game.steamAppID ?? game.dockAppID) { if let id = game.steamAppID ?? game.dockAppID { await infoStore.refresh(appID: id) } }
+                .task(id: steam.signedIn) {
+                    if steam.signedIn, let id = game.steamAppID ?? game.dockAppID { await SteamWorkshopStore.shared.checkForUpdates(appID: id, gameName: game.name, download: SteamWorkshopStore.autoUpdate) }
+                }
                 .sheet(item: $sub) { s in
                     GameSubSheet(title: s.title, scope: subScope, close: { sub = nil }) { subContent(s, game) }
                         .environmentObject(model).environmentObject(session).environment(router)
@@ -139,6 +149,13 @@ struct GamePage: View {
         if g.store == nil || (g.store == .steam && !steamLaunch) { GlowChip(text: "Direct", symbol: "play.fill", tint: .white) }
         if let bits { GlowChip(text: "\(bits)-bit", tint: .white) }
         if let level = SteamControllers.shared.level(for: g.steamAppID ?? g.dockAppID) { ControllerPillButton(level: level) }
+        if let info = infoStore.info(for: g.steamAppID ?? g.dockAppID) {
+            if let r = info.reviews {
+                GlowChip(text: "\(r.text) \u{00B7} \(r.percent)%", symbol: r.score >= 7 ? "hand.thumbsup.fill" : (r.score >= 5 ? "hand.thumbsup" : "hand.thumbsdown.fill"),
+                         tint: r.score >= 7 ? Theme.good : (r.score >= 5 ? Theme.warn : Theme.bad))
+            }
+            if info.deck != .unknown { GlowChip(text: info.deck.title, symbol: "gamecontroller", tint: info.deck == .verified ? Theme.good : (info.deck == .playable ? Theme.warn : Theme.textDim)) }
+        }
         if compat.showBadges, let verdict = compat.badges[g.id]?.verdict { BadgePill(badge: BadgeData(symbol: verdict.symbol, text: verdict.title, tint: verdict.color)) }
         else if compat.showBadges, let past = compat.badges[g.id]?.past { BadgePill(badge: BadgeData(symbol: past.symbol, text: past.text, tint: past.color)) }
         else if compat.showBadges, compat.isUntested(g) { BadgePill(badge: BadgeData(symbol: "questionmark.circle.fill", text: "Not yet tested", tint: Theme.textDim)) }
@@ -148,9 +165,9 @@ struct GamePage: View {
 
     /// The pages behind the doors on this page.
     enum Sub: String, Identifiable {
-        case controls, compat, more, about
+        case controls, compat, more, about, achievements, workshop, friends, news
         var id: String { rawValue }
-        var title: String { switch self { case .controls: "Controls"; case .compat: "How it runs"; case .more: "More options"; case .about: "About and files" } }
+        var title: String { switch self { case .controls: "Controls"; case .compat: "How it runs"; case .more: "More options"; case .about: "About and files"; case .achievements: "Achievements"; case .friends: "Friends playing"; case .news: "News and patch notes"; case .workshop: "Workshop" } }
     }
 
     @ViewBuilder private func content(_ g: Game) -> some View {
@@ -158,8 +175,32 @@ struct GamePage: View {
         SettingsGroup {
             ActionRow(id: "gp-door-controls", symbol: "gamecontroller.fill", title: "Controls and key binds", subtitle: (g.controls ?? .standard) == .firstPerson ? "First person" : "Mouse and keys") { open(.controls) }
             ActionRow(id: "gp-door-compat", symbol: "checkmark.seal.fill", title: "How it runs for others", subtitle: compatSummary(g)) { open(.compat) }
+            if g.steamAppID ?? g.dockAppID != nil {
+                ActionRow(id: "gp-door-news", symbol: "newspaper.fill", title: "News and patch notes", subtitle: "From Steam") { open(.news) }
+            }
+            if steam.signedIn, g.steamAppID ?? g.dockAppID != nil {
+                ActionRow(id: "gp-door-achievements", symbol: "trophy.fill", title: "Achievements", subtitle: progress.summary(for: g.steamAppID ?? g.dockAppID) ?? "Your progress on Steam") { open(.achievements) }
+                ActionRow(id: "gp-door-friends", symbol: "person.2.fill", title: "Friends playing", subtitle: friendsSubtitle(g.steamAppID ?? g.dockAppID ?? 0)) { open(.friends) }
+                ActionRow(id: "gp-door-workshop", symbol: "puzzlepiece.extension.fill", title: "Workshop", subtitle: workshopSubtitle(g.steamAppID ?? g.dockAppID ?? 0), badge: "Beta") { open(.workshop) }
+            }
             ActionRow(id: "gp-door-more", symbol: "slider.horizontal.3", title: "More options", subtitle: "Speed, memory, engine and launch options") { open(.more) }
             ActionRow(id: "gp-door-about", symbol: "info.circle.fill", title: "About and files", subtitle: sizeText) { open(.about) }
+        }
+    }
+
+    private func workshopSubtitle(_ appID: Int) -> String {
+        let n = workshopStore.updates[appID] ?? 0
+        return n > 0 ? "\(n) update\(n == 1 ? "" : "s") available" : "Mods and community items"
+    }
+
+    /// "2 playing now" / "Nobody right now", from the friends list (loaded when the page opens, at most every 30 seconds).
+    private func friendsSubtitle(_ appID: Int) -> String {
+        guard friendsStore.loaded, friendsStore.error == nil || !friendsStore.friends.isEmpty else { return "Who of your Steam friends is in this game" }
+        let names = friendsStore.playing(game: appID).map(\.name)
+        switch names.count {
+        case 0: return "Nobody right now"
+        case 1: return "\(names[0]) is playing now"
+        default: return "\(names.count) playing now"
         }
     }
 
@@ -183,6 +224,10 @@ struct GamePage: View {
             GameEngineSection(gameID: g.id)
             launchOptionsGroups(g)
         case .about: detailsSection(g)
+        case .achievements: if let id = g.steamAppID ?? g.dockAppID { SteamAchievementsContent(appID: id, store: steam) }
+        case .friends: if let id = g.steamAppID ?? g.dockAppID { SteamFriendsList(onlyIn: id) }
+        case .news: if let id = g.steamAppID ?? g.dockAppID { SteamNewsList(appID: id) }
+        case .workshop: if let id = g.steamAppID ?? g.dockAppID { SteamWorkshopContent(appID: id, name: g.name, store: steam) }
         }
     }
 
@@ -334,7 +379,7 @@ struct GamePage: View {
             SettingsGroup(title: "Files") {
                 if let id = g.dockAppID, let owned = steam.owned.first(where: { $0.id == id }) {
                     ActionRow(id: "gp-verify", symbol: "arrow.triangle.2.circlepath", title: "Verify and update files",
-                              subtitle: steam.updateAvailable(owned) ? "Steam has a newer build." : "Checks every file against Steam and downloads anything missing or changed.", chevron: false) { steam.install(id) }
+                              subtitle: steam.updateAvailable(owned) ? "Steam has a newer build. Only the changed parts are downloaded." : "Checks every file against Steam (a few minutes) and downloads only what is missing or damaged.", chevron: false) { steam.verify(id) }
                     ActionRow(id: "gp-delete", symbol: "trash", title: "Delete downloaded files", destructive: true, chevron: false) { ask { confirmDelete = true } }
                 }
                 ActionRow(id: "gp-remove", symbol: "minus.circle", title: "Remove from library", destructive: true, chevron: false) { ask { confirmRemove = true } }

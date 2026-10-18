@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/../../Sources/Steam"
 OUT="$(mktemp -d)"
 cp "$HERE/SteamContentTests.swift" "$OUT/main.swift"
-swiftc -swift-version 5 -o "$OUT/steam" "$OUT/main.swift" "$HERE/SteamContentFixture.swift" \
-  "$SRC"/{SteamProtocol,SteamZstd,SteamCM,SteamContent,SteamAuth,SteamInstaller,SteamLibraryCM,SteamBinaryKV,SteamVDF,SteamLog,ConcurrencyController,SteamHostBook,SteamCloud,SteamManifestLanguage,SteamSharedApps}.swift
+swiftc -swift-version 5 -o "$OUT/steam" "$OUT/main.swift" "$HERE/SteamContentFixture.swift" "$HERE/AppStubs.swift" \
+  "$SRC"/{SteamProtocol,SteamZstd,SteamCM,SteamContent,SteamAuth,SteamInstaller,SteamLibraryCM,SteamBinaryKV,SteamVDF,SteamLog,ConcurrencyController,SteamHostBook,SteamCloud,SteamManifestLanguage,SteamSharedApps,SteamAchievements,SteamWorkshop,SteamOverlayWatcher,SteamFriends,SteamStoreInfo}.swift
 STEAM_VECTORS="$HERE/vectors" "$OUT/steam"
 rm -rf "$OUT"

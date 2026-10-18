@@ -151,6 +151,8 @@ final class GameHUDView: UIView {
     private let menuModel = GameMenuModel()
     /// The running game's name, for the menu's header.
     var gameName: String? { didSet { menuModel.gameName = gameName } }
+    /// The running game's Steam app id (nil for a game that is not from Steam), for the menu's Workshop tab.
+    var steamAppID: Int? { didSet { menuModel.steamAppID = steamAppID } }
     private let perfModel = PerfOverlayModel()
     private var overlayWatch: AnyCancellable?
     private var overlayConstraints: [NSLayoutConstraint] = []
@@ -158,6 +160,11 @@ final class GameHUDView: UIView {
     private lazy var menuHost: UIView = {
         let v = UIHostingConfiguration { GameMenuView(model: self.menuModel, overlay: PerfOverlaySettings.shared) }.margins(.all, 0).makeContentView()
         v.backgroundColor = .clear; v.isHidden = true; v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+    private lazy var toastHost: UIView = {
+        let v = UIHostingConfiguration { AchievementToastView() }.margins(.all, 0).makeContentView()
+        v.backgroundColor = .clear; v.isUserInteractionEnabled = false; v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }()
     private lazy var perfHost: UIView = {
@@ -253,6 +260,16 @@ final class GameHUDView: UIView {
         NotificationCenter.default.addObserver(forName: .padMenuChord, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             if self.menuOpen { self.menuOpen = false } else { self.menuModel.openedByPad = true; self.menuOpen = true }
+        }
+        // The game asked for Steam's overlay (its Workshop button, Shift+Tab): its own window cannot draw here, so the Steam menu opens instead, and an Escape press
+        // closes the overlay's empty screen, which has taken the game's input (until then the game does not answer).
+        NotificationCenter.default.addObserver(forName: .steamOverlayRequested, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.menuAvailable else { return }
+            self.menuModel.steamAppID != nil ? (self.menuModel.tab = .steam) : ()
+            self.menuModel.requestedSteamSection = "workshop"
+            self.menuModel.openedByPad = false
+            self.menuOpen = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { HUDKeys.tap(VK.esc) }
         }
         buildMenuAndOverlay()
         update(state: .starting)
@@ -541,6 +558,11 @@ final class GameHUDView: UIView {
             }
         }
         m.closeGame = { [weak self] in self?.menuOpen = false; self?.onClose?() }
+        m.restartGame = { [weak self] in
+            self?.menuOpen = false
+            let session = AppModel.shared.session
+            if let game = session.game { RestartCoordinator.shared.restart(game, session: session) }
+        }
         m.hasReport = onReport != nil
         m.setHandleStyle = { [weak self] style in
             UserDefaults.standard.set(style.rawValue, forKey: MenuHandleStyle.key)
@@ -551,6 +573,9 @@ final class GameHUDView: UIView {
         addSubview(perfHost); addSubview(menuHost)
         NSLayoutConstraint.activate([menuHost.leadingAnchor.constraint(equalTo: leadingAnchor), menuHost.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      menuHost.topAnchor.constraint(equalTo: topAnchor), menuHost.bottomAnchor.constraint(equalTo: bottomAnchor)])
+        addSubview(toastHost)
+        NSLayoutConstraint.activate([toastHost.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor), toastHost.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
+                                     toastHost.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor), toastHost.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor)])
         placeOverlay()
         applyOverlaySettings()
         overlayWatch = PerfOverlaySettings.shared.objectWillChange.sink { [weak self] _ in

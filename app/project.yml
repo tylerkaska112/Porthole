@@ -12,8 +12,8 @@ packages:
     path: "../Packages/LauncherCore"
 settings:
   base:
-    MARKETING_VERSION: 1.0.1          # one version for the app and its extension
-    CURRENT_PROJECT_VERSION: 500
+    MARKETING_VERSION: 1.1.0          # one version for the app and its extension
+    CURRENT_PROJECT_VERSION: 551
     SWIFT_VERSION: "5.0"
     SWIFT_OPTIMIZATION_LEVEL: "-O"      # also in Debug builds (the release scripts build Release; Debug is still available): the pairing maths is ~15x slower unoptimised, and the iPhone will not wait for it
     CLANG_CXX_LANGUAGE_STANDARD: gnu++20

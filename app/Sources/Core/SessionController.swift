@@ -47,6 +47,9 @@ final class SessionController: ObservableObject {
     /// True once a game's program has been started in this process. The runtime cannot be started a second time, so another game needs the app to be
     /// opened again.
     @Published private(set) var restartNeeded = false
+    /// The launch failed in a way a fresh start of the app fixes (the home screen's notice then offers Close Porthole).
+    @Published private(set) var restartAdvised = false
+    static let minimumSteamPool = 640 << 20
     private var dockPoll: Timer?
     private var dockGame: DockGame?
 
@@ -259,7 +262,7 @@ final class SessionController: ObservableObject {
             state = .failed("Porthole has to close and open again before the next game starts. Use Close Porthole on the Home screen, then open it again.")
             return
         }
-        launchCancelled = false; wineStarted = false; launchGameUp = false; launchPeeking = false; launchStep = .jit; launchBegan = Date()
+        launchCancelled = false; wineStarted = false; launchGameUp = false; launchPeeking = false; launchHold = false; restartAdvised = false; launchStep = .jit; launchBegan = Date()
         launchViaSteam = game.dockAppID != nil && game.launchDirect != true && GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)?.alwaysDirect != true
         self.game = game
         activeSettings = LaunchSettings.resolve(for: game)
@@ -380,7 +383,9 @@ final class SessionController: ObservableObject {
                         Task { @MainActor in self?.dockStatus = "Steam Cloud: \(name) (\(done) of \(total))" }
                     }
                 } catch {
-                    LogStore.shared.log("[cloud] skipped: \((error as? SteamContentError)?.message ?? error.localizedDescription)")
+                    let why = (error as? SteamContentError)?.message ?? error.localizedDescription
+                    LogStore.shared.log("[cloud] skipped: \(why)")
+                    if why.contains("could be reached") || why.contains("TLS") || why.contains("No internet") { self?.steamUnreachable = true }
                     return nil
                 }
             }
@@ -493,6 +498,7 @@ final class SessionController: ObservableObject {
                 // A fix that quietly does nothing is hard to find: say where it looked.
                 if done.isEmpty && !fix.hide.isEmpty { LogStore.shared.log("[game-fix] \(fix.title): nothing to set aside in \(folder.path) (\(fix.hide.joined(separator: ", ")))") }
             }
+            steamUnreachable = false
             if Self.cloudDownloadEnabled {
                 await downloadCloudFiles(for: dockGame, installFolder: gameFolder)
             }
@@ -545,9 +551,16 @@ final class SessionController: ObservableObject {
     }
 
     private var prepareTask: Task<Void, Never>?
+    /// Porthole's own connection to Steam failed before the launch (the network blocks Steam, or there is none): Valve's client in the game is likely to fail the same way.
+    private var steamUnreachable = false
+    /// Valve's client refuses to start the game until its content is current (the launch screen then says why instead of "Signing in").
+    @Published private(set) var launchHold = false
+    private var dockPollStarted = Date()
+    private var warnedSlowSteam = false
 
     private func beginDockPolling() {
         dockPoll?.invalidate()
+        dockPollStarted = Date(); warnedSlowSteam = false
         dockStatus = "Waiting for Steam\u{2026}"
         dockPoll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -563,7 +576,13 @@ final class SessionController: ObservableObject {
                 } else if report.fields["launch-update-wait"] != nil {
                     // Valve's client says the game needs content it will not fetch on its own (its shared files). Porthole installs them at the next start.
                     UserDefaults.standard.set(true, forKey: Self.needsSharedAppsKey)
-                    self.dockStatus = "Steam is waiting for content this game needs, which it cannot download here. Close the game and start it again: Porthole will install those files first."
+                    self.launchHold = true
+                    // Valve's client will not start the game until its content is current, and it cannot download here. Say what to do: an update (a newer build is on Steam), or a repair.
+                    if let id = self.dockGame?.id, let owned = SteamStore.shared.owned.first(where: { $0.id == id }), SteamStore.shared.updateAvailable(owned) {
+                        self.dockStatus = "Steam says \(owned.name) needs an update. Close the game, open it under Stores > Steam and tap Update, then start it again."
+                    } else {
+                        self.dockStatus = "Steam is waiting for content this game needs, which it cannot download here. Close the game and start it again: Porthole will install shared files first. If it stays like this, open the game under Stores > Steam > Details and files and use Verify files (it fixes files Steam marked as damaged)."
+                    }
                 } else if report.fields["launch-client-error"] == "0" {
                     // Valve's client accepted the licence and started the game; what is left is the game loading (a first start can take minutes).
                     self.dockStatus = "Steam started the game. Loading\u{2026} the screen stays black until the game opens its window (first start can take a few minutes)."
@@ -577,6 +596,15 @@ final class SessionController: ObservableObject {
                 } else if report.fields["load-client-begin"] != nil {
                     self.dockStatus = "Starting Steam\u{2026}"
                     self.launchStep = .steam
+                }
+                // Steam's client has not signed in after a while: usually the network is blocking Steam. Say so, instead of waiting in silence.
+                let waited = Date().timeIntervalSince(self.dockPollStarted)
+                if waited > (self.steamUnreachable ? 12 : 40), report.fields["session-authenticated-online"] != "1", report.fields["launch-client-error"] == nil, report.failure == nil {
+                    if !self.warnedSlowSteam {
+                        self.warnedSlowSteam = true
+                        LogStore.shared.log("[dock] Steam has not signed in after \(Int(waited)) s" + (self.steamUnreachable ? " (Porthole's own connection to Steam failed too)" : ""), level: .error)
+                    }
+                    self.dockStatus = "Steam hasn't signed in yet. Check your internet connection, then start the game again. Porthole keeps trying meanwhile."
                 }
             }
         }
@@ -844,6 +872,22 @@ final class SessionController: ObservableObject {
             }
             // A Dock session publishes no fixed Steam identity to its guests: Valve's client gives each game its own.
             let dockLaunch = MadeiraDock.takeLaunchRequest()
+            // Valve's client and the game together need about 600 MB of the JIT pool and more as the game loads. When iOS has put something in the spot the pool normally takes (it is a
+            // matter of where the system placed memory in this one start of the app), the pool shrinks, and a Steam game runs out of memory a minute later. Say so now, before it starts.
+            if dockLaunch.dock, pool.size < Self.minimumSteamPool {
+                log.log("[launch] the JIT pool is only \(pool.size >> 20) MB on this start of the app (a Steam game needs about \(EngineLaunch.poolBytes() >> 20)); not starting the game", level: .error)
+                StikJITHelper.detachDebugger()
+                CellularGuard.restoreBlocking()
+                VPNGuard.restoreBlocking()
+                DispatchQueue.main.async {
+                    ws_log_quiet = 0
+                    LogStore.shared.uiPaused = false
+                    PowerManager.shared.stop()
+                    self?.restartAdvised = true
+                    self?.state = .failed("iOS left too little room for this game on this start of Porthole (\(pool.size >> 20) MB of the \(poolBytes >> 20) MB it needs). Close Porthole and open it again, then start the game: it is different each time.")
+                }
+                return
+            }
             if dockLaunch.dock { setenv("MADEIRA_DOCK_SESSION", "1", 1) } else { unsetenv("MADEIRA_DOCK_SESSION") }
             // A Dock session runs Valve's client headless, with no Chromium, so nothing claims the 8 GB address-space holdback reserved for Chromium's V8 cage.
             // The engine hands it to the allocator when the guest band runs out (virtual_ios.c ios_cage_release_on_exhaustion; off unless this is 1). Madeira's own
@@ -856,6 +900,8 @@ final class SessionController: ObservableObject {
             // JIT is set up and the debugger has gone: if cellular data was switched off for the tunnel, switch it back on now, before the game starts
             // (leaves the app for a moment; does nothing otherwise).
             CellularGuard.restoreBlocking()
+            // The person's own VPN, paused for the tunnel, comes back now too: some networks block Steam without it, and the game's Steam client signs in as the game starts.
+            VPNGuard.restoreBlocking()
 
             log.log("Starting wineserver...")
             guard wineserver_start(prefix) == 0 else {
@@ -871,6 +917,18 @@ final class SessionController: ObservableObject {
             }
             DispatchQueue.main.async {
                 self?.runningSince = Date(); self?.state = .running
+                if let dockGame = self?.dockGame {   // achievement pop-ups: Steam's client in the game writes each unlock into its stats file
+                    SteamOverlayWatcher.shared.start(steamFolder: AppModel.prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam", isDirectory: true),
+                                                     isRunning: { [weak self] in self?.state == .running }) {
+                        guard AchievementToastCenter.overlayOpensMenu else { return }
+                        NotificationCenter.default.post(name: .steamOverlayRequested, object: nil)
+                    }
+                    AchievementToastCenter.shared.clear()
+                    SteamAchievementWatcher.shared.start(steamFolder: AppModel.prefix.appendingPathComponent("drive_c/Program Files (x86)/Steam", isDirectory: true),
+                                                         account: SteamService.shared.accountNumber, appID: dockGame.id, isRunning: { [weak self] in self?.state == .running }) { achievement in
+                        AchievementToastCenter.shared.post(achievement, appID: dockGame.id)
+                    }
+                }
                 self?.beginPlayCheckpoints()
                 if let g = self?.game {
                     CompatStore.shared.sessionBegan(g)
@@ -962,8 +1020,8 @@ extension SessionController {
             headline = "Starting Steam"
             detail = "Valve's own Steam client runs inside Porthole. It checks that you own the game before it opens."
         case .signIn:
-            headline = "Signing in to Steam"
-            detail = "Steam is confirming your licence for this game."
+            headline = launchHold ? "Steam won't start the game yet" : "Signing in to Steam"
+            detail = launchHold ? (dockStatus ?? "Steam needs this game's files to be up to date first.") : "Steam is confirming your licence for this game."
         case .load:
             headline = "Loading the game"
             detail = "The first start of a game can take a few minutes while it builds its caches. The screen stays here until the game's window appears."

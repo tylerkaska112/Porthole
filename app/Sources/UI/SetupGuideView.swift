@@ -11,6 +11,7 @@ struct SetupGuideView: View {
     @ObservedObject private var epic = EpicAuth.shared
     @ObservedObject private var gog = GogAuth.shared
     @ObservedObject private var itch = ItchAuth.shared
+    @ObservedObject private var amazon = AmazonAuth.shared
     @Environment(\.dismiss) private var dismiss
     /// A phone held sideways: the height is what is scarce, so the buttons move up beside the steps and the pages get the whole height.
     @Environment(\.verticalSizeClass) private var vSize
@@ -20,6 +21,7 @@ struct SetupGuideView: View {
     var openEpic: () -> Void = {}
     var openGog: () -> Void = {}
     var openItch: () -> Void = {}
+    var openAmazon: () -> Void = {}
 
     /// First time through on iOS 27 or later the in-app method (with the on-device pairing button) is preselected; otherwise whatever is set already.
     private static func initialMethod() -> JITMethod {
@@ -87,8 +89,8 @@ struct SetupGuideView: View {
         }
     }
 
-    /// Signed in to any of the four stores.
-    private var anyStore: Bool { steam.signedIn || epic.signedIn || gog.signedIn || itch.signedIn }
+    /// Signed in to any of the five stores.
+    private var anyStore: Bool { steam.signedIn || epic.signedIn || gog.signedIn || itch.signedIn || amazon.signedIn }
 
     private func complete(_ s: Step) -> Bool {
         switch s {
@@ -286,7 +288,7 @@ struct SetupGuideView: View {
         let lines: [Step: (String, String, String)] = [
             .speed: ("bolt.fill", "Full speed", "About 2 minutes"),
             .downloads: ("shippingbox.fill", "Windows components", "About 25 MB"),
-            .games: ("gamecontroller.fill", "Add your games", "Steam, Epic Games, GOG, itch.io or Files"),
+            .games: ("gamecontroller.fill", "Add your games", "Steam, Epic Games, GOG, itch.io, Amazon Games or Files"),
         ]
         let l = lines[s] ?? ("circle", s.name, "")
         return RowBase(id: "su-o-\(s.rawValue)", symbol: l.0, title: l.1, subtitle: l.2, action: { step = s }) {
@@ -402,6 +404,11 @@ struct SetupGuideView: View {
                 ActionRow(id: "su-itch", symbol: "arrow.down.circle.fill", tint: .red, title: itch.signedIn ? "Open your itch.io library" : "Sign in to itch.io",
                           info: "Download the games you bought, claimed or collected on itch.io. You make a personal API key on itch.io and paste it here; it stays in this device's Keychain.", chevron: false, prominent: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openItch() } }
             }
+            SettingsGroup(title: "Amazon Games") {
+                ValueRow(id: "su-amazon-state", symbol: amazon.signedIn ? "checkmark.circle.fill" : "circle.dashed", title: amazon.signedIn ? "Signed in" : "Not signed in", value: amazon.signedIn ? "Done" : "Optional", statusColor: amazon.signedIn ? Theme.good : Theme.textDim)
+                ActionRow(id: "su-amazon", symbol: "arrow.down.circle.fill", tint: .orange, title: amazon.signedIn ? "Open your Amazon Games library" : "Sign in to Amazon Games",
+                          info: "Download the games you bought on Amazon or claimed with Prime Gaming. You sign in on Amazon's own page; Porthole never sees your password.", chevron: false, prominent: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openAmazon() } }
+            }
             SettingsGroup(title: "Files") {
                 ValueRow(id: "su-files-state", symbol: model.games.isEmpty ? "circle.dashed" : "checkmark.circle.fill", title: model.games.isEmpty ? "No games added yet" : "\(model.games.count) game\(model.games.count == 1 ? "" : "s") added", value: model.games.isEmpty ? "Optional" : "Done", statusColor: model.games.isEmpty ? Theme.textDim : Theme.good)
                 ActionRow(id: "su-import", symbol: "folder.badge.plus", title: "Import a game", info: "Pick a game's folder in Files and it is copied into Porthole, or run a Windows installer.", chevron: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openAdd() } }
@@ -437,7 +444,7 @@ struct SetupGuideView: View {
             SettingsGroup {
                 summaryRow(.speed, jitReady && (!tunnelNeeded || tunnelAllowed) ? "Full speed: \(method.title)" : (jitReady ? "Private link not allowed" : "Full speed isn't set up"))
                 summaryRow(.downloads, runtimeReady ? "Windows components ready" : "Windows components missing")
-                summaryRow(.games, anyStore || !model.games.isEmpty ? "Games: \([steam.signedIn ? "Steam" : nil, epic.signedIn ? "Epic Games" : nil, gog.signedIn ? "GOG" : nil, itch.signedIn ? "itch.io" : nil, model.games.isEmpty ? nil : "\(model.games.count) imported"].compactMap { $0 }.joined(separator: ", "))" : "No games added yet")
+                summaryRow(.games, anyStore || !model.games.isEmpty ? "Games: \([steam.signedIn ? "Steam" : nil, epic.signedIn ? "Epic Games" : nil, gog.signedIn ? "GOG" : nil, itch.signedIn ? "itch.io" : nil, amazon.signedIn ? "Amazon Games" : nil, model.games.isEmpty ? nil : "\(model.games.count) imported"].compactMap { $0 }.joined(separator: ", "))" : "No games added yet")
             }
         }
     }

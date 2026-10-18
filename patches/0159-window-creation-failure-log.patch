@@ -1,0 +1,100 @@
+--- /tmp/window_ios.c.before-0159	2026-10-18 06:49:30
++++ vendor/Madeira/build/win32u-unix/window_ios.c	2026-10-18 06:50:15
+@@ -34,6 +34,14 @@
+ #include "wine/opengl_driver.h"
+ #include "wine/server.h"
+ #include "wine/debug.h"
++
++#ifdef WINE_IOS
++/* ml1401 / patch 0159: why does a window fail to be created? (the SDL raw-input thread of Counter-Strike 2 makes a message-only window and ends at once). */
++#define ML0159_FAIL( where, h ) do { static unsigned long ml0159_n; if (++ml0159_n <= 40) \
++    dprintf( STDERR_FILENO, "[createwin] 0159 failed at %s hwnd=%p last-error=%u\n", (where), (void *)(h), (unsigned)RtlGetLastWin32Error() ); } while (0)
++#else
++#define ML0159_FAIL( where, h ) do {} while (0)
++#endif
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(win);
+ 
+@@ -5791,7 +5799,10 @@
+     ex_style = cs.dwExStyle & ~WS_EX_LAYERED;
+     if (!(win = create_window_handle( parent, owner, class_name, class_instance,
+                                       cs.hInstance, ansi, style, ex_style )))
++    {
++        ML0159_FAIL( "create_window_handle", NULL );
+         return 0;
++    }
+     hwnd = win->handle;
+ 
+     /* Fill the window structure */
+@@ -5835,10 +5846,11 @@
+     cbtc.lpcs = &cs;
+     if (call_hooks( WH_CBT, HCBT_CREATEWND, (WPARAM)hwnd, (LPARAM)&cbtc, sizeof(cbtc) ))
+     {
++        ML0159_FAIL( "CBT hook", hwnd );
+         free_window_handle( hwnd );
+         return 0;
+     }
+-    if (!(win = get_win_ptr( hwnd ))) return 0;
++    if (!(win = get_win_ptr( hwnd ))) { ML0159_FAIL( "get_win_ptr", hwnd ); return 0; }
+ 
+     /*
+      * Correct the window styles.
+@@ -5913,6 +5925,7 @@
+     if (!apply_window_pos( hwnd, 0, SWP_NOZORDER | SWP_NOACTIVATE, surface, &new_rects, NULL ))
+     {
+         if (surface) window_surface_release( surface );
++        ML0159_FAIL( "apply_window_pos", hwnd );
+         goto failed;
+     }
+     if (surface) window_surface_release( surface );
+@@ -5923,6 +5936,7 @@
+     if (!send_message_timeout( hwnd, WM_NCCREATE, 0, (LPARAM)&cs, SMTO_NORMAL, 0, ansi ))
+     {
+         WARN( "%p: aborted by WM_NCCREATE\n", hwnd );
++        ML0159_FAIL( "WM_NCCREATE aborted", hwnd );
+         goto failed;
+     }
+ 
+@@ -5952,15 +5966,18 @@
+         apply_window_pos( hwnd, insert_after, SWP_NOACTIVATE, surface, &new_rects, NULL );
+         if (surface) window_surface_release( surface );
+     }
+-    else goto failed;
++    else { ML0159_FAIL( "get_window_rect_rel", hwnd ); goto failed; }
+ 
+     /* send WM_CREATE */
+     if (send_message_timeout( hwnd, WM_CREATE, 0, (LPARAM)&cs, SMTO_NORMAL, 0, ansi ) == -1)
++    {
++        ML0159_FAIL( "WM_CREATE returned -1", hwnd );
+         goto failed;
++    }
+ 
+     /* call the driver */
+ 
+-    if (!user_driver->pCreateWindow( hwnd )) goto failed;
++    if (!user_driver->pCreateWindow( hwnd )) { ML0159_FAIL( "driver CreateWindow", hwnd ); goto failed; }
+ 
+     NtUserNotifyWinEvent( EVENT_OBJECT_CREATE, hwnd, OBJID_WINDOW, 0 );
+ 
+@@ -5995,6 +6012,7 @@
+     send_parent_notify( hwnd, WM_CREATE );
+     if (!is_window( hwnd ))
+     {
++        ML0159_FAIL( "window gone after WM_PARENTNOTIFY", hwnd );
+         set_thread_dpi_awareness_context( context );
+         return 0;
+     }
+@@ -6029,6 +6047,13 @@
+     toplevel = NtUserGetAncestor( hwnd, GA_ROOT );
+     if (toplevel && toplevel != hwnd) update_window_state( toplevel );
+ 
++#ifdef WINE_IOS
++    if (parent == get_hwnd_message_parent())
++    {
++        static unsigned long ml0159_msg;
++        if (++ml0159_msg <= 20) dprintf( STDERR_FILENO, "[createwin] 0159 message-only window created hwnd=%p\n", hwnd );
++    }
++#endif
+     return hwnd;
+ 
+ failed:

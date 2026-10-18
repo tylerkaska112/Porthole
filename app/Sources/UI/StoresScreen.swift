@@ -22,6 +22,7 @@ struct StoresScreen: View {
                 case .epic: EpicStoreScreen()
                 case .gog: GogStoreScreen()
                 case .itch: ItchStoreScreen()
+                case .amazon: AmazonStoreScreen()
                 }
             }
         }
@@ -80,6 +81,7 @@ struct StoresHome: View {
     @ObservedObject private var epicInstaller = EpicInstaller.shared
     @ObservedObject private var gogInstaller = GogInstaller.shared
     @ObservedObject private var itchInstaller = ItchInstaller.shared
+    @ObservedObject private var amazonInstaller = AmazonInstaller.shared
 
     var body: some View {
         FocusScroll {
@@ -185,6 +187,8 @@ struct AllStoreGamesScreen: View {
     @ObservedObject private var gogLibrary = GogLibrary.shared
     @State private var openGog: GogGame?
     @State private var openItch: ItchGame?
+    @State private var openAmazon: AmazonGame?
+    @ObservedObject private var amazonLibrary = AmazonLibrary.shared
     @ObservedObject private var itchLibrary = ItchLibrary.shared
     @State private var search = ""
     @State private var filter = "all"
@@ -215,6 +219,9 @@ struct AllStoreGamesScreen: View {
                 guard let at = g.lastPlayed else { continue }
                 if let id = g.steamAppID ?? g.dockAppID { played["steam:\(id)"] = max(played["steam:\(id)"] ?? .distantPast, at) }
                 if let name = g.epicAppName { played["epic:\(name)"] = at }
+                if let id = g.gogID { played["gog:\(id)"] = at }
+                if let id = g.itchID { played["itch:\(id)"] = at }
+                if let id = g.amazonID { played["amazon:\(id)"] = at }
             }
             return list.sorted { a, b in
                 let x = played["\(a.store.rawValue):\(a.key)"], y = played["\(b.store.rawValue):\(b.key)"]
@@ -249,6 +256,7 @@ struct AllStoreGamesScreen: View {
                 .task(id: steam.owned.map(\.id)) { await compat.refreshSteamBadges(ids: steam.owned.map(\.id)) }
                 .sheet(item: $openGog) { GogGameSheet(game: $0) }
                 .sheet(item: $openItch) { ItchGameSheet(game: $0) }
+                .sheet(item: $openAmazon) { AmazonGameSheet(game: $0) }
             if let game = openSteam {
                 SteamGamePage(game: steam.owned.first { $0.id == game.id } ?? game, store: steam, backTitle: "All games") {
                     openSteam = nil
@@ -308,6 +316,10 @@ struct AllStoreGamesScreen: View {
         case .gog:
             if let game = gogLibrary.games.first(where: { $0.key == entry.key }) {
                 GogGameTile(game: game, showStore: true) { openGog = game }
+            }
+        case .amazon:
+            if let game = amazonLibrary.games.first(where: { $0.key == entry.key }) {
+                AmazonGameTile(game: game, showStore: true) { openAmazon = game }
             }
         case .steam:
             if let owned = steam.owned.first(where: { String($0.id) == entry.key }) {

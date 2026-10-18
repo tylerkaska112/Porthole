@@ -90,7 +90,7 @@ final class PadInput: @unchecked Sendable {
                   EngineOptions.value("env.PORTHOLE_PAD_IDENTITY") != "steam" {
             LogStore.shared.log("[pad] not shown as a DualSense: the game starts through Steam and Steam's controller support is not downloaded (Steam page), so Steam Input cannot run (the Xbox pad is used)")
         } else if let first, game?.engine?.controllerMode == nil, mode.isEmpty, !["0"].contains(EngineOptions.value("env.PORTHOLE_PAD_IDENTITY")),
-                  ControllerKind.detect(first).isPlayStation {
+                  ControllerKind.detect(first).isPlayStation, !Self.wantsXboxPad(game) {
             // Automatic, and the person is holding a PlayStation pad: the game is told so. It sees a DualSense (so it can show PlayStation buttons and read the touchpad) next to
             // the Xbox pad that games without HID support still read. A game's own "Xbox controller" choice, or env.PORTHOLE_PAD_IDENTITY = 0, keeps the old Xbox-only pad.
             setenv("MADEIRA_HIDPAD", "dualsense", 1)
@@ -129,6 +129,13 @@ final class PadInput: @unchecked Sendable {
             active = true; readLogAt = 0
             updateTimer(); sample()
         }
+    }
+
+    /// The game reads Xbox gamepads only (a known game, or Rewired's Windows.Gaming.Input plugin): Automatic keeps the Xbox pad instead of showing a PlayStation controller as a DualSense.
+    private static func wantsXboxPad(_ game: Game?) -> Bool {
+        guard let game else { return false }
+        if GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)?.xboxPad == true { return true }
+        return GameFixes.usesRewiredWindowsGamingInput(program: AppModel.unixURL(forWindows: game.exe))
     }
 
     /// The in-game menu opened or closed: while it is open the controller drives the menu and the game sees a neutral pad. The buttons held when it closes (the B that

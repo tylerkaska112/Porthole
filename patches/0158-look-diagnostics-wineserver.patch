@@ -1,0 +1,57 @@
+--- /tmp/queue_ios.c.before-1400	2026-10-18 06:35:09
++++ queue_ios.c	2026-10-18 06:35:14
+@@ -2332,8 +2332,10 @@
+         y = desktop_shm->cursor.y;
+     }
+ 
++    int ml1400_fg = 0;
+     if ((foreground = get_foreground_thread( desktop, win )))
+     {
++        ml1400_fg = 1;
+         memset( &raw_msg, 0, sizeof(raw_msg) );
+         raw_msg.foreground = foreground;
+         raw_msg.source     = source;
+@@ -2345,6 +2347,28 @@
+ 
+         dispatch_rawinput_message( desktop, &raw_msg );
+         release_object( foreground );
++    }
++
++    /* ml1400 [look-diag]: why does CS2's first-person look stop at a fixed angle? Once a second while relative moves arrive: how many, how far, where the server's cursor is
++     * (it clamps at the desktop edge), whether a foreground thread exists to receive raw input, and what the raw-input mouse device of each registered process asks for. */
++    if ((input->mouse.flags & MOUSEEVENTF_MOVE) && !(input->mouse.flags & MOUSEEVENTF_ABSOLUTE))
++    {
++        static unsigned rel_n, last_ms;
++        static long rel_dx, rel_dy, rel_adx;
++        rel_n++; rel_dx += input->mouse.x; rel_dy += input->mouse.y; rel_adx += input->mouse.x < 0 ? -input->mouse.x : input->mouse.x;
++        if (time - last_ms >= 1000)
++        {
++            struct process *p;
++            int nraw = 0;
++            unsigned rflags = 0;
++            unsigned long rtarget = 0;
++            LIST_FOR_EACH_ENTRY( p, &rawinput_processes, struct process, rawinput_entry )
++                if (p->rawinput_mouse) { nraw++; rflags = p->rawinput_mouse->flags; rtarget = p->rawinput_mouse->target; }
++            fprintf( stderr, "[look-diag] ml1400 relative moves=%u net dx=%ld dy=%ld |dx|=%ld cursor=(%d,%d) clipped=%d foreground=%d raw-mouse processes=%d flags=0x%x target=0x%lx\n",
++                     rel_n, rel_dx, rel_dy, rel_adx, desktop_shm->cursor.x, desktop_shm->cursor.y, is_cursor_clipped( desktop ), ml1400_fg, nraw, rflags, rtarget );
++            fflush( stderr );
++            rel_n = 0; rel_dx = rel_dy = rel_adx = 0; last_ms = time;
++        }
+     }
+ 
+     for (i = 0; i < ARRAY_SIZE( messages ); i++)
+@@ -4262,6 +4286,14 @@
+     process->rawinput_device_count = device_count;
+     memcpy( process->rawinput_devices, devices, size );
+ 
++    {   /* ml1400 [look-diag]: what the program registered for raw input */
++        unsigned int k;
++        for (k = 0; k < device_count; k++)
++            fprintf( stderr, "[look-diag] ml1400 raw input registered by pid %04x: usage 0x%08x (page<<16|usage) flags 0x%x target 0x%x\n", process->id,
++                     (unsigned)process->rawinput_devices[k].usage, (unsigned)process->rawinput_devices[k].flags,
++                     (unsigned)process->rawinput_devices[k].target );
++        fflush( stderr );
++    }
+     process->rawinput_mouse = find_rawinput_device( process, MAKELONG(HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC) );
+     process->rawinput_kbd = find_rawinput_device( process, MAKELONG(HID_USAGE_GENERIC_KEYBOARD, HID_USAGE_PAGE_GENERIC) );
+ 

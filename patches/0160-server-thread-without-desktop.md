@@ -1,0 +1,9 @@
+# 0160 Wineserver: a thread with no usable desktop gets the process's (or the input) desktop instead of failing to create a window
+
+`vendor/Madeira/build/wineserver/window_ios.c`, `create_window`: when `get_thread_desktop( current, DESKTOP_CREATEWINDOW )` fails (the thread's desktop handle is 0 or not valid), `ml1402_adopt_desktop` gives the thread the process's desktop, or hands the process the input desktop (`get_visible_winstation` / `get_input_desktop` / `alloc_handle` / `set_process_default_desktop`), and logs `[desktop-diag] ml1402 ...` (first 20).
+
+Reason (Counter-Strike 2, 2026-10-18, builds 1.1.43-1.1.44): first-person look stopped at a fixed angle, in every control layout. The patch 0158 log lines showed no raw mouse device registered (`raw-mouse processes=0`), the cursor clamping at the desktop edges (x 0 / 1919) and a game that never warps it. The patch 0159 log lines showed why: the game's SDL3 `SDLRawInput` thread (created late, after the game window) makes a message-only window (`parent=0x10028`) and `create_window_handle` fails with last error 6 (ERROR_INVALID_HANDLE), twice; the thread then exits before `RegisterRawInputDevices`. Earlier message-only windows (created by threads started early) all succeed. STATUS_INVALID_HANDLE from `create_window` with a valid parent comes from `get_thread_desktop` (no usable desktop handle on that thread). Unverified: why the thread has none (a late thread should inherit `process->desktop` in `create_thread`).
+
+Effect: such a thread can create its window, registers raw input, and a game that reads raw mouse movement is no longer limited by the pointer position. Changes how games run (engine bump to r16).
+
+Build: `vendor/Madeira/build/wineserver/build.sh`, copy `obj/libwineserver.a` into `gl-lib-0160` (other libraries from `gl-lib-0159`), `LIB_OVERRIDES=<dir> tools/stage_runtime.sh`.

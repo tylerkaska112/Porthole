@@ -1,0 +1,27 @@
+diff --git a/build/win32u-unix/build.sh b/build/win32u-unix/build.sh
+index a0a635d..2893ba4 100755
+--- a/build/win32u-unix/build.sh
++++ b/build/win32u-unix/build.sh
+@@ -97,6 +97,11 @@ for src in $WINE_SRC/dlls/win32u/*.c $WINE_SRC/dlls/win32u/dibdrv/*.c; do
+             compile_one "$BUILD_DIR/defwnd_ios.c" "defwnd"
+             continue
+             ;;
++        window)
++            # Wraps upstream window.c with the 0156 default-size guard and the [createwin] log.
++            compile_one "$BUILD_DIR/window_ios.c" "window"
++            continue
++            ;;
+         driver)
+             compile_one "$BUILD_DIR/driver_ios.c" "driver"
+             continue
+@@ -132,6 +137,10 @@ for src in $WINE_SRC/dlls/win32u/*.c $WINE_SRC/dlls/win32u/dibdrv/*.c; do
+     compile_one "$src" "$name"
+ done
+ 
++# winios OpenGL driver: WGL over Apple's OpenGL ES (EAGL half in
++# app/Madeira/Winios/WiniosGL.m).
++compile_one "$BUILD_DIR/opengl_ios.c" "opengl_ios"
++
+ echo ""
+ echo "Results: $SUCCEEDED succeeded, $FAILED failed"
+ if [ -n "$FAILED_FILES" ]; then

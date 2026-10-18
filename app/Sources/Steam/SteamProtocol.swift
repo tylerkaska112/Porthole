@@ -100,7 +100,9 @@ enum SteamIDs {
 
 enum EMsg {
     static let multi = 1, serviceMethodResponse = 147, serviceMethodCall = 151, heartBeat = 703, logOff = 706
-    static let logOnResponse = 751, licenseList = 780, getDepotDecryptionKey = 5438, getDepotDecryptionKeyResponse = 5439
+    static let logOnResponse = 751, licenseList = 780, getDepotDecryptionKey = 5438, getDepotDecryptionKeyResponse = 5439, checkAppBetaPassword = 5450, checkAppBetaPasswordResponse = 5451
+    static let getUserStats = 818, getUserStatsResponse = 819
+    static let enumerateSubscribedFiles = 7378, enumerateSubscribedFilesResponse = 7379
     static let logOn = 5514, picsProductInfoRequest = 8903, picsProductInfoResponse = 8904
     static let picsAccessTokenRequest = 8905, picsAccessTokenResponse = 8906
 }
@@ -389,6 +391,16 @@ enum SteamCipher {
               let head = crypt(op: CCOperation(kCCEncrypt), mode: CCMode(kCCModeECB), key: key, iv: nil, data: iv, padding: CCPadding(ccNoPadding)),
               let body = crypt(op: CCOperation(kCCEncrypt), mode: CCMode(kCCModeCBC), key: key, iv: iv, data: plain, padding: CCPadding(ccPKCS7Padding)) else { return nil }
         return head + body
+    }
+
+    /// AES-256 in ECB mode with no padding, for input that is a whole number of 16-byte blocks (used for password-branch manifest ids).
+    static func decryptECB(_ input: Data, key: Data) -> Data? {
+        guard key.count == 32, !input.isEmpty, input.count % 16 == 0 else { return nil }
+        return crypt(op: CCOperation(kCCDecrypt), mode: CCMode(kCCModeECB), key: key, iv: nil, data: input, padding: CCPadding(ccNoPadding))
+    }
+    static func encryptECB(_ input: Data, key: Data) -> Data? {
+        guard key.count == 32, !input.isEmpty, input.count % 16 == 0 else { return nil }
+        return crypt(op: CCOperation(kCCEncrypt), mode: CCMode(kCCModeECB), key: key, iv: nil, data: input, padding: CCPadding(ccNoPadding))
     }
 
     private static func crypt(op: CCOperation, mode: CCMode, key: Data, iv: Data?, data: Data, padding: CCPadding) -> Data? {

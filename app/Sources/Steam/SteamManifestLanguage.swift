@@ -9,8 +9,11 @@ import Foundation
 enum SteamManifestLanguage {
     static let defaultLanguage = "english"      // Porthole downloads the English, public branch only
 
-    static func blockLines(language: String = defaultLanguage) -> [String] {
-        ["\t\"UserConfig\"", "\t{", "\t\t\"language\"\t\t\"\(language)\"", "\t}", "\t\"MountedConfig\"", "\t{", "\t\t\"language\"\t\t\"\(language)\"", "\t}"]
+    /// `branch` other than "public" adds the BetaKey Valve's client reads to know which version of the game these files are (without it the client takes them for the
+    /// public version and offers to "update" them).
+    static func blockLines(language: String = defaultLanguage, branch: String = "public") -> [String] {
+        let beta = branch == "public" || branch.isEmpty ? [] : ["\t\t\"BetaKey\"\t\t\"\(branch.replacingOccurrences(of: "\"", with: ""))\""]
+        return ["\t\"UserConfig\"", "\t{", "\t\t\"language\"\t\t\"\(language)\""] + beta + ["\t}", "\t\"MountedConfig\"", "\t{", "\t\t\"language\"\t\t\"\(language)\""] + beta + ["\t}"]
     }
 
     /// The record with a language in both blocks (added, or filled in where empty), or nil when nothing should change: not an install record, or both blocks already name a

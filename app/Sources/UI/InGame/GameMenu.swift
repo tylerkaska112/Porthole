@@ -3,10 +3,10 @@
 import SwiftUI
 
 enum GameMenuTab: String, CaseIterable, Identifiable {
-    case performance, controls, game
+    case performance, controls, game, steam
     var id: String { rawValue }
-    var title: String { switch self { case .performance: "Performance"; case .controls: "Controls"; case .game: "Game" } }
-    var symbol: String { switch self { case .performance: "gauge.with.dots.needle.67percent"; case .controls: "gamecontroller"; case .game: "ellipsis.circle" } }
+    var title: String { switch self { case .performance: "Performance"; case .controls: "Controls"; case .game: "Game"; case .steam: "Steam" } }
+    var symbol: String { switch self { case .performance: "gauge.with.dots.needle.67percent"; case .controls: "gamecontroller"; case .game: "ellipsis.circle"; case .steam: "person.2.fill" } }
 }
 
 /// How visible the strip on the right edge is. The swipe in from that edge works with every choice.
@@ -58,6 +58,12 @@ final class GameMenuModel: ObservableObject {
     @Published var handleStyle = MenuHandleStyle.current
     @Published var hasReport = false
     @Published var gameName: String?
+    /// The Steam app id of the running game, when it has one: the Steam tab needs it.
+    @Published var steamAppID: Int?
+    /// A part of the Steam tab to show when the tab opens (set when a game asked for Steam's overlay); the tab takes it and clears it.
+    @Published var requestedSteamSection: String?
+    /// The tabs that make sense for this game: Steam only for a Steam game when the person is signed in to Steam.
+    var availableTabs: [GameMenuTab] { GameMenuTab.allCases.filter { $0 != .steam || (steamAppID != nil && SteamStore.shared.signedIn) } }
 
     // Actions, set by the HUD.
     var close: () -> Void = {}
@@ -79,6 +85,7 @@ final class GameMenuModel: ObservableObject {
     var captureFrame: () -> Void = {}
     var profile: () -> Void = {}
     var closeGame: () -> Void = {}
+    var restartGame: () -> Void = {}
 
     static let fenceModes: [(mode: Int, name: String, detail: String)] = [
         (1, "Accurate", "Waits for the GPU the way the game expects. The safe choice."),
@@ -134,7 +141,7 @@ private struct GameMenuPanel: View {
         scope.onBack = { [model] in model.dismiss() }
         scope.onMenu = { [model] in model.dismiss() }
         scope.onSection = { [model] step in
-            let all = GameMenuTab.allCases
+            let all = model.availableTabs
             if let i = all.firstIndex(of: model.tab) { model.tab = all[(i + step + all.count) % all.count] }
         }
         if model.openedByPad { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [scope] in scope.ensureFocus() } }
@@ -147,7 +154,7 @@ private struct GameMenuPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "lightbulb.fill").foregroundStyle(Theme.accent)
-                Text("The menu has three tabs").font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+                Text("The menu has tabs").font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
             }
             ForEach(GuideCatalog.gameMenu.steps, id: \.title) { step in
                 (Text(step.title + ": ").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.text) + Text(step.text).font(.system(size: 13)).foregroundStyle(Theme.text.opacity(0.85)))
@@ -177,6 +184,7 @@ private struct GameMenuPanel: View {
                     case .performance: PerformanceTab(model: model, overlay: overlay)
                     case .controls: ControlsTab(model: model)
                     case .game: GameTab(model: model)
+                    case .steam: SteamTab(model: model)
                     }
                 }
                 .padding(16)
@@ -216,7 +224,7 @@ private struct GameMenuPanel: View {
 
     private var tabBar: some View {
         HStack(spacing: 4) {
-            ForEach(GameMenuTab.allCases) { tab in
+            ForEach(model.availableTabs) { tab in
                 let on = model.tab == tab
                 Button { model.tab = tab } label: {
                     VStack(spacing: 3) {
@@ -237,7 +245,7 @@ private struct GameMenuPanel: View {
 
 // MARK: - Pieces
 
-private struct MenuCard<Content: View>: View {
+struct MenuCard<Content: View>: View {
     let title: String
     var footer: String?
     @ViewBuilder var content: Content
@@ -254,7 +262,7 @@ private struct MenuCard<Content: View>: View {
     }
 }
 
-private struct MenuChoiceRow: View {
+struct MenuChoiceRow: View {
     let title: String
     var detail: String?
     let selected: Bool
@@ -278,7 +286,7 @@ private struct MenuChoiceRow: View {
     }
 }
 
-private struct MenuToggleRow: View {
+struct MenuToggleRow: View {
     let title: String
     var detail: String?
     @Binding var isOn: Bool
@@ -295,7 +303,7 @@ private struct MenuToggleRow: View {
     }
 }
 
-private struct MenuActionRow: View {
+struct MenuActionRow: View {
     let title: String
     var symbol: String?
     var detail: String?
@@ -319,7 +327,7 @@ private struct MenuActionRow: View {
     }
 }
 
-private struct MenuDivider: View { var body: some View { Divider().overlay(Theme.line).padding(.leading, 12) } }
+struct MenuDivider: View { var body: some View { Divider().overlay(Theme.line).padding(.leading, 12) } }
 
 // MARK: - Performance
 
@@ -586,6 +594,8 @@ private struct GameTab: View {
             }
         }
         MenuCard(title: "Session") {
+            MenuActionRow(title: "Restart game", symbol: "arrow.clockwise", detail: "Closes the game and Porthole, then starts the game again when you open Porthole") { model.restartGame() }
+            MenuDivider()
             MenuActionRow(title: "Close game", symbol: "power", destructive: true) { model.closeGame() }
         }
     }

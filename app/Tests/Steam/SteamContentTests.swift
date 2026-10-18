@@ -132,6 +132,45 @@ do {   // a complete install
     check(states.first == .preparing("Asking Steam about Sample Game…") && !fractions.isEmpty && zip(fractions, fractions.dropFirst()).allSatisfy { $0 <= $1 }, "install: progress only ever moves forward")
 }
 
+do {   // verify: a damaged file is repaired by fetching only the damaged chunks; an undamaged install fetches nothing
+    let paths = freshPaths("verify-repair-chunks")
+    let fake = makeStore(appid: 480, name: "Sample Game", depots: [depotA])
+    let first = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    run(first)
+    check(first.state == .finished, "verify: the first install finishes (\(first.state))")
+    let installed = paths.driveC.appendingPathComponent("Program Files (x86)/Steam/steamapps/common/Sample Game/data/levels/one.dat")
+    let original = (try? Data(contentsOf: installed)) ?? Data()
+    // Damage one byte in the chunk that covers 2000..<3000, and cut the end off another file.
+    if let handle = try? FileHandle(forWritingTo: installed) { try? handle.seek(toOffset: 2100); try? handle.write(contentsOf: Data([original[2100] ^ 0xFF])); try? handle.close() }
+    check((try? Data(contentsOf: installed)) != original, "verify: the file really is damaged now")
+    // Without verify the install record says the depot is current: nothing is fetched, nothing is repaired (this is why Verify exists).
+    var before = fake.requested.count
+    let plain = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    run(plain)
+    check(fake.requested.count == before && (try? Data(contentsOf: installed)) != original, "verify: a plain install of a current game fetches nothing")
+    // With verify every file is checked against the manifest and only the damaged chunk comes again.
+    before = fake.requested.count
+    let check1 = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    check1.selection.verify = true
+    run(check1)
+    check(check1.state == .finished && (try? Data(contentsOf: installed)) == original, "verify: the damaged file is right again")
+    check(fake.requested.count - before == 1, "verify: only the one damaged chunk was fetched (\(fake.requested.count - before))")
+    // And a verify of an undamaged game fetches nothing.
+    before = fake.requested.count
+    let clean = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    clean.selection.verify = true
+    run(clean)
+    check(clean.state == .finished && fake.requested.count == before, "verify: an undamaged game fetches no chunk")
+    // A file that is too long (an older version) is cut to the right length without fetching it.
+    if let handle = try? FileHandle(forWritingTo: installed) { try? handle.seekToEnd(); try? handle.write(contentsOf: Data(repeating: 7, count: 500)); try? handle.close() }
+    before = fake.requested.count
+    let longer = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    longer.selection.verify = true
+    run(longer)
+    check(fake.requested.count == before && (try? Data(contentsOf: installed)) == original, "verify: a file that is too long is cut to size with no download")
+}
+
+
 do {   // retries: a lost connection and a damaged answer are both tried again
     let paths = freshPaths("retry")
     let fake = makeStore(appid: 480, name: "Sample Game", depots: [depotA])
@@ -266,6 +305,164 @@ extension Data {
     }
 }
 
+// MARK: - Installing DLC and other versions
+
+print("--- install: DLC and branches")
+func steamappsText(_ paths: LibraryPaths, _ file: String) -> String? { try? String(contentsOf: paths.steamApps.appendingPathComponent(file), encoding: .utf8) }
+let dlcFile = ContentFixture.File(path: "dlc/extra.pak", data: ContentFixture.bytes(size: 2500, seed: 21))
+let depotDLC = ContentFixture.makeDepot(id: 482, manifestID: 400, key: key, files: [dlcFile])
+func dlcStore() -> FakeContent {
+    makeStore(appid: 480, name: "Sample Game", depots: [depotA, depotDLC], extra: [482: "\t\t\t\"dlcappid\"\t\"950\"\n"])
+}
+func baseChunks(_ fake: FakeContent) -> Int { fake.requested.count }
+
+do {   // DLC is left out unless it is asked for, added when it is, and skipped quietly when the account does not own it
+    let none = freshPaths("dlc-none"); let fakeNone = dlcStore()
+    let a = SteamInstaller(appid: 480, name: "Sample Game", steamApps: none.steamApps, backend: fakeNone)
+    run(a)
+    check(a.state == .finished && read(none, "dlc/extra.pak") == nil, "dlc: by default only the game's own files are installed")
+
+    let all = freshPaths("dlc-all"); let fakeAll = dlcStore()
+    let b = SteamInstaller(appid: 480, name: "Sample Game", steamApps: all.steamApps, backend: fakeAll)
+    b.selection = SteamInstallSelection(dlc: .all)
+    run(b)
+    check(b.state == .finished && read(all, "dlc/extra.pak") == dlcFile.data && read(all, "Game.exe") == sampleFiles[0].data, "dlc: with DLC asked for its files are installed next to the game's")
+    let record = steamappsText(all, "appmanifest_480.acf") ?? ""
+    check(record.contains("\"482\"") && record.contains("\"dlcappid\"\t\t\"950\"") && record.contains("\"481\""), "dlc: the install record lists the DLC depot with its DLC app, as Steam's does")
+    check(!record.contains("BetaKey"), "dlc: the public version carries no BetaKey")
+
+    let denied = freshPaths("dlc-denied"); let fakeDenied = dlcStore(); fakeDenied.notOwnedDepots = [482]
+    let c = SteamInstaller(appid: 480, name: "Sample Game", steamApps: denied.steamApps, backend: fakeDenied)
+    c.selection = SteamInstallSelection(dlc: .all)
+    run(c)
+    check(c.state == .finished && read(denied, "Game.exe") != nil && read(denied, "dlc/extra.pak") == nil, "dlc: DLC the account does not own is skipped; the game still installs")
+    check(!(steamappsText(denied, "appmanifest_480.acf") ?? "").contains("\"482\""), "dlc: and it is not claimed in the record")
+}
+
+do {   // adding DLC to an installed game fetches only the DLC; the game's depot is kept
+    let paths = freshPaths("dlc-later"); let fake = dlcStore()
+    let first = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    run(first)
+    let before = fake.requested.count
+    let later = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    later.selection = SteamInstallSelection(dlc: .all)
+    run(later)
+    let fetched = fake.requested.count - before
+    check(later.state == .finished && read(paths, "dlc/extra.pak") == dlcFile.data && read(paths, "Game.exe") == sampleFiles[0].data, "dlc later: the DLC arrives and the game is intact")
+    check(fetched == depotDLC.chunks.count, "dlc later: only the DLC's chunks were fetched (\(fetched) of \(depotDLC.chunks.count))")
+    check(!fake.keyRequests.dropFirst(1).contains(481) || fake.keyRequests.filter { $0 == 481 }.count == 1, "dlc later: the game's depot was not asked about again")
+    let record = steamappsText(paths, "appmanifest_480.acf") ?? ""
+    check(record.contains("\"481\"") && record.contains("\"482\""), "dlc later: the record lists both depots")
+    // Nothing new to fetch at all: it says so and still finishes.
+    let again = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    again.selection = SteamInstallSelection(dlc: .all)
+    let beforeAgain = fake.requested.count
+    run(again)
+    check(again.state == .finished && fake.requested.count == beforeAgain, "dlc later: installing the same thing again fetches nothing")
+}
+
+do {   // another version (branch): its own manifests and build id, a BetaKey in the record, and back to public again
+    let paths = freshPaths("branch")
+    let newData = ContentFixture.bytes(size: 3200, seed: 33)
+    let betaFiles = [ContentFixture.File(path: "Game.exe", data: newData)]
+    let betaDepot = ContentFixture.makeDepot(id: 481, manifestID: 112, key: key, files: betaFiles)
+    let fake = makeStore(appid: 480, name: "Sample Game", depots: [depotA])
+    var info = fake.apps[480]!
+    info.depots[0].branchManifests["beta"] = SteamDepotManifestEntry(gid: 112, size: betaDepot.totalSize, download: nil)
+    info.branches.append(SteamBranch(name: "beta", buildID: "888"))
+    fake.apps[480] = info
+    fake.depots[481] = depotA
+    let pub = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    run(pub)
+    check(pub.state == .finished && read(paths, "Game.exe") == sampleFiles[0].data, "branch: the public version installs first")
+
+    fake.depots[481] = betaDepot
+    let beta = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    beta.selection = SteamInstallSelection(branch: "beta")
+    run(beta)
+    let record = steamappsText(paths, "appmanifest_480.acf") ?? ""
+    check(beta.state == .finished && read(paths, "Game.exe") == newData, "branch: the beta's files replace the public ones (\(beta.state))")
+    check(record.contains("\"buildid\"\t\t\"888\"") && record.contains("\"manifest\"\t\t\"112\""), "branch: the record carries the beta's build id and manifest")
+    check(record.components(separatedBy: "\"BetaKey\"\t\t\"beta\"").count == 3, "branch: BetaKey is written to both config blocks, so Valve's client does not take it for the public version")
+    check(beta.installInfo?.buildID == "888", "branch: the installer reports the branch's build")
+
+    fake.depots[481] = depotA
+    let back = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    run(back)
+    let backRecord = steamappsText(paths, "appmanifest_480.acf") ?? ""
+    check(back.state == .finished && read(paths, "Game.exe") == sampleFiles[0].data && !backRecord.contains("BetaKey") && backRecord.contains("\"buildid\"\t\t\"777\""), "branch: going back to public restores its files, build and drops the BetaKey")
+
+    let missing = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    missing.selection = SteamInstallSelection(branch: "nonesuch")
+    run(missing)
+    if case .failed(let message) = missing.state { check(message.contains("nonesuch"), "branch: a version Steam does not list is refused by name (\(message))") } else { check(false, "branch: a missing version fails (\(missing.state))") }
+}
+
+// MARK: - Workshop
+
+print("--- workshop")
+do {   // what Steam answers for Workshop items
+    let json = #"{"total":2,"publishedfiledetails":[{"result":1,"publishedfileid":"111","creator":"76561198000000001","consumer_appid":480,"title":"Big Mod","short_description":"Does [b]things[/b].","preview_url":"https://x/y.jpg","file_size":"2048","subscriptions":1500,"time_updated":1700000000,"hcontent_file":"4444","vote_data":{"score":0.9,"votes_up":90,"votes_down":10},"tags":[{"tag":"Maps"},{"tag":"x","display_name":"Gameplay"}]},{"result":9,"publishedfileid":"112"},{"result":1,"publishedfileid":"113","title":"Plain file","file_description":"[h1]Hi[/h1] there","file_url":"https://cdn/x/mod.zip","filename":"mods/mod.zip","hcontent_file":"0"}]}"#
+    let reply = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+    let items = SteamWorkshopParser.items(reply, appID: 480)
+    check(items.count == 2 && items[0].id == 111 && items[1].id == 113, "workshop: items are read and a missing one (result 9) is left out")
+    check(items[0].title == "Big Mod" && items[0].summary == "Does things." && items[0].fileSize == 2048 && items[0].subscriptions == 1500, "workshop: title, summary without BBCode, size, subscribers")
+    check(items[0].contentManifest == 4444 && items[0].canDownload && items[0].rating == 0.9 && items[0].tags == ["Maps", "Gameplay"], "workshop: content manifest, rating, tags")
+    check(items[0].updated == Date(timeIntervalSince1970: 1_700_000_000) && items[0].creator == 76561198000000001 && items[0].previewURL?.absoluteString == "https://x/y.jpg", "workshop: updated time, creator, picture")
+    check(items[1].summary == "Hi there" && items[1].fileURL?.absoluteString == "https://cdn/x/mod.zip" && items[1].filename == "mods/mod.zip" && items[1].contentManifest == 0 && items[1].canDownload, "workshop: a plain-file item is downloadable from its address")
+    check(items[1].appID == 480 && items[1].rating == nil, "workshop: the game defaults to the one asked for; no votes means no rating")
+}
+
+do {   // the account's subscriptions as Steam's client asks for them
+    var one = PBWriter(); one.fixed64(1, 111); one.varint(3, 480); one.fixed64(4, 4444); one.varint(5, 2048)
+    var two = PBWriter(); two.fixed64(1, 0)       // an entry with no id is ignored
+    var answer = PBWriter(); answer.varint(1, 1); answer.message(2, one); answer.message(2, two); answer.varint(3, 7)
+    if case .success(let list) = SteamWorkshopParser.subscribed(from: answer.data) {
+        check(list.files == [SteamSubscribedFile(id: 111, appID: 480, subscribed: nil, updated: nil, manifest: 4444, size: 2048)] && list.total == 7, "workshop: subscribed files and the total are read")
+    } else { check(false, "workshop: subscribed files are read") }
+    var bad = PBWriter(); bad.varint(1, 2)
+    if case .failure = SteamWorkshopParser.subscribed(from: bad.data) { check(true, "workshop: an error answer fails") } else { check(false, "workshop: an error answer fails") }
+}
+
+do {   // the record on disk, and downloading an item
+    let paths = freshPaths("workshop-record")
+    let when = Date(timeIntervalSince1970: 1_700_000_000)
+    SteamWorkshopFiles.record(.init(id: 111, size: 2048, manifest: 4444, updated: when), appID: 480, steamApps: paths.steamApps, subscribedBy: "42")
+    SteamWorkshopFiles.record(.init(id: 222, size: 10, manifest: 5, updated: nil), appID: 480, steamApps: paths.steamApps, subscribedBy: "42")
+    let found = SteamWorkshopFiles.installed(appID: 480, steamApps: paths.steamApps)
+    check(found.count == 2 && found[111]?.manifest == 4444 && found[111]?.size == 2048 && found[111]?.updated == when, "workshop record: items are written and read back")
+    let text = (try? String(contentsOf: SteamWorkshopFiles.recordURL(appID: 480, steamApps: paths.steamApps), encoding: .utf8)) ?? ""
+    check(text.contains("\"AppWorkshop\"") && text.contains("\"WorkshopItemsInstalled\"") && text.contains("\"WorkshopItemDetails\"") && text.contains("\"subscribedby\"\t\t\"42\"") && text.contains("\"SizeOnDisk\"\t\t\"2058\""), "workshop record: the layout Steam's client uses")
+    SteamWorkshopFiles.remove(item: 222, appID: 480, steamApps: paths.steamApps, subscribedBy: "42")
+    check(SteamWorkshopFiles.installed(appID: 480, steamApps: paths.steamApps).keys.sorted() == [111], "workshop record: removing an item takes it out")
+}
+
+do {
+    let modA = ContentFixture.File(path: "mod.json", data: ContentFixture.bytes(size: 900, seed: 31))
+    let modB = ContentFixture.File(path: "textures/a.dds", data: ContentFixture.bytes(size: 5000, seed: 32))
+    let paths = freshPaths("workshop-install")
+    let fake = makeStore(appid: 480, name: "Sample Game", depots: [depotA])
+    fake.depots[480] = ContentFixture.makeDepot(id: 480, manifestID: 777, key: key, files: [modA, modB])
+    let a = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    a.workshop = .init(item: 12345, depot: 480, manifest: 777, updated: Date(timeIntervalSince1970: 1_700_000_000))
+    a.ownerSteamID = String(76561197960265728 + 42)
+    run(a)
+    let folder = SteamWorkshopFiles.itemFolder(appID: 480, item: 12345, steamApps: paths.steamApps)
+    check(a.state == .finished && (try? Data(contentsOf: folder.appendingPathComponent("mod.json"))) == modA.data && (try? Data(contentsOf: folder.appendingPathComponent("textures/a.dds"))) == modB.data, "workshop install: the item's files land in workshop/content/<app>/<item>")
+    let record = SteamWorkshopFiles.installed(appID: 480, steamApps: paths.steamApps)[12345]
+    check(record?.manifest == 777 && record?.size == 5900, "workshop install: the record lists the item with its manifest and size")
+    check((steamappsText(paths, "workshop/appworkshop_480.acf") ?? "").contains("\"subscribedby\"\t\t\"42\""), "workshop install: subscribed by the account number")
+    check(steamappsText(paths, "appmanifest_480.acf") == nil && !fm.fileExists(atPath: paths.steamApps.appendingPathComponent("common").path), "workshop install: the game's own record and folder are not touched")
+    check(!fm.fileExists(atPath: paths.steamApps.appendingPathComponent("downloading/workshop_480_12345").path), "workshop install: the scratch folder is gone")
+    // An update replaces the files: a file the new version no longer has is removed.
+    fake.depots[480] = ContentFixture.makeDepot(id: 480, manifestID: 778, key: key, files: [.init(path: "mod.json", data: ContentFixture.bytes(size: 950, seed: 33))])
+    let b = SteamInstaller(appid: 480, name: "Sample Game", steamApps: paths.steamApps, backend: fake)
+    b.workshop = .init(item: 12345, depot: 480, manifest: 778, updated: nil)
+    run(b)
+    check(b.state == .finished && (try? Data(contentsOf: folder.appendingPathComponent("mod.json")))?.count == 950 && !fm.fileExists(atPath: folder.appendingPathComponent("textures/a.dds").path), "workshop update: the new files replace the old ones")
+    check(SteamWorkshopFiles.installed(appID: 480, steamApps: paths.steamApps)[12345]?.manifest == 778, "workshop update: the record has the new manifest")
+}
+
 // MARK: - Packed chunks, binary KeyValues and the speed controller
 
 // Made with the reference tools (xz --format=lzma, zstd -3): the same bytes Steam's content servers hold, wrapped the way Steam wraps them.
@@ -284,6 +481,98 @@ do {
         let sealedBad = SteamCipher.encrypt(Data(damaged), key: key, iv: Data(repeating: 3, count: 16))!
         check(SteamCipher.unpackChunk(sealedBad, key: key, originalSize: plain.count).map { $0 != plain } ?? true, "chunks: \(name) damaged is not accepted as the original")
     }
+}
+
+do {   // achievements: the schema's names and the unlock times, the answer's framing, and the public percentages
+    func entry(_ type: UInt8, _ name: String, _ value: [UInt8]) -> [UInt8] { [type] + Array(name.utf8) + [0] + value }
+    func text(_ name: String, _ value: String) -> [UInt8] { entry(1, name, Array(value.utf8) + [0]) }
+    func object(_ name: String, _ inner: [UInt8]) -> [UInt8] { entry(0, name, inner + [8]) }
+    let first = object("0", text("name", "ACH_FIRST") + object("display", object("name", text("english", "First steps") + text("german", "Erste")) + object("desc", text("english", "Walk")) + text("hidden", "0") + text("icon", "aaa") + text("icon_gray", "bbb")))
+    let secret = object("1", text("name", "ACH_SECRET") + object("display", text("name", "#TOKEN") + text("hidden", "1") + text("icon", "ccc")))
+    let counter = object("2", text("name", "STAT_NOT_AN_ACH"))
+    let schema = Data(object("480", text("gameName", "Test") + object("stats", object("1", text("type", "4") + object("bits", first + secret)) + object("2", text("type", "1") + counter))) + [8])
+    let found = SteamAchievementParser.achievements(schema: schema, blocks: [1: [1_700_000_000, 0]])
+    check(found.count == 2 && found[0].apiName == "ACH_FIRST" && found[0].name == "First steps" && found[0].detail == "Walk", "achievements: names and descriptions come from the schema")
+    check(found[0].unlocked == Date(timeIntervalSince1970: 1_700_000_000) && found[1].unlocked == nil, "achievements: the unlock time of each bit")
+    check(found[1].hidden && found[1].name == "ACH_SECRET" && found[1].icon == "ccc" && found[0].iconGray == "bbb", "achievements: hidden, token names fall back to the api name, icons")
+    check(found[0].iconURL(app: 480)?.lastPathComponent == "aaa.jpg" && SteamAchievement(apiName: "x", name: "x", detail: "", hidden: false, icon: "i", iconGray: "g", unlocked: nil, percent: nil).iconURL(app: 1)?.lastPathComponent == "g.jpg", "achievements: locked ones show the gray picture")
+    check(SteamAchievement(apiName: "x", name: "x", detail: "", hidden: false, icon: "abc.jpg", iconGray: "def.jpg").iconURL(app: 7)?.absoluteString == "https://shared.fastly.steamstatic.com/community_assets/images/apps/7/def.jpg", "achievements: a picture name that already ends in .jpg is not given a second extension")
+    check(SteamAchievementParser.achievements(schema: Data([1, 2, 3]), blocks: [:]).isEmpty, "achievements: a junk schema gives none")
+    var answer = PBWriter(); answer.fixed64(1, 480); answer.varint(2, 1); answer.bytes(4, schema)
+    var body = answer.data
+    let blockBytes = Data([0x08, 0x01, 0x15, 0x00, 0xF1, 0x53, 0x65, 0x15, 0, 0, 0, 0])               // id 1; unlock_time (field 2, fixed32) twice
+    var wrapped = Data([0x32, UInt8(blockBytes.count)]); wrapped.append(blockBytes); body.append(wrapped)
+    if case .success(let reply) = SteamAchievementParser.reply(from: body) {
+        check(reply.schema == schema && reply.blocks[1] == [1_700_000_000, 0], "achievements: the stats answer is read (schema, one fixed32 unlock time per bit)")
+    } else { check(false, "achievements: the stats answer is read") }
+    var failed = PBWriter(); failed.fixed64(1, 480); failed.varint(2, 2)
+    if case .failure = SteamAchievementParser.reply(from: failed.data) { check(true, "achievements: an error answer fails") } else { check(false, "achievements: an error answer fails") }
+    let shares = SteamAchievementParser.percentages(Data(#"{"achievementpercentages":{"achievements":[{"name":"A","percent":"12.5"},{"name":"B","percent":3.25}]}}"#.utf8))
+    check(shares == ["A": 12.5, "B": 3.25], "achievements: public percentages, as numbers or strings")
+    let sorted = steamSortAchievements([SteamAchievement(apiName: "l1", name: "", detail: "", hidden: false, unlocked: nil, percent: 5), SteamAchievement(apiName: "l2", name: "", detail: "", hidden: false, unlocked: nil, percent: 50),
+                                        SteamAchievement(apiName: "u1", name: "", detail: "", hidden: false, unlocked: Date(timeIntervalSince1970: 10)), SteamAchievement(apiName: "u2", name: "", detail: "", hidden: false, unlocked: Date(timeIntervalSince1970: 20))])
+    check(sorted.unlocked.map(\.apiName) == ["u2", "u1"] && sorted.locked.map(\.apiName) == ["l2", "l1"], "achievements: newest unlock first, commonest locked first")
+}
+
+do {   // unlocks while a game runs: Steam's stats file, the schema with positions, and what counts as new
+    func entry(_ type: UInt8, _ name: String, _ value: [UInt8]) -> [UInt8] { [type] + Array(name.utf8) + [0] + value }
+    func text(_ name: String, _ value: String) -> [UInt8] { entry(1, name, Array(value.utf8) + [0]) }
+    func number(_ name: String, _ value: Int) -> [UInt8] { entry(2, name, (0..<4).map { UInt8((value >> (8 * $0)) & 0xFF) }) }
+    func object(_ name: String, _ inner: [UInt8]) -> [UInt8] { entry(0, name, inner + [8]) }
+    // cache { crc, 3 { data }, 4 { data, AchievementTimes { 0 = t, 2 = t } }, 25 { AchievementTimes { 1 = t } } }
+    let file = Data(object("cache", number("crc", -5) + object("3", number("data", 24)) + object("4", number("data", 5) + object("AchievementTimes", number("0", 1_700_000_000) + number("2", 1_700_000_100)))
+                    + object("25", object("AchievementTimes", number("1", 1_700_000_200)))) + [8])
+    let times = SteamUserStatsFile.unlockTimes(file)
+    check(times.count == 3 && times[SteamAchievementKey(stat: 4, bit: 0)] == 1_700_000_000 && times[SteamAchievementKey(stat: 4, bit: 2)] == 1_700_000_100 && times[SteamAchievementKey(stat: 25, bit: 1)] == 1_700_000_200, "stats file: the unlock time of each achievement bit, and plain stats are ignored")
+    check(SteamUserStatsFile.unlockTimes(Data([1, 2, 3])).isEmpty && SteamUserStatsFile.unlockTimes(Data(object("other", number("x", 1)) + [8])).isEmpty, "stats file: junk or another file gives none")
+    let known: Set<SteamAchievementKey> = [SteamAchievementKey(stat: 4, bit: 0)]
+    let fresh = SteamUserStatsFile.newUnlocks(known: known, current: times, since: Date(timeIntervalSince1970: 1_700_000_050))
+    check(fresh.map { $0.time } == [1_700_000_100, 1_700_000_200] && fresh[0].key == SteamAchievementKey(stat: 4, bit: 2), "unlocks: only what was not known, oldest first")
+    let late = SteamUserStatsFile.newUnlocks(known: [], current: times, since: Date(timeIntervalSince1970: 1_700_000_150))
+    check(late.map { $0.time } == [1_700_000_200], "unlocks: history Steam syncs into the file at the start (older than the game start) is not a new unlock")
+    let schema = Data(object("77", text("gamename", "T") + object("stats", object("4", number("type_int", 4) + object("bits", object("2", text("name", "ACH_TWO") + object("display", object("name", text("english", "Two")) + object("desc", text("english", "Do two")) + text("icon", "aaa.jpg") + text("icon_gray", "bbb.jpg")))))
+                                                      + object("25", object("bits", object("1", text("name", "ACH_ONE") + object("display", object("name", text("english", "One")) + number("hidden", 1))))))) + [8])
+    let defs = SteamAchievementParser.definitions(schema: schema)
+    check(defs.count == 2 && defs[0].stat == 4 && defs[0].bit == 2 && defs[0].achievement.name == "Two" && defs[0].achievement.icon == "aaa.jpg" && defs[1].stat == 25 && defs[1].achievement.hidden, "schema: each achievement with its stat and bit")
+    check(SteamAchievementParser.achievements(schema: schema, blocks: [4: [0, 0, 1_700_000_100]]).first?.unlocked == Date(timeIntervalSince1970: 1_700_000_100), "schema: the list view still reads its unlock times")
+}
+
+do {   // the whole list from Steam's files on the device
+    func entry(_ type: UInt8, _ name: String, _ value: [UInt8]) -> [UInt8] { [type] + Array(name.utf8) + [0] + value }
+    func text(_ name: String, _ value: String) -> [UInt8] { entry(1, name, Array(value.utf8) + [0]) }
+    func number(_ name: String, _ value: Int) -> [UInt8] { entry(2, name, (0..<4).map { UInt8((value >> (8 * $0)) & 0xFF) }) }
+    func object(_ name: String, _ inner: [UInt8]) -> [UInt8] { entry(0, name, inner + [8]) }
+    let paths = freshPaths("local-ach"); let steam = paths.driveC.appendingPathComponent("Program Files (x86)/Steam"); let stats = steam.appendingPathComponent("appcache/stats")
+    try? fm.createDirectory(at: stats, withIntermediateDirectories: true)
+    try? Data(object("9", object("stats", object("1", object("bits", object("0", text("name", "A0") + object("display", object("name", text("english", "Zero")))) + object("1", text("name", "A1") + object("display", object("name", text("english", "One")))))))) + [8]).write(to: stats.appendingPathComponent("UserGameStatsSchema_9.bin"))
+    check(SteamLocalAchievements.load(steamFolder: steam, account: "5", appID: 9).map { $0.unlocked == nil } == [true, true], "local achievements: with no stats file everything is locked")
+    try? Data(object("cache", object("1", number("data", 2) + object("AchievementTimes", number("1", 1_700_000_000)))) + [8]).write(to: stats.appendingPathComponent("UserGameStats_5_9.bin"))
+    let local = SteamLocalAchievements.load(steamFolder: steam, account: "5", appID: 9)
+    check(local.map(\.name) == ["Zero", "One"] && local[0].unlocked == nil && local[1].unlocked == Date(timeIntervalSince1970: 1_700_000_000), "local achievements: names from the schema, unlock times from the stats file")
+    check(SteamLocalAchievements.load(steamFolder: steam, account: "5", appID: 10).isEmpty, "local achievements: a game with no schema file gives an empty list")
+}
+
+do {   // the overlay being asked for, as Steam's renderer log says it
+    let log = "Sat Oct 17 21:53:07 2026 UTC - Showing overlay and saving cursor show count: 0\nSat Oct 17 21:53:07 2026 UTC - Saved Cursor: 00060056\nSat Oct 17 21:53:07 2026 UTC - 1 raw input devices to disable\n"
+    check(SteamOverlayLog.showRequests(in: log) == 1, "overlay: one 'Showing overlay' line is one request")
+    check(SteamOverlayLog.showRequests(in: "Game is using D3D9 or D3D9Ex, preparing to hook.\nAudio hooked\n") == 0 && SteamOverlayLog.showRequests(in: "") == 0, "overlay: the start-up lines are not a request")
+    check(SteamOverlayLog.showRequests(in: log + log) == 2, "overlay: two requests are two")
+}
+
+do {   // friends: the list, the summaries, the fallback, the order and the words
+    let list = (try? JSONSerialization.jsonObject(with: Data(#"{"friendslist":{"friends":[{"ulfriendid":"1","efriendrelationship":3},{"ulfriendid":"2","efriendrelationship":3},{"ulfriendid":"3","efriendrelationship":5},{"ulfriendid":"4","efriendrelationship":2},{"ulfriendid":"5","efriendrelationship":3}]}}"#.utf8))) as? [String: Any] ?? [:]
+    check(SteamFriendsParser.friendIDs(list) == ["1", "2", "5"], "friends: only relationship 3 (friends) is listed, not ignored or pending ones")
+    let summaries = (try? JSONSerialization.jsonObject(with: Data(#"{"players":[{"steamid":"1","personaname":"Ann","personastate":1,"avatarmedium":"https://x/a.jpg","lastlogoff":1700000000},{"steamid":"2","personaname":"Bob","personastate":1,"gameextrainfo":"Portal 2","gameid":"620"},{"steamid":"5","personaname":"Cy","personastate":0,"lastlogoff":1700000000},{"steamid":"6","personaname":"","personastate":1},{"steamid":"7","personaname":"Di","personastate":3}]}"#.utf8))) as? [String: Any] ?? [:]
+    let found = SteamFriendsParser.friends(summaries: summaries)
+    check(found.count == 4 && found.map(\.name) == ["Ann", "Bob", "Cy", "Di"], "friends: a player without a name is left out")
+    check(found[1].isPlaying && found[1].gameName == "Portal 2" && found[1].gameID == 620 && found[0].avatarURL?.absoluteString == "https://x/a.jpg", "friends: the game, its id and the picture")
+    let order = SteamFriendsParser.sorted(found).map(\.name)
+    check(order == ["Bob", "Ann", "Di", "Cy"], "friends: playing first, then online by name, then offline (\(order))")
+    check(found[1].status() == "In Portal 2" && found[0].status() == "Online" && found[3].status() == "Away", "friends: the words for playing, online and away")
+    check(found[2].status(now: Date(timeIntervalSince1970: 1_700_000_000 + 7200)) == "Offline \u{00B7} 2 h ago" && SteamFriend(id: "9", name: "Z").status() == "Offline", "friends: how long ago an offline friend was seen, and offline when unknown")
+    let links = (try? JSONSerialization.jsonObject(with: Data(#"{"accounts":[{"public_data":{"steamid":"1","persona_name":"Ann","sha_digest_avatar":"abc"}},{"public_data":{"steamid":"2","persona_name":""}}]}"#.utf8))) as? [String: Any] ?? [:]
+    let fallback = SteamFriendsParser.friends(linkDetails: links)
+    check(fallback.count == 1 && fallback[0].name == "Ann" && fallback[0].avatarURL?.absoluteString == "https://avatars.fastly.steamstatic.com/abc_medium.jpg" && fallback[0].state == 0, "friends: the fallback gives a name and a picture, no state")
 }
 
 do {   // a Zstandard block whose tables use the one-symbol (RLE) mode: the decoder used to refuse it
@@ -652,5 +941,170 @@ do {
 }
 
 try? fm.removeItem(at: root)
+
+// MARK: - Branches and DLC
+
+print("--- branches and DLC")
+let betaKey = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 1) })
+var secretGid = Data(); var gidValue: UInt64 = 424242; for _ in 0..<8 { secretGid.append(UInt8(gidValue & 0xFF)); gidValue >>= 8 }
+let encryptedGid = SteamCipher.encryptECB(secretGid + Data(repeating: 8, count: 8), key: betaKey)!     // 8 data bytes + PKCS#7 padding, one block
+let encryptedHex = encryptedGid.map { String(format: "%02x", $0) }.joined()
+let branchText = """
+"appinfo"
+{
+\t"appid"\t"900"
+\t"common"
+\t{
+\t\t"name"\t"Branchy"
+\t\t"type"\t"Game"
+\t}
+\t"config"
+\t{
+\t\t"installdir"\t"Branchy"
+\t}
+\t"extended"
+\t{
+\t\t"listofdlc"\t"901, 902,903"
+\t}
+\t"depots"
+\t{
+\t\t"901"
+\t\t{
+\t\t\t"manifests"
+\t\t\t{
+\t\t\t\t"public"
+\t\t\t\t{
+\t\t\t\t\t"gid"\t"1000"
+\t\t\t\t\t"size"\t"5000"
+\t\t\t\t\t"download"\t"2000"
+\t\t\t\t}
+\t\t\t\t"beta"
+\t\t\t\t{
+\t\t\t\t\t"gid"\t"2000"
+\t\t\t\t\t"size"\t"6000"
+\t\t\t\t\t"download"\t"2500"
+\t\t\t\t}
+\t\t\t}
+\t\t\t"encryptedmanifests"
+\t\t\t{
+\t\t\t\t"secret"
+\t\t\t\t{
+\t\t\t\t\t"gid"\t"\(encryptedHex)"
+\t\t\t\t\t"size"\t"7000"
+\t\t\t\t\t"download"\t"3000"
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t\t"902"
+\t\t{
+\t\t\t"dlcappid"\t"950"
+\t\t\t"manifests"
+\t\t\t{
+\t\t\t\t"public"\t"1100"
+\t\t\t\t"beta"\t"2100"
+\t\t\t}
+\t\t}
+\t\t"903"
+\t\t{
+\t\t\t"dlcappid"\t"951"
+\t\t\t"manifests"
+\t\t\t{
+\t\t\t\t"public"\t"1200"
+\t\t\t}
+\t\t}
+\t\t"branches"
+\t\t{
+\t\t\t"public"
+\t\t\t{
+\t\t\t\t"buildid"\t"10"
+\t\t\t\t"timeupdated"\t"1700000000"
+\t\t\t}
+\t\t\t"beta"
+\t\t\t{
+\t\t\t\t"buildid"\t"20"
+\t\t\t\t"description"\t"Next version"
+\t\t\t}
+\t\t\t"secret"
+\t\t\t{
+\t\t\t\t"buildid"\t"30"
+\t\t\t\t"pwdrequired"\t"1"
+\t\t\t}
+\t\t}
+\t}
+}
+"""
+let branchy = SteamAppInfoParser.parse(Data(branchText.utf8), appid: 900)!
+check(branchy.branches.map(\.name) == ["public", "beta", "secret"] && branchy.branches[0].buildID == "10" && branchy.buildID == "10", "branches: listed with public first; the public build id is still the app's")
+check(branchy.branches[1].description == "Next version" && !branchy.branches[1].passwordRequired && branchy.branches[2].passwordRequired && branchy.branches[0].updated == Date(timeIntervalSince1970: 1_700_000_000), "branches: description, password flag and update time")
+check(branchy.dlcApps == [950, 951] && branchy.listedDLC == [901, 902, 903], "dlc: the apps the depots belong to, and the app's own list of DLC")
+check(branchy.depots[0].branchManifests["beta"]?.gid == 2000 && branchy.depots[0].manifest == 1000 && branchy.depots[0].size == 5000, "depots: every branch's manifest is kept; the public one is still in manifest/size")
+check(branchy.depots[1].branchManifests["beta"]?.gid == 2100 && branchy.depots[1].branchManifests["public"]?.gid == 1100, "depots: the short form (branch = id) is read too")
+check(branchy.depots[0].encryptedManifests["secret"]?.gid == encryptedGid && branchy.depots[0].encryptedManifests["secret"]?.size == 7000, "depots: an encrypted (password branch) manifest id is kept as bytes")
+check(SteamBetaCrypto.decryptManifestID(encryptedGid, key: betaKey) == 424242, "branch password: the key reveals the manifest id")
+check(SteamBetaCrypto.decryptManifestID(encryptedGid, key: Data(repeating: 9, count: 32)) != 424242 && SteamBetaCrypto.decryptManifestID(encryptedGid, key: Data(repeating: 1, count: 5)) == nil, "branch password: a wrong key gives something else; a short key is refused")
+
+func summary(_ selection: SteamInstallSelection) -> [String] {
+    SteamDepotPlanner.windowsDepots(app: branchy, selection: selection).map { "\($0.id):\($0.manifest.map(String.init) ?? "-")" }
+}
+check(summary(SteamInstallSelection()) == ["901:1000"], "planner: by default the public branch and the game's own files only")
+check(summary(SteamInstallSelection(dlc: .all)) == ["901:1000", "902:1100", "903:1200"], "planner: all DLC adds their depots")
+check(summary(SteamInstallSelection(dlc: .only([951]))) == ["901:1000", "903:1200"], "planner: chosen DLC only")
+check(summary(SteamInstallSelection(branch: "beta", dlc: .all)) == ["901:2000", "902:2100"], "planner: a branch uses its own manifests; a depot it does not have is left out")
+check(summary(SteamInstallSelection(branch: "secret")) == [], "planner: a password branch without its key has nothing to install")
+check(summary(SteamInstallSelection(branch: "secret", branchKey: betaKey)) == ["901:424242"], "planner: the key turns the encrypted id into the branch's manifest")
+check(SteamDepotPlanner.windowsDepots(app: branchy, selection: SteamInstallSelection(branch: "beta")).first?.size == 6000 && SteamDepotPlanner.sizes(app: branchy, selection: SteamInstallSelection(branch: "beta")).download == 2500, "planner: sizes follow the branch")
+check(SteamDepotPlanner.sizes(app: branchy, selection: SteamInstallSelection(dlc: .all)).disk == 5000, "planner: DLC depots with no size listed add nothing to the estimate")
+
+do {   // store info: reviews, the Deck rating, news
+    let r = SteamStoreInfoParser.reviews(Data(#"{"success":1,"query_summary":{"review_score":9,"review_score_desc":"Overwhelmingly Positive","total_positive":462555,"total_negative":6069,"total_reviews":468624}}"#.utf8))
+    check(r?.text == "Overwhelmingly Positive" && r?.score == 9 && r?.percent == 99, "reviews: Steam's words and the share of positive ones")
+    check(SteamStoreInfoParser.reviews(Data(#"{"success":1,"query_summary":{"review_score":0,"review_score_desc":"No user reviews","total_reviews":0}}"#.utf8)) == nil, "reviews: a game with none shows nothing")
+    check(SteamStoreInfoParser.reviews(Data("nope".utf8)) == nil, "reviews: junk is nothing")
+    check(SteamStoreInfoParser.deck(Data(#"{"success":1,"results":{"appid":620,"resolved_category":3}}"#.utf8)) == .verified, "deck: 3 is verified")
+    check(SteamStoreInfoParser.deck(Data(#"{"success":1,"results":{"resolved_category":2}}"#.utf8)) == .playable && SteamStoreInfoParser.deck(Data(#"{"success":1,"results":{"resolved_category":1}}"#.utf8)) == .unsupported, "deck: playable and unsupported")
+    check(SteamStoreInfoParser.deck(Data(#"{"success":0}"#.utf8)) == .unknown && SteamStoreInfoParser.deck(Data(#"{"success":1,"results":{"resolved_category":9}}"#.utf8)) == .unknown, "deck: no answer or an odd number is not rated")
+    let news = SteamStoreInfoParser.news(Data(#"{"appnews":{"appid":1,"newsitems":[{"gid":"1","title":"Old &amp; new","url":"https://x/a b","contents":"[h1]Patch[/h1] [img]{STEAM_CLAN_IMAGE}/1/a.png[/img] <b>Fixed</b> a crash &lt;3\n\n[list][*]one[/list]","feedlabel":"Steam","date":100},{"gid":"2","title":"Newer","url":"https://x/b","contents":"Hi","feedlabel":"RPS","date":200},{"gid":"3","title":"","contents":"no title","date":300}]}}"#.utf8))
+    check(news.map(\.id) == ["2", "1"], "news: newest first, an item without a title is dropped")
+    check(news[1].title == "Old & new" && news[1].summary == "Patch Fixed a crash <3 one" && news[1].url?.absoluteString == "https://x/a%20b", "news: tags, bbcode and images are removed, entities decoded, spaces in the link escaped (\(news[1].summary))")
+    check(SteamStoreInfoParser.summary(String(repeating: "word ", count: 100), limit: 50).hasSuffix("\u{2026}") && SteamStoreInfoParser.summary("short", limit: 50) == "short", "news: long text is cut at a word with an ellipsis")
+}
+
+
+do {   // Workshop: Valve's finished-download cache for single-file items
+    let text = SteamWorkshopFiles.ugcDataText(filename: "mymaps/1792273206.bsp", appID: 620, creator: 76561199181539405, sha1: "2da730894f92eb234458ec35857b1edfda335c58")
+    let valve = "\"\"\n{\n\t\"filename\"\t\t\"mymaps/1792273206.bsp\"\n\t\"appid\"\t\t\"620\"\n\t\"creator\"\t\t\"76561199181539405\"\n\t\"sha1\"\t\t\"2da730894f92eb234458ec35857b1edfda335c58\"\n}\n"
+    check(text == valve, "ugc cache: data.vdf is byte for byte what Valve's client wrote")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ugc-seed-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("item.bsp")
+    try? Data("abc".utf8).write(to: file)
+    check(SteamWorkshopFiles.sha1Hex(of: file) == "a9993e364706816aba3e25717850c26c9cd0d89d", "ugc cache: sha1 of a file")
+    check(!SteamWorkshopFiles.isSeeded(filename: "mymaps/x.bsp", handle: 55, steamRoot: root, account: "7"), "ugc cache: nothing there yet")
+    check(SteamWorkshopFiles.seedReferenced(file: file, filename: "mymaps/x.bsp", handle: 55, appID: 644, creator: 9, steamRoot: root, account: "7"), "ugc cache: seeding works")
+    let folder = SteamWorkshopFiles.referencedFolder(steamRoot: root, account: "7", handle: 55)
+    check(folder.path.hasSuffix("userdata/7/ugc/referenced/55") && (try? Data(contentsOf: folder.appendingPathComponent("mymaps/x.bsp"))) == Data("abc".utf8), "ugc cache: the file is in userdata/<acct>/ugc/referenced/<handle>/")
+    let data = (try? String(contentsOf: folder.appendingPathComponent("data.vdf"), encoding: .utf8)) ?? ""
+    check(data.contains("\"appid\"\t\t\"644\"") && data.contains("\"sha1\"\t\t\"a9993e364706816aba3e25717850c26c9cd0d89d\"") && SteamWorkshopFiles.isSeeded(filename: "mymaps/x.bsp", handle: 55, steamRoot: root, account: "7"), "ugc cache: data.vdf names the app, creator and sha1")
+    check(!SteamWorkshopFiles.seedReferenced(file: file, filename: "../x.bsp", handle: 55, appID: 1, creator: 1, steamRoot: root, account: "7") && !SteamWorkshopFiles.seedReferenced(file: file, filename: "a.bsp", handle: 0, appID: 1, creator: 1, steamRoot: root, account: "7") && !SteamWorkshopFiles.seedReferenced(file: file, filename: "a.bsp", handle: 5, appID: 1, creator: 1, steamRoot: root, account: "0"), "ugc cache: no folder escape, no handle 0, no unknown account")
+    try? FileManager.default.removeItem(at: root)
+}
+
+
+do {   // Workshop record: a single-file item is written the way Steam's client writes it (manifest -1 and ugchandle)
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ws-single-\(UUID().uuidString)")
+    let apps = root.appendingPathComponent("steamapps")
+    try? FileManager.default.createDirectory(at: apps.appendingPathComponent("workshop"), withIntermediateDirectories: true)
+    SteamWorkshopFiles.record(.init(id: 7, size: 10, manifest: 900, updated: nil, ugcHandle: 900), appID: 730, steamApps: apps, subscribedBy: "42")
+    SteamWorkshopFiles.record(.init(id: 8, size: 10, manifest: 55, updated: nil), appID: 730, steamApps: apps, subscribedBy: "42")
+    let text = (try? String(contentsOf: SteamWorkshopFiles.recordURL(appID: 730, steamApps: apps), encoding: .utf8)) ?? ""
+    check(text.contains("\t\t\t\"manifest\"\t\t\"-1\"\n\t\t\t\"ugchandle\"\t\t\"900\""), "workshop record: a single-file item has manifest -1 and its ugchandle in the details")
+    check(text.contains("\"latest_manifest\"\t\t\"-1\"") && text.contains("\"latest_manifest\"\t\t\"55\""), "workshop record: latest_manifest follows the same rule, a depot item keeps its manifest")
+    let back = SteamWorkshopFiles.installed(appID: 730, steamApps: apps)
+    check(back[7]?.ugcHandle == 900 && back[7]?.manifest == 900 && back[8]?.ugcHandle == 0 && back[8]?.manifest == 55, "workshop record: the handle is read back, a depot item has none")
+    try? FileManager.default.removeItem(at: root)
+}
+
+
+
 print(failures == 0 ? "\nALL PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)

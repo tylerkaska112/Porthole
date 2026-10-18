@@ -1,0 +1,10 @@
+# 0156 win32u: a default-size window is never created tiny; every top-level window request is logged
+
+`build/win32u-unix/window_ios.c` is upstream `wine/dlls/win32u/window.c` with two additions under `#ifdef WINE_IOS` (`patches/0156-window-ios-vs-upstream.diff` is the difference); `build.sh` compiles it instead of window.c (`patches/0156-win32u-build-sh.patch`).
+
+1. `fix_cs_coordinates`: a top-level window created with CW_USEDEFAULT size takes the start-up size only when it is a usable window (at least 320x240), else 3/4 of the monitor work area; if that is under 320x240 too (an empty work area) it takes 3/4 of the screen (1920x1080 when the screen metrics are unusable too) at 0,0.
+2. `NtUserCreateWindowEx` logs, for the first 40 top-level requests, `[createwin] 0156 #N style= ex= asked x= y= cx= cy=`; the default-size case logs `[createwin] 0156 default size: startup flags=... work=... -> WxH` (and says when it replaced a tiny size). 3. The first 150 calls of SetWindowPos, MoveWindow, ShowWindow, SetWindowPlacement and style changes on top-level windows are logged raw as `[winreq] 0156 #N <call> hwnd= x,y WxH flags` (library `gl-lib-0157`).
+
+Reason (American Truck Simulator, 2026-10-17, builds 1.1.15/1.1.16): the game's window was created 132x38 at (27,33) (client 122x2); ATS never resizes it ("[win] new windowed size: 122 2") and renders 1920x1080 into it, so it shows as a postage stamp. Setting r_fullscreen 0 did not change it. UNKNOWN: whether ATS asked for the default size or for those numbers itself. If the log shows `asked ... cx=122 cy=2`-like explicit numbers, this guard does nothing for ATS and the cause is elsewhere (what the game derives its size from).
+How to test: start ATS; the log has `[createwin] 0156` lines; the window should be 1440x810 (or the size the game asked for) and `[win] new windowed size` in the game's game.log.txt should no longer be 122 2 / 132 38.
+Library: `gl-lib-0156` (win32u `window` object rebuilt on `gl-lib-0155`), staged with LIB_OVERRIDES.

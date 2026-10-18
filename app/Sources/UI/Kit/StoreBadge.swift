@@ -2,8 +2,8 @@
 // Copyright (C) 2026 The Porthole authors. See LICENSE.
 import SwiftUI
 
-/// The mark of the store a game came from: the launcher's own logo (Assets.xcassets: StoreSteam, StoreEpic, StoreGog, StoreItch), so a card says at a glance where its game was downloaded from.
-/// The logos belong to Valve, Epic Games, GOG and itch corp.; they are shown only to say which store a game is from.
+/// The mark of the store a game came from: the launcher's own logo (Assets.xcassets: StoreSteam, StoreEpic, StoreGog, StoreItch, StoreAmazon), so a card says at a glance where its game was downloaded from.
+/// The logos belong to Valve, Epic Games, GOG, itch corp. and Amazon; they are shown only to say which store a game is from.
 struct StoreBadge: View {
     let store: GameStore
     var size: CGFloat = 22
@@ -14,6 +14,7 @@ struct StoreBadge: View {
         case .epic: "StoreEpic"
         case .gog: "StoreGog"
         case .itch: "StoreItch"
+        case .amazon: "StoreAmazon"
         }
     }
 

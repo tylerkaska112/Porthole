@@ -22,10 +22,10 @@ struct DownloadActivityAttributes: ActivityAttributes {
         var waiting = 0
     }
 
-    /// "steam", "epic", "gog" or "itch".
+    /// "steam", "epic", "gog", "itch" or "amazon".
     var store: String
 
-    var storeTitle: String { store == "epic" ? "Epic Games" : store == "gog" ? "GOG" : store == "itch" ? "itch.io" : "Steam" }
+    var storeTitle: String { store == "epic" ? "Epic Games" : store == "gog" ? "GOG" : store == "itch" ? "itch.io" : store == "amazon" ? "Amazon Games" : "Steam" }
 }
 
 enum DownloadActivityAction: String {

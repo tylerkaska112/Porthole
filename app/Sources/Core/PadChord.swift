@@ -63,4 +63,6 @@ struct PadReleaseMask {
 extension Notification.Name {
     /// The chord was held: the in-game menu opens or closes.
     static let padMenuChord = Notification.Name("PortholePadMenuChord")
+    /// The running Steam game asked for Steam's overlay (its Workshop or Store button, Shift+Tab): the HUD shows the app's Steam menu instead.
+    static let steamOverlayRequested = Notification.Name("PortholeSteamOverlayRequested")
 }

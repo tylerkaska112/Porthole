@@ -3,6 +3,7 @@
 // Downloads a game from Steam into the Wine prefix: asks Steam for the app's Windows depots, their keys and manifests, fetches
 // every chunk from Steam's content servers, decrypts, unpacks and verifies it, writes the files, and finally records the game
 // the way Steam does (steamapps/appmanifest_<id>.acf) so it shows up as installed. Resumes where it stopped.
+import CommonCrypto
 import Foundation
 
 struct SteamDownloadProgress: Equatable {
@@ -76,6 +77,20 @@ final class SteamInstaller {
     private(set) var installInfo: SteamAppInfo?
     /// The account that owns the game, written into the install record the way Steam does.
     var ownerSteamID: String?
+    /// Which version (branch) and which DLC to install. The default is the public branch with the game's own files.
+    var selection = SteamInstallSelection()
+    /// Set to download one Workshop item instead of a game: its files go to `steamapps/workshop/content/<app>/<item>` and the Workshop record is updated.
+    var workshop: WorkshopTarget?
+    struct WorkshopTarget: Equatable {
+        var item: UInt64
+        var depot: Int
+        var manifest: UInt64
+        /// When the item was last changed on Steam, written into the record.
+        var updated: Date?
+    }
+    /// Depots the install record already lists at the manifest being installed: not fetched again, and kept in the record.
+    private var keptDepots: [InstalledDepot] = []
+    struct InstalledDepot: Equatable { var id: Int; var manifest: UInt64; var size: UInt64; var dlcApp: Int? }
 
     init(appid: Int, name: String, steamApps: URL, backend: SteamContentBackend, fileManager: FileManager = .default) {
         self.appid = appid; self.name = name; self.steamApps = steamApps; self.backend = backend; fm = fileManager
@@ -95,6 +110,11 @@ final class SteamInstaller {
         token += 1
         lock.lock(); cancelled = false; failure = nil; written = 0; networkBytes = 0; rejected = 0; lastPerfLog = Date(); samples = []; pendingDone = []; descriptors = [:]; remaining = [:]; lock.unlock()
         state = .preparing("Asking Steam about \(name)…")
+        if let workshop {
+            SteamLog.event("Steam download: starting Workshop item \(workshop.item) of app \(appid).")
+            prepareWorkshop(token, workshop)
+            return
+        }
         SteamLog.event("Steam download: starting app \(appid).")
         prepare(token)
     }
@@ -127,13 +147,30 @@ final class SteamInstaller {
             guard let self, id == self.token else { return }
             switch result {
             case .failure(let error): self.fail(error.notOwned ? "Steam does not list \(self.name) for this account." : error.message, id)
-            case .success(let info):
+            case .success(var info):
+                // The build number the record states is the chosen branch's, so Valve's client and the update check agree with what was installed.
+                if self.selection.branch != SteamBranch.publicName {
+                    guard let branch = info.branches.first(where: { $0.name == self.selection.branch }) else {
+                        self.fail("Steam does not list a version called \u{201C}\(self.selection.branch)\u{201D} of \(self.name).", id); return
+                    }
+                    if let build = branch.buildID { info.buildID = build }
+                }
                 self.installInfo = info
-                let depots = SteamDepotPlanner.windowsDepots(app: info)
-                guard !depots.isEmpty else { self.fail("\(self.name) has no Windows version on Steam.", id); return }
+                let depots = SteamDepotPlanner.windowsDepots(app: info, selection: self.selection)
+                guard !depots.isEmpty else {
+                    let needsKey = self.selection.branch != SteamBranch.publicName && self.selection.branchKey == nil && info.depots.contains { $0.encryptedManifests[self.selection.branch] != nil }
+                    self.fail(needsKey ? "The \u{201C}\(self.selection.branch)\u{201D} version of \(self.name) needs its password." : self.selection.branch == SteamBranch.publicName
+                              ? "\(self.name) has no Windows version on Steam." : "The \u{201C}\(self.selection.branch)\u{201D} version of \(self.name) has no Windows files.", id); return
+                }
                 self.resolveManifests(depots, info: info, id)
             }
         }
+    }
+
+    private func prepareWorkshop(_ id: Int, _ target: WorkshopTarget) {
+        installInfo = SteamAppInfo(appid: appid, name: name, installDirectory: nil, buildID: nil, depots: [])
+        let job = SteamDepotJob(depot: SteamDepot(id: target.depot, manifest: target.manifest), manifest: target.manifest, keyApp: appid)
+        fetchManifests([job], id)
     }
 
     private func resolveManifests(_ depots: [SteamDepot], info: SteamAppInfo, _ id: Int) {
@@ -146,9 +183,11 @@ final class SteamInstaller {
             if let manifest = depot.manifest { jobs.append(SteamDepotJob(depot: depot, manifest: manifest, keyApp: depot.fromApp ?? appid)); next(index + 1); return }
             guard let source = depot.fromApp else { next(index + 1); return }
             func use(_ other: SteamAppInfo) {
-                if let manifest = other.depots.first(where: { $0.id == depot.id })?.manifest {
-                    var resolved = depot; resolved.manifest = manifest
-                    jobs.append(SteamDepotJob(depot: resolved, manifest: manifest, keyApp: source))
+                // The same branch of the other app, else its public one.
+                if let theirs = other.depots.first(where: { $0.id == depot.id }),
+                   let entry = SteamDepotPlanner.manifestEntry(of: theirs, selection: self.selection) ?? SteamDepotPlanner.publicEntry(of: theirs) {
+                    var resolved = depot; resolved.manifest = entry.gid
+                    jobs.append(SteamDepotJob(depot: resolved, manifest: entry.gid, keyApp: source))
                 }
                 next(index + 1)
             }
@@ -162,8 +201,27 @@ final class SteamInstaller {
         next(0)
     }
 
-    private func fetchManifests(_ jobs: [SteamDepotJob], _ id: Int) {
-        guard !jobs.isEmpty else { fail("Steam gave no files to download for \(name).", id); return }
+    private func fetchManifests(_ allJobs: [SteamDepotJob], _ id: Int) {
+        guard !allJobs.isEmpty else { fail("Steam gave no files to download for \(name).", id); return }
+        // A depot the install record already lists at this very manifest is on the disk already: it is neither fetched nor lost from the record.
+        let previous = (workshop != nil || selection.verify) ? [:] : Self.installedDepots(appid: appid, steamApps: steamApps, fileManager: fm)
+        let dlcByDepot = Dictionary(installInfo?.depots.map { ($0.id, $0.dlcApp) } ?? [], uniquingKeysWith: { a, _ in a })
+        keptDepots = allJobs.compactMap { job in
+            guard let had = previous[job.depot.id], had.manifest == job.manifest else { return nil }
+            return InstalledDepot(id: job.depot.id, manifest: had.manifest, size: had.size, dlcApp: (dlcByDepot[job.depot.id] ?? nil) ?? had.dlcApp)
+        }
+        let jobs = allJobs.filter { job in !keptDepots.contains { $0.id == job.depot.id } }
+        if !keptDepots.isEmpty { SteamLog.event("Steam download: \(keptDepots.count) depot(s) already installed at the right version: \(keptDepots.map { String($0.id) }.joined(separator: ", ")).") }
+        if jobs.isEmpty {
+            // Nothing to fetch (a version that only changes the record, or DLC that is already there).
+            guard let info = installInfo else { return }
+            gameFolder = steamApps.appendingPathComponent("common/" + SteamDepotPlanner.safeInstallDirectory(info))
+            writeAppManifest(info)
+            backend.close()
+            SteamLog.event("Steam download: \(name) is up to date.")
+            state = .finished
+            return
+        }
         backend.servers { [weak self] found in
             guard let self, id == self.token else { return }
             guard !found.isEmpty else { self.fail("Steam's content servers could not be reached. Check the internet connection.", id); return }
@@ -235,8 +293,13 @@ final class SteamInstaller {
     private func beginTransfer(_ id: Int) {
         guard let info = installInfo else { return }
         let installDirectory = SteamDepotPlanner.safeInstallDirectory(info)
-        gameFolder = steamApps.appendingPathComponent("common/" + installDirectory)
-        progressFolder = Self.progressFolder(appID: appid, steamApps: steamApps)
+        if let workshop {
+            gameFolder = SteamWorkshopFiles.itemFolder(appID: appid, item: workshop.item, steamApps: steamApps)
+            progressFolder = steamApps.appendingPathComponent("downloading/workshop_\(appid)_\(workshop.item)")
+        } else {
+            gameFolder = steamApps.appendingPathComponent("common/" + installDirectory)
+            progressFolder = Self.progressFolder(appID: appid, steamApps: steamApps)
+        }
         // What will actually be written: no folders, no links, and not Steam's redistributable installers.
         total = manifests.reduce(0) { sum, manifest in sum + manifest.files.reduce(0) { $0 + (Self.isWanted($1) ? $1.size : 0) } }
 
@@ -244,6 +307,11 @@ final class SteamInstaller {
         let need = Int64(total) + 512 << 20
         if let free = freeSpaceOverride?() ?? Self.freeSpace(at: steamApps), free < need {
             fail("There is not enough space on this device: \(name) needs \(Self.size(Int64(total))) and \(Self.size(max(0, free))) is free.", id); return
+        }
+        // An update of a Workshop item replaces its files: what an older version had and this one does not must not stay behind.
+        if workshop != nil {
+            let samePlan = (try? String(contentsOf: progressFolder.appendingPathComponent("plan.txt"), encoding: .utf8)) == manifests.map { "\($0.depotID):\($0.manifestID)" }.joined(separator: ",")
+            if !samePlan { try? fm.removeItem(at: gameFolder) }
         }
         do {
             try fm.createDirectory(at: gameFolder, withIntermediateDirectories: true)
@@ -264,6 +332,82 @@ final class SteamInstaller {
             try? plan.write(to: planFile, atomically: true, encoding: .utf8)
         }
 
+        // Chunks whose bytes are already in the files on the disk are not fetched again: an update of an installed game (most of a depot is unchanged), a repair, a download that lost
+        // its list of finished chunks. The file regions are hashed off the main thread and compared with the manifest.
+        state = .preparing("Checking the files already on the device\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let began = Date()
+            let found = self.reusableChunks(skipping: done, id: id)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, id == self.token, !self.state.isFinal else { return }
+                if found.files > 0 {
+                    SteamLog.event("Steam download: \(self.name): \(found.done.count) chunk(s) (\(Self.size(Int64(found.bytes)))) in \(found.files) file(s) on the device already match Steam's, checked in \(String(format: "%.0f", Date().timeIntervalSince(began))) s.")
+                }
+                self.layOutAndTransfer(id, done: done.union(found.done))
+            }
+        }
+    }
+
+    /// Hashes the regions of the files already on the disk that the manifests describe, and returns the chunks whose bytes are right (those in `skipping` are not looked at).
+    private func reusableChunks(skipping done: Set<UInt32>, id: Int) -> (done: Set<UInt32>, files: Int, bytes: UInt64) {
+        struct Job { var path: String; var file: SteamManifestFile; var first: UInt32 }
+        var jobs: [Job] = []
+        var global: UInt32 = 0
+        var totalBytes: UInt64 = 0
+        for manifest in manifests {
+            for file in manifest.files {
+                // The same numbering as the layout: directories count nothing, links and redistributables count their chunks, empty files nothing.
+                if Self.isRedistributable(file.path) || file.isSymlink { global += UInt32(file.chunks.count); continue }
+                if file.isDirectory { continue }
+                if file.chunks.isEmpty || file.size == 0 { continue }
+                let path = gameFolder.appendingPathComponent(file.path).path
+                var info = stat()
+                if stat(path, &info) == 0, info.st_size > 0 { jobs.append(Job(path: path, file: file, first: global)); totalBytes += UInt64(info.st_size) }
+                global += UInt32(file.chunks.count)
+            }
+        }
+        guard !jobs.isEmpty else { return ([], 0, 0) }
+        let merge = NSLock()
+        var found = Set<UInt32>(), files = 0, bytes: UInt64 = 0, checkedBytes: UInt64 = 0, lastShown = -1
+        DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
+            self.lock.lock(); let stop = self.cancelled || self.failure != nil || id != self.token; self.lock.unlock()
+            if stop { return }
+            let job = jobs[index]
+            var info = stat()
+            guard stat(job.path, &info) == 0, info.st_size > 0 else { return }
+            let size = UInt64(info.st_size)
+            let fd = open(job.path, O_RDONLY)
+            guard fd >= 0 else { return }
+            defer { close(fd) }
+            var local: [UInt32] = []
+            var localBytes: UInt64 = 0
+            var buffer = [UInt8](repeating: 0, count: 1 << 20)
+            var digest = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+            for (i, chunk) in job.file.chunks.enumerated() {
+                let g = job.first + UInt32(i)
+                if done.contains(g) { continue }
+                let length = chunk.originalSize
+                guard length > 0, chunk.offset + UInt64(length) <= size else { continue }
+                if buffer.count < length { buffer = [UInt8](repeating: 0, count: length) }
+                let got = buffer.withUnsafeMutableBytes { pread(fd, $0.baseAddress, length, off_t(chunk.offset)) }
+                guard got == length else { continue }
+                buffer.withUnsafeBytes { _ = CC_SHA1($0.baseAddress, CC_LONG(length), &digest) }
+                if digest.elementsEqual(chunk.sha) { local.append(g); localBytes += UInt64(length) }
+            }
+            merge.lock()
+            if !local.isEmpty { found.formUnion(local); files += 1; bytes += localBytes }
+            checkedBytes += size
+            let percent = totalBytes > 0 ? Int(Double(checkedBytes) / Double(totalBytes) * 100) : 100
+            let show = percent != lastShown
+            if show { lastShown = percent }
+            merge.unlock()
+            if show { DispatchQueue.main.async { [weak self] in if let self, id == self.token, case .preparing = self.state { self.state = .preparing("Checking the files already on the device\u{2026} \(percent)%") } } }
+        }
+        return (found, files, bytes)
+    }
+
+    private func layOutAndTransfer(_ id: Int, done: Set<UInt32>) {
         // Lay out the folders and empty files, and the list of chunks still to fetch.
         var items: [Item] = []
         var global: UInt32 = 0
@@ -287,6 +431,11 @@ final class SteamInstaller {
                     global += 1
                 }
                 if left > 0 { remaining[fileKey(depotIndex, fileIndex)] = left }
+                else {
+                    // Every chunk was already right: the file only needs the new length (an older version may have been longer or shorter).
+                    var info = stat()
+                    if stat(target.path, &info) == 0, UInt64(info.st_size) != file.size { _ = truncate(target.path, off_t(file.size)) }
+                }
             }
         }
         lock.lock(); written = doneBytes; lock.unlock()
@@ -461,7 +610,13 @@ final class SteamInstaller {
         if stopped && problem == nil { return }
         if let problem { fail(problem, id); return }
         guard let info = installInfo else { return }
-        writeAppManifest(info)
+        if let workshop {
+            let account = ownerSteamID.flatMap { UInt64($0) }.map { String($0 & 0xFFFFFFFF) } ?? "0"
+            SteamWorkshopFiles.record(SteamWorkshopFiles.Installed(id: workshop.item, size: total, manifest: workshop.manifest, updated: workshop.updated),
+                                      appID: appid, steamApps: steamApps, subscribedBy: account)
+        } else {
+            writeAppManifest(info)
+        }
         try? fm.removeItem(at: progressFolder)
         backend.close()
         SteamLog.event("Steam download: \(name) is installed.")
@@ -470,18 +625,44 @@ final class SteamInstaller {
 
     // MARK: Recording the install
 
-    private func writeAppManifest(_ info: SteamAppInfo) {
-        func quoted(_ text: String) -> String { "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-        let steamapps = gameFolder.deletingLastPathComponent().deletingLastPathComponent()
-        var lines = ["\"AppState\"", "{", "\t\"appid\"\t\t\(quoted(String(appid)))", "\t\"Universe\"\t\t\"1\"", "\t\"name\"\t\t\(quoted(info.name))",
-                     "\t\"StateFlags\"\t\t\"4\"", "\t\"LastOwner\"\t\t\(quoted(ownerSteamID ?? "0"))", "\t\"installdir\"\t\t\(quoted(gameFolder.lastPathComponent))",
-                     "\t\"LastUpdated\"\t\t\(quoted(String(Int(Date().timeIntervalSince1970))))", "\t\"SizeOnDisk\"\t\t\(quoted(String(total)))",
-                     "\t\"buildid\"\t\t\(quoted(info.buildID ?? "0"))", "\t\"InstalledDepots\"", "\t{"]
-        for manifest in manifests {
-            lines += ["\t\t\(quoted(String(manifest.depotID)))", "\t\t{", "\t\t\t\"manifest\"\t\t\(quoted(String(manifest.manifestID)))", "\t\t\t\"size\"\t\t\(quoted(String(manifest.totalOriginal)))", "\t\t}"]
+    /// The depots an install record lists, by depot id (empty when there is no record or it is not a finished install).
+    static func installedDepots(appid: Int, steamApps: URL, fileManager: FileManager = .default) -> [Int: InstalledDepot] {
+        let url = steamApps.appendingPathComponent("appmanifest_\(appid).acf")
+        guard let text = try? String(contentsOf: url, encoding: .utf8), let root = SteamVDF.parse(text), let state = root["appstate"] as? [String: Any],
+              (state["stateflags"] as? String) == "4", let depots = state["installeddepots"] as? [String: Any] else { return [:] }
+        var found: [Int: InstalledDepot] = [:]
+        for (key, value) in depots {
+            guard let depot = Int(key), let node = value as? [String: Any], let manifest = (node["manifest"] as? String).flatMap({ UInt64($0) }) else { continue }
+            found[depot] = InstalledDepot(id: depot, manifest: manifest, size: (node["size"] as? String).flatMap { UInt64($0) } ?? 0, dlcApp: (node["dlcappid"] as? String).flatMap { Int($0) })
         }
-        lines += ["\t}"] + SteamManifestLanguage.blockLines() + ["}", ""]
-        try? lines.joined(separator: "\n").write(to: steamapps.appendingPathComponent("appmanifest_\(appid).acf"), atomically: true, encoding: .utf8)
+        return found
+    }
+
+    /// The text of the install record Steam keeps for an app (steamapps/appmanifest_<id>.acf).
+    static func recordText(appid: Int, name: String, owner: String, installDir: String, buildID: String, sizeOnDisk: UInt64, updated: Date,
+                           depots: [InstalledDepot], branch: String) -> String {
+        func quoted(_ text: String) -> String { "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+        var lines = ["\"AppState\"", "{", "\t\"appid\"\t\t\(quoted(String(appid)))", "\t\"Universe\"\t\t\"1\"", "\t\"name\"\t\t\(quoted(name))",
+                     "\t\"StateFlags\"\t\t\"4\"", "\t\"LastOwner\"\t\t\(quoted(owner))", "\t\"installdir\"\t\t\(quoted(installDir))",
+                     "\t\"LastUpdated\"\t\t\(quoted(String(Int(updated.timeIntervalSince1970))))", "\t\"SizeOnDisk\"\t\t\(quoted(String(sizeOnDisk)))",
+                     "\t\"buildid\"\t\t\(quoted(buildID))", "\t\"InstalledDepots\"", "\t{"]
+        for depot in depots.sorted(by: { $0.id < $1.id }) {
+            lines += ["\t\t\(quoted(String(depot.id)))", "\t\t{", "\t\t\t\"manifest\"\t\t\(quoted(String(depot.manifest)))", "\t\t\t\"size\"\t\t\(quoted(String(depot.size)))"]
+            if let dlc = depot.dlcApp { lines.append("\t\t\t\"dlcappid\"\t\t\(quoted(String(dlc)))") }
+            lines.append("\t\t}")
+        }
+        lines += ["\t}"] + SteamManifestLanguage.blockLines(branch: branch) + ["}", ""]
+        return lines.joined(separator: "\n")
+    }
+
+    private func writeAppManifest(_ info: SteamAppInfo) {
+        let steamapps = gameFolder.deletingLastPathComponent().deletingLastPathComponent()
+        let dlcByDepot = Dictionary(info.depots.map { ($0.id, $0.dlcApp) }, uniquingKeysWith: { a, _ in a })
+        let fetched = manifests.map { InstalledDepot(id: $0.depotID, manifest: $0.manifestID, size: $0.totalOriginal, dlcApp: (dlcByDepot[$0.depotID] ?? nil)) }
+        let all = fetched + keptDepots
+        let text = Self.recordText(appid: appid, name: info.name, owner: ownerSteamID ?? "0", installDir: gameFolder.lastPathComponent, buildID: info.buildID ?? "0",
+                                   sizeOnDisk: total + keptDepots.reduce(0) { $0 + $1.size }, updated: Date(), depots: all, branch: selection.branch)
+        try? text.write(to: steamapps.appendingPathComponent("appmanifest_\(appid).acf"), atomically: true, encoding: .utf8)
     }
 
     // MARK: Helpers

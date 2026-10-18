@@ -10,6 +10,7 @@ struct AddGameFlow: View {
     var onEpic: () -> Void = {}
     var onGog: () -> Void = {}
     var onItch: () -> Void = {}
+    var onAmazon: () -> Void = {}
     var onInstaller: () -> Void = {}
 
     @State private var discovered: [DiscoveredGame] = []
@@ -51,7 +52,10 @@ struct AddGameFlow: View {
             .padding(.horizontal, 24).padding(.vertical, 12)
         }
         .sheet(isPresented: $pickFolder) {
-            FolderPickerSheet(onPick: { url in pickFolder = false; importing = url }, onCancel: { pickFolder = false })
+            FolderPickerSheet(onPick: { url in
+                LogStore.shared.log("[import] folder picked: \(url.lastPathComponent)")
+                pickFolder = false; importing = url
+            }, onCancel: { LogStore.shared.log("[import] the folder picker was closed without a folder"); pickFolder = false })
         }
         .sheet(item: Binding(get: { importing.map(ImportTarget.init) }, set: { if $0 == nil { importing = nil } })) { target in
             ImportGameView(source: target.url, onCopied: { destination in importing = nil; afterImport(destination, name: target.url.lastPathComponent) }, onCancel: { importing = nil })
@@ -65,8 +69,8 @@ struct AddGameFlow: View {
     private var start: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsGroup(title: "How do you want to add it?") {
-                ActionRow(id: "add-folder", symbol: "folder.badge.plus", title: "Import a game folder", subtitle: "From Files",
-                          info: "Pick the game's folder in Files. It is copied into the app, so it needs that much free space.") { pickFolder = true }
+                ActionRow(id: "add-folder", symbol: "folder.badge.plus", title: "Import a game folder", subtitle: "In Files, open the game's folder, then tap Open",
+                          info: "In Files, tap folders until you are inside the game's folder (the one with its .exe), then tap Open at the top right. Tapping a folder only goes into it; Open chooses the folder you are in. It is copied into the app, so it needs that much free space.") { pickFolder = true }
                 ActionRow(id: "add-steam", symbol: "arrow.down.circle.fill", tint: .blue, title: "Download from Steam", subtitle: "Games you own",
                           info: "Games you own on Steam, installed straight into the app.") { dismiss(); onSteam() }
                 ActionRow(id: "add-epic", symbol: "arrow.down.circle.fill", tint: .indigo, title: "Download from Epic Games", subtitle: "Games you own",
@@ -75,6 +79,8 @@ struct AddGameFlow: View {
                           info: "Games you own on GOG, installed straight into the app. You sign in on GOG's own page.") { dismiss(); onGog() }
                 ActionRow(id: "add-itch", symbol: "arrow.down.circle.fill", tint: .red, title: "Download from itch.io", subtitle: "Games you own or claimed",
                           info: "Games you bought, claimed or collected on itch.io, installed straight into the app. You sign in with your own API key.") { dismiss(); onItch() }
+                ActionRow(id: "add-amazon", symbol: "arrow.down.circle.fill", tint: .orange, title: "Download from Amazon Games", subtitle: "Games you own or claimed",
+                          info: "Games you bought on Amazon or claimed with Prime Gaming, installed straight into the app. You sign in on Amazon's own page.") { dismiss(); onAmazon() }
                 ActionRow(id: "add-installer", symbol: "shippingbox.fill", tint: .orange, title: "Run a Windows installer", subtitle: "A disc or a setup file",
                           info: "For games from a disc or a setup file you already have. Pick the setup file, run it, then add what it installed.") { dismiss(); onInstaller() }
             }
@@ -146,7 +152,7 @@ struct AddGameFlow: View {
             let programs = games.flatMap(\.programs).sorted { $0.score > $1.score }
             let plausible = programs.filter { $0.kind != .tool }
             if let best = plausible.first, plausible.count == 1 || best.score - plausible[1].score >= 20 { add(best, as: name) }
-            else if programs.isEmpty { notice = "The folder was copied, but there is no program (.exe) inside. You can add one by path." }
+            else if programs.isEmpty { LogStore.shared.log("[import] \(name) was copied but has no program (.exe)", level: .error); notice = "The folder was copied, but there is no program (.exe) inside. You can add one by path." }
             else { choosing = Choice(name: name, programs: programs) }
         }
     }
@@ -281,15 +287,18 @@ struct ImportGameView: View {
         .task {
             guard !started else { return }
             started = true
+            LogStore.shared.log("[import] copying \(source.lastPathComponent) into the app")
             let importer = importer, source = source
             do {
                 let destination = try await Task.detached(priority: .userInitiated) {
                     try importer.run(from: source) { p in Task { @MainActor in self.progress = p } }
                 }.value
+                LogStore.shared.log("[import] copied \(source.lastPathComponent)")
                 onCopied(destination)
             } catch let e as GameImporter.ImportError {
-                if case .cancelled = e { onCancel() } else { error = e.localizedDescription }
-            } catch { self.error = error.localizedDescription }
+                if case .cancelled = e { LogStore.shared.log("[import] cancelled"); onCancel() }
+                else { LogStore.shared.log("[import] failed: \(e.localizedDescription)", level: .error); error = e.localizedDescription }
+            } catch { LogStore.shared.log("[import] failed: \(error.localizedDescription)", level: .error); self.error = error.localizedDescription }
         }
     }
 }

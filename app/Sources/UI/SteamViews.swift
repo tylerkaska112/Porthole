@@ -24,7 +24,8 @@ struct SteamSignInScreen: View {
     @State private var account = ""
     @State private var password = ""
     @State private var code = ""
-    @State private var useQR = false
+    /// The QR code is the first choice: Steam's own mobile app approves the sign-in and this app never handles the password.
+    @State private var useQR = true
 
     var body: some View {
         FocusScroll {
@@ -37,11 +38,12 @@ struct SteamSignInScreen: View {
                         if useQR { model.beginQR() }
                     }
                 }
-                Text("Your password is encrypted before it leaves the device and is never saved. Only a sign-in token is kept, in this device's Keychain.")
+                Text("A QR code signs in without this app ever seeing your password. If you type your password instead, it is encrypted before it leaves the device and is never saved. Only a sign-in token is kept, in this device's Keychain. Porthole is unofficial and is not affiliated with or endorsed by Valve.")
                     .font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
             }
             .frame(maxWidth: 640).frame(maxWidth: .infinity)
         }
+        .onAppear { if useQR, model.qrImage == nil, !model.signInBusy { model.beginQR() } }
         .onDisappear { model.cancelSignIn() }
     }
 
@@ -106,6 +108,8 @@ struct SteamOwnedList: View {
 
     @AppStorage(StoreSort.key) private var sortRaw = StoreSort.name.rawValue
     @State private var showSort = false
+    @State private var showFriends = false
+    @State private var friendsScope = FocusScope()
     @State private var sortScope = FocusScope()
     private var sort: StoreSort { StoreSort(rawValue: sortRaw) ?? .name }
 
@@ -234,6 +238,7 @@ struct SteamOwnedList: View {
                     else { IconPillButton(id: "so-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { Task { await store.refresh() } } }
                     searchField
                     SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed"), .init(id: "controller", title: "Controller")], selection: filter) { filter = $0 }
+                    IconPillButton(id: "so-friends", symbol: "person.2.fill", label: "Friends") { showFriends = true }
                     IconPillButton(id: "so-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
                     IconPillButton(id: "so-f-select", symbol: "checkmark.circle", label: selecting ? "Stop selecting" : "Select several to download", on: selecting) { selecting.toggle(); if !selecting { selected = [] } }
                 }
@@ -251,6 +256,9 @@ struct SteamOwnedList: View {
             }
             .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 18)
             .frame(maxWidth: 1400).frame(maxWidth: .infinity)
+        }
+        .sheet(isPresented: $showFriends) {
+            GameSubSheet(title: "Friends", scope: friendsScope, close: { showFriends = false }) { SteamFriendsList() }.preferredColorScheme(Theme.scheme)
         }
         .sheet(isPresented: $showSort) {
             ChoiceSheet(title: "Sort by", options: StoreSort.options(includingSize: true), selected: sort, scope: sortScope) { value in

@@ -69,7 +69,7 @@ struct RootView: View {
         // While the app updates itself nothing else can be used, and the person is told to stay.
         .overlay { UpdateProgressOverlay() }
         .sheet(isPresented: $router.showAdd) {
-            AddGameFlow(onSteam: { router.openSteam() }, onEpic: { router.openStore(.epic) }, onGog: { router.openStore(.gog) }, onItch: { router.openStore(.itch) }, onInstaller: { router.pickInstaller = true })
+            AddGameFlow(onSteam: { router.openSteam() }, onEpic: { router.openStore(.epic) }, onGog: { router.openStore(.gog) }, onItch: { router.openStore(.itch) }, onAmazon: { router.openStore(.amazon) }, onInstaller: { router.pickInstaller = true })
                 .environmentObject(model).environment(router).preferredColorScheme(Theme.scheme)
         }
         // The setup guide covers the whole screen, on iPhone and iPad.
@@ -137,7 +137,7 @@ struct RootView: View {
     }
 
     private var setupGuide: some View {
-        SetupGuideView(openAdd: { router.showAdd = true }, openSteam: { router.openSteam() }, openEpic: { router.openStore(.epic) }, openGog: { router.openStore(.gog) }, openItch: { router.openStore(.itch) }).environmentObject(model).environment(updates)
+        SetupGuideView(openAdd: { router.showAdd = true }, openSteam: { router.openSteam() }, openEpic: { router.openStore(.epic) }, openGog: { router.openStore(.gog) }, openItch: { router.openStore(.itch) }, openAmazon: { router.openStore(.amazon) }).environmentObject(model).environment(updates)
     }
 
     /// A guide step's button: close the guide, then go where it says.

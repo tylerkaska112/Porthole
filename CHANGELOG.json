@@ -1,5 +1,572 @@
 [
   {
+    "version": "1.1.0",
+    "build": "551",
+    "summary": "Full Steam Ahead: much more Steam (versions, DLC, achievements, friends, the Workshop), Amazon Games, Restart game, and fixes for American Truck Simulator, Megabonk and Counter-Strike 2.",
+    "added": [
+      "Amazon Games in the Stores tab: sign in on Amazon's own page and install the games you bought or claimed with Prime Gaming. Files come straight from Amazon's servers and are checked against Amazon's signed file list.",
+      "Steam: a Version and DLC row on a game's page. Pick another version Steam offers (a beta or the previous version), type a beta password for a private beta, and turn DLC you own on or off. Only the parts that differ are downloaded.",
+      "Steam: achievements with pictures, descriptions, unlock dates and how many players have them, a progress line (\"12 of 50 unlocked\") on the game's page, pop-ups when you unlock one in a game, and the full list in the in-game menu (Steam > Achievements).",
+      "Steam: your friends (read only): who is playing what, who is online, and who was last seen when, on a Friends button at the top right of the Home screen, in the Steam list and in the in-game menu, plus a Friends playing row on a game's page. Nothing is sent to Porthole's servers.",
+      "Steam: news and patch notes for a game, and Steam's review score and Steam Deck rating on its page (public Steam pages, no sign-in).",
+      "Steam Workshop (beta): browse, search, subscribe to and download a game's items in the app and inside the running game (in-game menu > Steam). Items are checked for updates when a game's page opens (switch it off with Update mods automatically). Depot items such as American Truck Simulator mods can be subscribed to while a game runs and download when it closes. Tested with Portal 2 and American Truck Simulator.",
+      "Restart game, in the in-game menu and on the Workshop page: closes the game and Porthole, then starts the same game again when you open Porthole (iOS needs one tap on a notification). If a game ignores the close request, Porthole asks whether to stop it.",
+      "A Steam menu in the running game opens when a game asks for Steam's overlay (its own Workshop or Store button), instead of leaving the game stuck until you press Escape.",
+      "Your own VPN can come back as soon as JIT is on (Settings > JIT and tunnel), for networks that block Steam.",
+      "The launch screen says why Steam will not start a game (needs an update, or files marked damaged) and what to do, and says when Steam has not signed in.",
+      "Add a game > Import a game folder says how to choose the folder, and writes what happens to the log."
+    ],
+    "changed": [
+      "Signing in to Steam starts with the QR code (approved in the Steam mobile app, so Porthole never handles your password). The sign-in screen says Porthole is unofficial and not affiliated with Valve.",
+      "Verify and update files on a Steam game's page really checks every file against Steam now and downloads only what is missing or damaged. Updating a game also keeps the parts of files already on the device that have not changed.",
+      "Megabonk starts without a hand-typed engine line and its controller works in Automatic. Sorting the all-games page by recently played now includes GOG and itch.io games.",
+      "Engine r17 (it was r13 in 1.0.1). Compatibility badges start empty for it."
+    ],
+    "fixed": [
+      "American Truck Simulator (and other games that create a tiny placeholder window and rely on DirectX to size it) showed as a postage stamp. The window is now resized or made to cover the screen.",
+      "Megabonk, and any Unity game that uses Rewired's Windows.Gaming.Input plugin, saw no controller. The controller is now also offered as a Windows.Gaming.Input gamepad for these games.",
+      "Counter-Strike 2's first-person look stopped at a fixed angle. The game's mouse-input thread needs a system window class that was missing for the game, so it never got raw mouse movement.",
+      "Portal 2 and other single-file Workshop items are recorded the way Steam records them and put where Steam keeps finished downloads, so the game opens maps the app downloaded even where Steam's own download times out.",
+      "A Steam game is no longer started with too little memory room: on a bad start of the app the room for the game's translated code can shrink and the game runs out of memory a minute in. Porthole now stops, says so and offers Close Porthole.",
+      "Workshop single-file items downloaded from a web address (Portal 2 maps) no longer fail with \"Steam did not accept the sign-in token\"."
+    ]
+  },
+  {
+    "version": "1.1.50",
+    "build": "550",
+    "summary": "Counter-Strike 2 look: the missing Message window class (engine r17).",
+    "added": [],
+    "changed": [
+      "Engine r17 (badges start empty for it)."
+    ],
+    "fixed": [
+      "Counter-Strike 2's first-person look stopped at a fixed angle in every control layout. The game's mouse-input thread needs a small hidden window of the system class \"Message\", and that class was only registered for the first program Porthole ran, not for the game started by Steam's client, so the window could not be created and the game never received raw mouse movement (it fell back to the pointer position, which stops at the screen edge). The Message class is now registered for every program. Needs a test on a device."
+    ]
+  },
+  {
+    "version": "1.1.49",
+    "build": "549",
+    "summary": "A Steam game is not started with too little memory room.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Counter-Strike 2 and other Steam games failed a minute after starting with \"the system ran out of memory\" on some starts of the app. iOS places memory differently on every start of Porthole, and on a bad one it had put something where Porthole keeps the room for the game's translated code, so that room shrank (544 MB instead of about 900 MB) and ran out as the game loaded. Porthole now sees the small room before the game starts, stops, says so, and offers Close Porthole: open it again and start the game (it is different every time)."
+    ]
+  },
+  {
+    "version": "1.1.48",
+    "build": "548",
+    "summary": "Verify and update files only downloads what is missing or changed.",
+    "added": [],
+    "changed": [
+      "\"Verify and update files\" on a Steam game's page now really checks every file against Steam (a few minutes for a big game) and downloads only the parts that are missing or damaged. Before, it never looked at the files: for a game that was up to date it did nothing, and for a game with a newer build it downloaded every file of the changed depot again."
+    ],
+    "fixed": [
+      "Updating a Steam game (a newer build, a beta, DLC) no longer downloads files that are already on the device and unchanged: the parts of each file already on the disk are compared with Steam's list and kept."
+    ]
+  },
+  {
+    "version": "1.1.47",
+    "build": "547",
+    "summary": "Launch screen says why Steam will not start a game.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "When Valve's Steam client refuses to start a game because its files are out of date or marked damaged (it cannot download in the game), the launch screen stayed on \"Signing in to Steam\". It now says \"Steam won't start the game yet\" and what to do: update the game under Stores > Steam (when a newer build is on Steam), or use Verify files under Details and files."
+    ]
+  },
+  {
+    "version": "1.1.46",
+    "build": "546",
+    "summary": "Counter-Strike 2 look: more diagnostics.",
+    "added": [
+      "A log line that names the window class a thread could not create (for Counter-Strike 2's mouse-input thread). Nothing else changes."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.45",
+    "build": "545",
+    "summary": "Counter-Strike 2 look: fix attempt (engine r16).",
+    "added": [],
+    "changed": [
+      "Engine r16 (badges start empty for it)."
+    ],
+    "fixed": [
+      "Counter-Strike 2's first-person look stopped at a fixed angle, in every control layout. The game's mouse-input thread is started late and could not create the small hidden window it needs (no usable desktop), so the game never received raw mouse movement and fell back to the pointer position, which stops at the screen edge. A thread with no usable desktop now gets the process's desktop, so the window is created and raw mouse input is registered. The steps are written to the log as [desktop-diag]. Needs a test on a device."
+    ]
+  },
+  {
+    "version": "1.1.44",
+    "build": "544",
+    "summary": "Workshop maps recorded the way Steam records them; window-creation diagnostics.",
+    "added": [
+      "Log lines ([createwin] 0159) that show why a window cannot be created, to find why Counter-Strike 2's look stops at a fixed angle (its raw-input window is created and the thread ends at once). Nothing else about windows changes."
+    ],
+    "changed": [],
+    "fixed": [
+      "Single-file Workshop items (Portal 2 and Counter-Strike maps) are now recorded the way Steam's client records them (manifest -1 and the item's UGC handle). Before, Steam's client saw them as changed, marked the game \"needs update\", tried to download them itself and cleaned away the copy the app had put in its finished-download cache, so the game said the map was not downloaded. Items downloaded earlier are corrected when the app opens and when a game's page opens."
+    ]
+  },
+  {
+    "version": "1.1.43",
+    "build": "543",
+    "summary": "Counter-Strike 2 look: diagnostics.",
+    "added": [
+      "Log lines (look-diag) that show what a game registers for mouse input and how the first-person look reaches it, to find why Counter-Strike 2's look stops at a fixed angle. Nothing else changes."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.42",
+    "build": "542",
+    "summary": "Portal 2 Workshop maps open when Steam's client can't download them itself.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Workshop maps that are a single file (Portal 2) did not open on a connection where Steam's client inside the game times out reaching the content server, even though the app had downloaded them. The app now also puts each map where Steam's client keeps a finished download (userdata/<account>/ugc/referenced/<id>/, with the data.vdf file Steam writes), so the game finds it. Maps already downloaded are filled in when the app opens and when a game's page opens. Needs Steam to be signed in; nothing is sent anywhere new."
+    ]
+  },
+  {
+    "version": "1.1.41",
+    "build": "541",
+    "summary": "Restart game when a game ignores the close request.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Restart game did nothing with a game that ignores the close request (Alt+F4), such as Portal 2: the game kept running and Porthole waited for it. It now sends the request twice, and if the game has not closed after 8 seconds asks whether to stop it and restart (Keep playing / Stop and restart). The steps are written to the log as [restart]."
+    ]
+  },
+  {
+    "version": "1.1.40",
+    "build": "540",
+    "summary": "Importing a game folder is explained and logged.",
+    "added": [
+      "The steps of importing a game folder (the picker opened or closed, the folder chosen, how many files, errors) are now written to the log, so a report about a folder that \"won't select\" shows what happened."
+    ],
+    "changed": [
+      "Add a game > Import a game folder now says how to choose the folder: in Files, open the game's folder, then tap Open at the top right. Tapping a folder only goes into it; Open chooses the folder you are in."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.39",
+    "build": "539",
+    "summary": "Achievement progress on the game pages.",
+    "added": [
+      "The Achievements row on a Steam game's page (in the Stores tab and in the library) now says how many you have, for example \"12 of 50 unlocked\" or \"All 50 unlocked\", without opening the list. It is read when the page opens (at most once an hour per game) and kept on the device only; signing out forgets it."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.38",
+    "build": "538",
+    "summary": "News and Deck rating on Steam store pages.",
+    "added": [
+      "The News and patch notes row and the Steam Deck rating chip are now also on a game's page in the Stores tab (the page you see before installing), not only on installed games' pages in the library."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.37",
+    "build": "537",
+    "summary": "Steam news, review score and Deck rating.",
+    "added": [
+      "A News and patch notes row on a Steam game's page: the game's official announcements and patch notes from Steam, newest first, with a link to read each on Steam. The same list is in the in-game menu (Steam > News), where it only reads.",
+      "Two chips on a Steam game's page: Steam's review summary (for example Overwhelmingly Positive, 99%) and its Steam Deck rating (Verified, Playable or Unsupported). The Deck rating is Valve's test on a Steam Deck, not a promise about how the game runs in Porthole.",
+      "These come from Steam's public pages. No sign-in is used and only the game's number is sent."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.36",
+    "build": "536",
+    "summary": "Restart game.",
+    "added": [
+      "Restart game, in the in-game menu (Session) and on the Workshop page when a mod has just arrived or is waiting for the game to close. It closes the game the usual way (so it can save), closes Porthole, and sends a notification: tap it, or open Porthole yourself within 30 minutes, and the same game starts again after the Workshop downloads that were waiting have finished (up to two minutes). A notice on the Home screen shows it and has a Cancel button. iOS does not let an app reopen itself, which is why the notification is needed."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.35",
+    "build": "535",
+    "summary": "Workshop updates are found and downloaded by themselves.",
+    "added": [
+      "When you open a Steam game's page, Porthole checks whether any Workshop item you are subscribed to is missing or has a newer version on Steam, and downloads it (at most every 5 minutes per game, and not while a game is running). The Workshop row on the game page says \"N updates available\" when it is only counting. A new switch on the Workshop page, Update mods automatically, turns the automatic download off; the button below it still updates on demand."
+    ],
+    "changed": [
+      "Opening a game's Workshop page only downloads missing and updated items by itself when Update mods automatically is on."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.34",
+    "build": "534",
+    "summary": "Friends playing this game.",
+    "added": [
+      "On a Steam game's page, a Friends playing row shows which of your Steam friends are in that game right now (for example \"2 playing now\"), and opens the list of who they are. Read only, from the friends list the app already loads."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.33",
+    "build": "533",
+    "summary": "Friends button on the Home Screen.",
+    "added": [
+      "A Friends button at the top right of the Home Screen, always visible there (and only there, not on a game's page). It opens your Steam friends list and shows how many are online once the list has loaded. If you are not signed in to Steam it offers to open Steam to sign in."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.32",
+    "build": "532",
+    "summary": "Steam friends list (test build).",
+    "added": [
+      "Your Steam friends, read only: who is playing what, who is online, and (folded away) who is offline, with their picture and how long ago they were last seen. It is on the Steam game list (the Friends button next to Sort) and in the in-game menu (Steam > Friends). It refreshes every 45 seconds while it is open. Names, pictures and status come from Steam with the sign-in the app already has; nothing is sent to Porthole's servers and the list is kept in memory only. Ignored, blocked and pending people are not shown."
+    ],
+    "changed": [
+      "The friends probe from the last two test builds is gone."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.31",
+    "build": "531",
+    "summary": "Friends list probe, second try (log lines only, test build).",
+    "added": [],
+    "changed": [
+      "Test build: the friends probe now reads the ids the way Steam writes them. Log lines only."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.30",
+    "build": "530",
+    "summary": "Friends list probe (log lines only, test build).",
+    "added": [],
+    "changed": [
+      "Test build for the friends list. Twenty seconds after the app opens (when you are signed in to Steam) it asks Steam three ways for your friends' names and online state and writes only counts and field names to the log. Nothing is shown in the app and no friend's name or id is logged."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.29",
+    "build": "529",
+    "summary": "Wording of the Steam-not-reachable message (test build).",
+    "added": [],
+    "changed": [
+      "The launch screen's message when Steam has not signed in now just asks you to check your internet connection."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.28",
+    "build": "528",
+    "summary": "The launch screen says when Steam cannot be reached (test build).",
+    "added": [
+      "When a Steam game's launch is stuck because Steam has not signed in (usually a network that blocks Steam), the launch screen now says so after a short wait (about 12 seconds when Porthole's own connection to Steam also failed, otherwise about 40) and suggests your VPN, cellular data or another Wi-Fi. Before, it just kept saying it was waiting. The wait is also written to the log."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.27",
+    "build": "527",
+    "summary": "Workshop downloads survive closing the app (test build).",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Workshop items that were waiting or downloading when the app closed (the app closes itself after a game, and you may force-quit it) are remembered and start again the next time the app opens. In build 1.1.26 the waiting list was only picked up once a Workshop screen was opened."
+    ]
+  },
+  {
+    "version": "1.1.26",
+    "build": "526",
+    "summary": "Workshop items wait for the game to close and then download (test build).",
+    "added": [
+      "A Workshop item that is kept in the game's Workshop depot (such as an American Truck Simulator mod) can be subscribed to while a game is running: it shows 'Subscribed, downloads when the game closes' and starts by itself when the game ends. The waiting list is kept if the app is closed, and an item Steam's own client already fetched at the same version is not downloaded again."
+    ],
+    "changed": [],
+    "fixed": [
+      "A Workshop download that was running when a game started no longer ends as an error; it waits for the game to close and continues."
+    ]
+  },
+  {
+    "version": "1.1.25",
+    "build": "525",
+    "summary": "Steam: QR sign-in first, and Porthole no longer writes into Steam's download cache (test build).",
+    "added": [],
+    "changed": [
+      "Signing in to Steam now starts with the QR code, which you approve in the Steam mobile app, so the app never handles your password; the account-name-and-password form is one tap away. The sign-in screen says that Porthole is unofficial and not affiliated with Valve.",
+      "Porthole no longer puts a copy of a downloaded single-file Workshop item (such as a Portal 2 map) into Steam's own download cache. Steam's client downloads the item itself, and the app's own copy in the Workshop folder stays."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.24",
+    "build": "524",
+    "summary": "Workshop notice updated (test build).",
+    "added": [],
+    "changed": [
+      "The Workshop beta notice now says which games are known to work (Portal 2 maps, American Truck Simulator mods) instead of saying older games have not worked."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.23",
+    "build": "523",
+    "summary": "A game's Steam overlay request opens the Steam menu (test build).",
+    "added": [
+      "When a Steam game asks for Steam's overlay (its Workshop or Store button, or Shift+Tab), the in-game Steam menu opens at the Workshop instead, and an Escape press is sent to close the overlay's empty screen. Before, the overlay could not draw and the game stopped answering until you pressed Escape. There is a switch for it in the Steam tab (Open this menu instead)."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.22",
+    "build": "522",
+    "summary": "Your VPN comes back as soon as JIT is on (test build).",
+    "added": [
+      "Settings > JIT and tunnel > Your own VPN: 'Turn it back on as soon as JIT is on' (on by default, needs the shortcut that turns your VPN back on). The VPN Porthole pauses for its tunnel now comes back right after JIT is switched on, before the game starts, instead of when the game closes. This is for networks that block Steam: the game's Steam sign-in now goes through your VPN. Porthole leaves the app for a moment to run the shortcut, as it does for cellular data, and waits for the VPN to be up."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.21",
+    "build": "521",
+    "summary": "All achievements in the in-game menu (test build).",
+    "added": [
+      "The in-game menu's Steam tab has an Achievements part: every achievement of the game you are playing with its picture, description, when you unlocked it and how common it is, with the unlocked ones first. It is read from the files Steam's client keeps on the device, so it works in the game and updates while the menu is open. The pop-up switch and test button moved there."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.20",
+    "build": "520",
+    "summary": "Pop-ups for unlocked Steam achievements (test build).",
+    "added": [
+      "While a Steam game runs, an achievement that Steam records for it shows as a pop-up at the top of the screen with its picture, name and description. The app reads the stats file Steam's client keeps on the device, so it needs no connection, and it ignores history Steam syncs at the start of a game. In the in-game menu's Steam tab there is a switch for the pop-ups and a button that shows a test pop-up."
+    ],
+    "changed": [
+      "The test probes of the Steam work (Web API reads and file watching at game start) are gone."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.19",
+    "build": "519",
+    "summary": "Windows that rely on DirectX to size them (American Truck Simulator) - test build, new engine.",
+    "added": [],
+    "changed": [
+      "Test build with a new engine (r15). When a game asks DirectX to resize its window or to go full screen, the window is now resized or covers the screen as it would on Windows, if it does not already. American Truck Simulator creates a tiny placeholder window and relied on this, so it showed as a postage stamp. Games whose window already has the right size are left as they were. Compatibility badges start fresh for the new engine."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.18",
+    "build": "518",
+    "summary": "Window requests in the log (test build).",
+    "added": [],
+    "changed": [
+      "Test build: the first 150 position, size, show and style requests a program makes for its top-level windows are written to the log as [winreq] 0156, to find out why American Truck Simulator's window stays tiny. Nothing else changes."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.17",
+    "build": "517",
+    "summary": "Windows that start tiny (American Truck Simulator) - test build, new engine.",
+    "added": [],
+    "changed": [
+      "Test build with a new engine (r14). A program that asks for a default-size window can no longer end up with a 132x38 one: the size now comes from the start-up size when it is usable, else 3/4 of the work area, else 3/4 of the screen. Every window request is written to the log as [createwin] 0156 so the cause of American Truck Simulator's tiny window can be read from it. Compatibility badges start fresh for the new engine."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.16",
+    "build": "516",
+    "summary": "Workshop marked as beta (test build).",
+    "added": [
+      "The Workshop rows (on a Steam game's page and its library page) and the Workshop part of the in-game Steam tab now carry a Beta badge. The first time you open the Workshop in the app or in a game, a notice says it is mostly untested, that only a few games have been tried and that older games have not worked so far."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.15",
+    "build": "515",
+    "summary": "Steam tab in the in-game menu; older Workshop items download while a game runs (test build).",
+    "added": [],
+    "changed": [
+      "The in-game menu's Workshop tab is now called Steam, and holds the Workshop; friends and chat will join it there."
+    ],
+    "fixed": [
+      "Workshop items that are a file at a web address (such as Portal 2 maps) no longer fail in the game with 'This item downloads when the game is closed'; only items kept in the game's Workshop depot wait for the game to close."
+    ]
+  },
+  {
+    "version": "1.1.14",
+    "build": "514",
+    "summary": "Steam Workshop inside the game (test build).",
+    "added": [
+      "The in-game menu has a Workshop tab for Steam games (when you are signed in to Steam): see the Workshop items on the device, browse and search the game's items, subscribe and download, tap an installed item twice to remove it. While a game runs it uses only Steam's web calls and plain file downloads; items kept in the game's Workshop depot download after the game is closed."
+    ],
+    "changed": [
+      "Downloads of older Workshop items try up to eight times (alternating between Steam's two names for the server) before giving up."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.13",
+    "build": "513",
+    "summary": "Steam Workshop: network details in the log (test build).",
+    "added": [],
+    "changed": [
+      "Test build: each download of an older Workshop item writes one line to the log saying which server address it reached, over IPv4 or IPv6, with which protocol and how long each step took, to find out why Steam's user-content server drops connections on some networks."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.12",
+    "build": "512",
+    "summary": "Steam Workshop: downloads of older items retry on the other Steam address (test build).",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Workshop items that are a file at a web address failed with 'No internet connection' when the connection to Steam's user-content server was dropped. The download now retries, alternating between Steam's two names for that server, before giving up."
+    ]
+  },
+  {
+    "version": "1.1.11",
+    "build": "511",
+    "summary": "Steam Workshop: older items are also put where Steam's client looks (test build).",
+    "added": [],
+    "changed": [
+      "Workshop items that are a single file at a web address (such as Portal 2 maps) are now also copied into Steam's own download cache for your account, with the details file Steam keeps, because the game asks Steam's client for them and the client could not download them itself. Removing the item removes that copy. Items already downloaded are fetched again the next time you open that game's Workshop list."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.10",
+    "build": "510",
+    "summary": "Steam Workshop: older items (such as Portal 2 maps) download (test build).",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Workshop: items that are a file at a web address, like most Portal 2 maps, are now downloaded from that address; before, the app tried the game's depot and failed. Looking an item up no longer fails with 'Steam did not accept the sign-in token', and trying again after a failure reuses what the app already knows about the item."
+    ]
+  },
+  {
+    "version": "1.1.9",
+    "build": "509",
+    "summary": "Steam: Workshop in the app (test build).",
+    "added": [
+      "A Workshop row on a Steam game's page and on its page in the library (when you are signed in to Steam): see the items you are subscribed to, browse a game's Workshop by trending, newest, most subscribed or top rated, search it, and subscribe or unsubscribe. Subscribing happens on your Steam account and the item's files are downloaded into the game's Steam folder (steamapps/workshop) with the record Steam's own client keeps. Opening the list downloads subscribed items that are missing or out of date."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.8",
+    "build": "508",
+    "summary": "Steam: achievement pictures (test build).",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Steam achievement pictures: the picture address no longer gets a second .jpg, and it now uses Steam's current picture server. A picture that still cannot load shows a trophy instead of an empty square."
+    ]
+  },
+  {
+    "version": "1.1.7",
+    "build": "507",
+    "summary": "Steam: Achievements row also on a game's own page in the library (test build).",
+    "added": [
+      "The Achievements row is now also on a Steam game's page in your library, not only on its Steam page."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.6",
+    "build": "506",
+    "summary": "Steam: see your achievements for a game (test build).",
+    "added": [
+      "On a Steam game's page, an Achievements row (when you are signed in to Steam) lists the game's achievements with their pictures, when you unlocked each one and how many players have it. Hidden achievements stay hidden until you unlock them. It only reads what Steam has recorded for your account; nothing is changed."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.1.5",
+    "build": "505",
+    "summary": "Steam: choose a version (beta) of a game and its DLC (test build).",
+    "added": [
+      "On a Steam game's page, a Version and DLC row (when you are signed in to Steam): pick another version of the game that Steam offers, such as a beta or the previous version, or type a beta password to open a private one; turn DLC you own on or off. Download changes fetches only what differs, so adding DLC does not download the game again."
+    ],
+    "changed": [
+      "DLC you own is now installed with a Steam game, as Steam does, unless you turn it off on the game's page. Games already installed get it the next time you update them.",
+      "A Steam game's files record (appmanifest) now lists DLC depots with their DLC app, and a beta version carries a BetaKey, so Valve's client treats the files as that version."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.4",
+    "build": "504",
+    "summary": "Steam branch: the test probes also list which of your games have Workshop items (log lines only).",
+    "added": [],
+    "changed": [
+      "Test build for the Steam feature work. The probes from 1.1.3 now also check each game you own, a few per second, for Workshop items and write one line to the log listing the games that have any. Nothing is shown in the app and nothing on your account is changed."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.3",
+    "build": "503",
+    "summary": "Steam branch: test probes for friends, achievements and Workshop (log lines only).",
+    "added": [],
+    "changed": [
+      "Test build for the Steam feature work. When a Steam game starts, Porthole reads (never changes) a few things from Steam's web service with the sign-in it already holds and writes only counts and public item names to the log: friends, achievements and Workshop items. While the game runs it also logs which of Steam's own files change. Nothing is shown in the app."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.1.2",
+    "build": "502",
+    "summary": "Amazon Games joins the stores, and Megabonk starts and sees the controller by itself.",
+    "added": [
+      "Amazon Games in the Stores tab: sign in on Amazon's own page and install the games you bought on Amazon or claimed with Prime Gaming. Files come straight from Amazon's servers and are checked against Amazon's signed file list. Some Prime games need Amazon's online services and may not start."
+    ],
+    "changed": [
+      "Megabonk now starts without a hand-typed engine line (real thread suspension is switched on for it), and its controller works in Automatic.",
+      "Sorting the all-games page by recently played now includes GOG and itch.io games."
+    ],
+    "fixed": [
+      "Unity games that use Rewired's Windows.Gaming.Input plugin (Megabonk) saw no controller in any mode but keyboard and mouse: the plugin only asks for gamepads, and the pad was not one. The controller is now also offered as a Windows.Gaming.Input gamepad for these games, and Automatic keeps the Xbox pad for them instead of showing a PlayStation controller as a DualSense. A line of your own (env.MADEIRA_WGI_HOST_PADS) still wins."
+    ]
+  },
+  {
+    "version": "1.1.1",
+    "build": "501",
+    "summary": "Megabonk starts and sees the controller by itself, and so does any game that reads its pad through Rewired (private test build).",
+    "added": [],
+    "changed": [
+      "Megabonk now starts without a hand-typed engine line (real thread suspension is switched on for it), and its controller works in Automatic."
+    ],
+    "fixed": [
+      "Unity games that use Rewired's Windows.Gaming.Input plugin (Megabonk) saw no controller in any mode but keyboard and mouse: the plugin only asks for gamepads, and the pad was not one. The controller is now also offered as a Windows.Gaming.Input gamepad for these games, and Automatic keeps the Xbox pad for them instead of showing a PlayStation controller as a DualSense. A line of your own (env.MADEIRA_WGI_HOST_PADS) still wins."
+    ]
+  },
+  {
     "version": "1.0.1",
     "build": "500",
     "summary": "BeamNG.drive starts and can be played (early support).",

@@ -122,6 +122,9 @@ import Foundation
         case ("itch", .pause): ItchInstaller.shared.pauseAll()
         case ("itch", .resume): ItchInstaller.shared.resumeAll()
         case ("itch", .cancel): ItchInstaller.shared.cancelCurrent()
+        case ("amazon", .pause): AmazonInstaller.shared.pauseAll()
+        case ("amazon", .resume): AmazonInstaller.shared.resumeAll()
+        case ("amazon", .cancel): AmazonInstaller.shared.cancelCurrent()
         default: break
         }
         if action == .pause, let card = cards[store] { paused(store: store, name: card.state.title) }

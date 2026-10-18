@@ -13,6 +13,8 @@ enum AppArt {
            let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) { return image }
         if game.itchID != nil, let url = game.itchArtURL,
            let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) { return image }
+        if game.amazonID != nil, let url = game.amazonArtURL,
+           let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) { return image }
         var steamID = game.steamAppID
         if steamID == nil {
             let found = await SteamArt.shared.appID(name: game.name, exe: game.exe) ?? 0

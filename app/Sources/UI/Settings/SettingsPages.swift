@@ -199,6 +199,7 @@ struct ConnectionPage: View {
     @AppStorage(TunnelManager.useLocalDevVPNKey) private var useLocalDevVPN = false
     @AppStorage(VPNGuard.askKey) private var vpnAsk = true
     @AppStorage(VPNGuard.shortcutKey) private var vpnShortcut = ""
+    @AppStorage(VPNGuard.earlyKey) private var vpnEarly = true
     @AppStorage(CellularGuard.enabledKey) private var cellularAuto = true
     private let tunnel = TunnelManager.shared
 
@@ -233,6 +234,9 @@ struct ConnectionPage: View {
                 TextFieldRow(id: "cn-vpn-shortcut", symbol: "arrow.uturn.backward.circle.fill", title: "Shortcut to turn it back on", placeholder: "none",
                              info: "iOS does not let an app start another app's VPN. To get it back automatically: open the Shortcuts app, make a shortcut with one action, Set VPN (choose your VPN, then Connect), and type its exact name here. When your game closes or the update is done, Porthole runs it, then returns here. Leave this empty and Porthole just reminds you. A VPN with Connect On Demand switched on in its own app comes back by itself.",
                              text: $vpnShortcut)
+                ToggleRow(id: "cn-vpn-early", symbol: "bolt.horizontal.circle.fill", title: "Turn it back on as soon as JIT is on",
+                          info: "With a shortcut above, your VPN comes back right after JIT is switched on, before the game starts, instead of when the game closes. Use this on a network that blocks Steam, so the game's Steam sign-in goes through your VPN. Porthole leaves the app for a moment to run the shortcut, as it does for cellular data.",
+                          isOn: $vpnEarly)
                 ActionRow(id: "cn-vpn-make", symbol: "wand.and.stars", title: "Make the shortcut",
                           subtitle: "Opens Shortcuts. Add the action Set VPN, choose your VPN and Connect, then name it \u{201C}Porthole VPN\u{201D}.",
                           info: "Shortcuts can't be created for you: iOS only accepts shortcut files signed by Apple, and the Set VPN action has to point at your own VPN, which only you can pick. This opens a new, empty shortcut. Tap Add Action, search for Set VPN, choose your VPN and set it to Connect, then tap the name at the top and call it Porthole VPN. Porthole fills in that name for you.") {

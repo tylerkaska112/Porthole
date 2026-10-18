@@ -45,6 +45,9 @@ struct Game: Codable, Identifiable, Equatable {
     /// Set for a game installed from itch.io (Itch/): its game id and its picture.
     var itchID: Int?
     var itchArtURL: URL?
+    /// Set for a game installed from Amazon Games (Amazon/): its product id and its picture.
+    var amazonID: String?
+    var amazonArtURL: URL?
 }
 
 /// Settings a game can override. Every field is optional: nil means "use the global setting".
@@ -169,6 +172,25 @@ final class AppModel: ObservableObject {
 
     func removeItch(id: Int) {
         games.removeAll { $0.itchID == id }
+        save()
+    }
+
+    /// Adds an installed Amazon Games game to the library, or brings the one with this id up to date. `workDir` is the folder its fuel.json asks to start in (a C:\ path).
+    func upsertAmazon(id: String, title: String, exe: String, args: String, workDir: String?, art: URL?) {
+        if let i = games.firstIndex(where: { $0.amazonID == id }) {
+            games[i].exe = exe; games[i].args = args; games[i].amazonArtURL = art
+            if let workDir, games[i].engine?.workDir == nil { var e = games[i].engine ?? GameEngine(); e.workDir = workDir; games[i].engine = e }
+        } else {
+            var game = Game(name: title, exe: exe)
+            game.args = args; game.amazonID = id; game.amazonArtURL = art
+            if let workDir { var e = GameEngine(); e.workDir = workDir; game.engine = e }
+            games.append(game)
+        }
+        save()
+    }
+
+    func removeAmazon(id: String) {
+        games.removeAll { $0.amazonID == id }
         save()
     }
 

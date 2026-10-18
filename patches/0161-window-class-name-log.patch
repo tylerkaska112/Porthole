@@ -1,0 +1,24 @@
+--- /tmp/window_ios.c.before-0161	2026-10-18 07:21:20
++++ vendor/Madeira/build/win32u-unix/window_ios.c	2026-10-18 07:21:20
+@@ -5801,6 +5801,21 @@
+                                       cs.hInstance, ansi, style, ex_style )))
+     {
+         ML0159_FAIL( "create_window_handle", NULL );
++#ifdef WINE_IOS
++        {   /* ml1403 / patch 0161: which class could it not find? (error 6 = STATUS_INVALID_HANDLE is what the server answers for an unknown class) */
++            static unsigned long ml1403_n;
++            if (++ml1403_n <= 20)
++            {
++                char name[80] = "";
++                unsigned int k = 0;
++                if (class_name && class_name->Buffer)
++                    for (; k < class_name->Length / sizeof(WCHAR) && k < sizeof(name) - 1; k++) name[k] = class_name->Buffer[k] < 128 ? (char)class_name->Buffer[k] : '?';
++                name[k] = 0;
++                dprintf( STDERR_FILENO, "[createwin] 0161 create_window_handle failed: class name '%s' (atom/ptr %p) class-instance %p instance %p parent %p owner %p style %08x ansi %d\n",
++                         name, (void *)class, (void *)class_instance, (void *)instance, parent, owner, (unsigned)style, (int)ansi );
++            }
++        }
++#endif
+         return 0;
+     }
+     hwnd = win->handle;

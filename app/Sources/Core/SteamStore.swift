@@ -20,6 +20,19 @@ final class SteamStore: ObservableObject {
         var folderName: String { SteamInstallFiles.safeFolderName(installDir.isEmpty ? "app_\(id)" : installDir) }
     }
 
+    /// What the person chose for one game besides the normal install: another version (branch) of it, and DLC to leave out. Kept on the device.
+    struct Choice: Codable, Equatable {
+        var branch = SteamBranch.publicName
+        /// The passwords of private betas, by branch, as typed. Not the account's password.
+        var betaPasswords: [String: String] = [:]
+        var betaPassword: String? { betaPasswords[branch] }
+        /// DLC the person turned off. DLC the account owns is installed by default, as Steam does.
+        var disabledDLC: Set<Int> = []
+        /// The build number of the chosen version as Steam last said (for the update check of a branch).
+        var latestBuild: Int?
+        var isDefault: Bool { branch == SteamBranch.publicName && disabledDLC.isEmpty }
+    }
+
     struct Download: Equatable {
         enum State: Equatable { case queued, active, paused, failed(String) }
         var state: State
@@ -31,6 +44,7 @@ final class SteamStore: ObservableObject {
     @Published private(set) var owned: [Owned] = []
     @Published private(set) var refreshing = false
     @Published private(set) var downloads: [Int: Download] = [:]
+    @Published private(set) var choices: [Int: Choice] = SteamStore.loadChoices()
     @Published var error: String?
     /// Called on the main actor when a download finishes: the game, its install folder and the Windows path of the program to run (nil if none was found).
     var onInstalled: ((Owned, String?) -> Void)?
@@ -70,6 +84,7 @@ final class SteamStore: ObservableObject {
             MainActor.assumeIsolated { self?.signInChanged() }
         }
         SteamBackground.shared.attach(self)
+        SteamWorkshopStore.shared.resumeAfterLaunch()      // Workshop items left unfinished by the last run (a game that ended, a force-quit) start again
         loadCache()
         if signedIn, Date().timeIntervalSince(updated ?? .distantPast) > 6 * 3600 { Task { await refresh(interactive: false) } }
     }
@@ -90,7 +105,7 @@ final class SteamStore: ObservableObject {
         }
     }
 
-    func signOut() { SteamSignIn.signOut() }
+    func signOut() { SteamSignIn.signOut(); SteamAchievementProgress.shared.clear() }
 
     private func loadCache() {
         guard signedIn, let data = try? Data(contentsOf: Self.cacheURL), data.count < 64 << 20,
@@ -125,6 +140,58 @@ final class SteamStore: ObservableObject {
         }
     }
 
+    // MARK: Versions and DLC
+
+    private static let choicesKey = "steam.gameChoices.v1"
+    private static func loadChoices() -> [Int: Choice] {
+        guard let data = UserDefaults.standard.data(forKey: choicesKey), let saved = try? JSONDecoder().decode([String: Choice].self, from: data) else { return [:] }
+        return Dictionary(saved.compactMap { key, value in Int(key).map { ($0, value) } }, uniquingKeysWith: { a, _ in a })
+    }
+    private func saveChoices() {
+        let encodable = Dictionary(uniqueKeysWithValues: choices.filter { !$0.value.isDefault || $0.value.latestBuild != nil }.map { (String($0.key), $0.value) })
+        if let data = try? JSONEncoder().encode(encodable) { UserDefaults.standard.set(data, forKey: Self.choicesKey) }
+    }
+    func choice(_ id: Int) -> Choice { choices[id] ?? Choice() }
+    private func update(_ id: Int, _ change: (inout Choice) -> Void) {
+        var value = choice(id); change(&value)
+        choices[id] = value; saveChoices()
+    }
+    /// Chooses which version of the game to have. The files change when the game is next installed or updated (the page offers it).
+    func setBranch(_ id: Int, to branch: String, password: String? = nil) {
+        update(id) {
+            $0.branch = branch; $0.latestBuild = nil
+            if let password, !password.isEmpty, branch != SteamBranch.publicName { $0.betaPasswords[branch] = password }
+        }
+        invalidateBuilds()
+    }
+    func setDLC(_ id: Int, app: Int, enabled: Bool) { update(id) { if enabled { $0.disabledDLC.remove(app) } else { $0.disabledDLC.insert(app) } } }
+
+    /// The versions and DLC Steam lists for a game. Also remembers the chosen version's newest build for the update check.
+    func details(_ id: Int) async throws -> SteamGameDetails {
+        let found = try await service.gameDetails(appID: id)
+        let chosen = choice(id).branch
+        if let build = found.info.branches.first(where: { $0.name == chosen })?.buildID.flatMap({ Int($0) }), choice(id).latestBuild != build {
+            update(id) { $0.latestBuild = build }
+        }
+        return found
+    }
+
+    /// The game's achievements and this account's progress (read-only).
+    func achievements(_ id: Int) async throws -> [SteamAchievement] {
+        let list = try await service.achievements(appID: id)
+        SteamAchievementProgress.shared.record(appID: id, list: list)
+        return list
+    }
+
+    /// Checks a beta password with Steam. On success the branch it opens is chosen for the game and the password is kept to read that branch's files.
+    @discardableResult
+    func unlockBranch(_ id: Int, password: String) async throws -> String {
+        let opened = try await service.betaPassword(appID: id, password: password)
+        guard let first = opened.first else { throw SteamFailure(message: "That password does not open a beta of this game.") }
+        setBranch(id, to: first.branch, password: password)
+        return first.branch
+    }
+
     // MARK: Installed state
 
     /// The build the installed copy says it is, or nil when it is not installed.
@@ -142,7 +209,13 @@ final class SteamStore: ObservableObject {
     private var buildCache: [Int: (build: Int?, at: Date)] = [:]
     func invalidateBuilds() { buildCache = [:] }
     func isInstalled(_ id: Int) -> Bool { installedBuild(id) != nil }
-    func updateAvailable(_ game: Owned) -> Bool { installedBuild(game.id).map { $0 < game.buildID } ?? false }
+    func updateAvailable(_ game: Owned) -> Bool {
+        guard let have = installedBuild(game.id) else { return false }
+        // Another version than the public one is compared with that version's build, when Steam has said what it is.
+        let chosen = choice(game.id)
+        if chosen.branch != SteamBranch.publicName { return chosen.latestBuild.map { have != $0 } ?? false }
+        return have < game.buildID
+    }
     /// Installed games whose newest build is newer than the one on the device and that are not being downloaded right now.
     var gamesWithUpdates: [Owned] { owned.filter { downloads[$0.id] == nil && updateAvailable($0) } }
 
@@ -164,6 +237,14 @@ final class SteamStore: ObservableObject {
     }
 
     // MARK: Downloads
+
+    /// "Verify and update files": the same as an install, but every depot's file list is fetched and the files on the disk are checked against it, so a damaged or changed file
+    /// is fetched again and nothing else.
+    func verify(_ id: Int) {
+        verifyRequests.insert(id)
+        install(id)
+    }
+    private var verifyRequests = Set<Int>()
 
     func install(_ id: Int) {
         guard signedIn else { error = "Sign in to Steam first."; return }
@@ -311,6 +392,7 @@ final class SteamStore: ObservableObject {
     /// The Dock session ended: let this app's connection come back.
     func dockEnded() {
         service.resume()
+        SteamWorkshopStore.shared.gameEnded()                                  // Workshop items that waited for the connection start now
         Task.detached(priority: .utility) { SteamClientTraces.scrub() }       // Valve's client's saved sign-in is not kept (see SteamClientTraces)
     }
 
@@ -350,7 +432,15 @@ final class SteamStore: ObservableObject {
             let steamApps = try access.map { try SteamStoragePath.native("steamapps", root: $0.root) } ?? Self.steamApps
             try FileManager.default.createDirectory(at: steamApps.appendingPathComponent("common", isDirectory: true), withIntermediateDirectories: true)
             var lastPublished = Date.distantPast
-            let (folder, info) = try await service.install(appID: id, name: name, steamApps: steamApps) { [weak self] progress in
+            var selection = SteamInstallSelection()
+            let chosen = choice(id)
+            selection.branch = chosen.branch
+            selection.dlc = .allExcept(chosen.disabledDLC)
+            selection.verify = verifyRequests.remove(id) != nil
+            if chosen.branch != SteamBranch.publicName, let password = chosen.betaPassword, !password.isEmpty {
+                selection.branchKey = try await service.betaPassword(appID: id, password: password).first { $0.branch == chosen.branch }?.key
+            }
+            let (folder, info) = try await service.install(appID: id, name: name, steamApps: steamApps, selection: selection) { [weak self] progress in
                 // Every change of this reaches every screen that shows a game; once a second is plenty for a percentage.
                 let now = Date()
                 if now.timeIntervalSince(lastPublished) >= 1 || self?.downloads[id]?.progress.phase != progress.phase {

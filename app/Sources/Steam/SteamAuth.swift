@@ -463,7 +463,7 @@ struct SteamGame: Codable, Equatable, Identifiable {
 }
 
 final class SteamAccount {
-    private let api: SteamAPI
+    let api: SteamAPI
     private let store: SteamSessionStore
     private(set) var session: SteamAccountSession?
 
@@ -476,7 +476,7 @@ final class SteamAccount {
     func signOut() { session = nil; store.clear() }
 
     /// A working access token: the one we hold if it has time left, otherwise a new one made from the refresh token.
-    private func accessToken(forceRefresh: Bool, completion: @escaping (Result<String, SteamAPIError>) -> Void) {
+    func accessToken(forceRefresh: Bool, completion: @escaping (Result<String, SteamAPIError>) -> Void) {
         guard var current = session else { completion(.failure(.notSignedIn)); return }
         if !forceRefresh, let token = current.accessToken, !SteamJWT.isExpired(token) { completion(.success(token)); return }
         api.call("IAuthenticationService", "GenerateAccessTokenForApp", post: true,

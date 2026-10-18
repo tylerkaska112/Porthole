@@ -1,0 +1,173 @@
+PORTHOLE 1.1.0 "FULL STEAM AHEAD" - CHANGELOG (2026-10-18)
+=====================================================================
+
+Everything below is what changed since the public 1.0.1. It was built as private test builds 1.1.1 to 1.1.50 on the "steam" branch; those builds are folded into this one list.
+The engine is r17 (it was r13 in 1.0.1). Compatibility badges are tied to the engine, so they start empty again for r17.
+
+
+HEADLINES
+---------
+* Amazon Games joins the stores.
+* Steam gets much bigger: choose a version (beta) and DLC for a game, see your achievements with pop-ups when you unlock one, see your friends and who is playing what, read a game's patch notes, and (in beta)
+  use the Steam Workshop, in the app and inside the running game, with updates found for you.
+* Restart game: one button to close a game and start it again (for example to load a new mod).
+* American Truck Simulator (and other games that rely on DirectX to size their window) now get a full-size window instead of a postage stamp.
+* Megabonk starts and sees the controller with no hand-typed engine line.
+
+
+ADDED
+-----
+
+Stores
+* Amazon Games in the Stores tab. Sign in on Amazon's own page and install the games you bought on Amazon or claimed with Prime Gaming. Files come straight from
+  Amazon's servers and are checked against Amazon's signed file list. Some Prime games need Amazon's online services and may not start.
+
+Steam - sign-in
+* Signing in to Steam starts with the QR code (approved in the Steam mobile app, so the app never handles your password); the account-name-and-password form is one tap away.
+  The sign-in screen says Porthole is unofficial and not affiliated with Valve.
+
+Steam - versions and DLC
+* A "Version and DLC" row on a Steam game's page (when you are signed in to Steam):
+  - pick another version of the game that Steam offers, such as a beta or the previous version;
+  - type a beta password to open a private beta;
+  - turn DLC you own on or off.
+  "Download changes" fetches only the parts that differ, so adding DLC does not download the game again.
+* DLC you own is now installed with a Steam game, as Steam does, unless you turn it off on the game's page (games already installed get it the next time you update them).
+* The files record Porthole writes for a Steam game (appmanifest) now lists DLC with its DLC app, and a beta version carries a BetaKey, so Valve's client treats the files as that version.
+
+Steam - achievements
+* An "Achievements" row on a Steam game's page and on its page in the library: every achievement with its picture, description, when you unlocked it and how many players
+  have it. Hidden achievements stay hidden until you unlock them. It only reads what Steam has recorded for your account.
+* Pop-ups for unlocked achievements: while a Steam game runs, an achievement that Steam records for it shows at the top of the screen with its picture, name and
+  description, one at a time, with a light haptic tap. It reads the stats file Steam's client keeps on the device, so it needs no connection, and it ignores the history
+  Steam syncs when a game starts. The pop-ups can be switched off, and a test pop-up shown, from the in-game menu.
+* The Achievements row says how many you have ("12 of 50 unlocked") without opening the list; it is read when the page opens (at most once an hour per game), kept on the device
+  only, and forgotten when you sign out.
+* The full achievement list inside the game: in-game menu > Steam > Achievements. It updates while the menu is open and works with no connection.
+
+Steam - friends (read only)
+* A Friends button at the top right of the Home Screen (only there, always visible) opens your Steam friends: who is playing what, who is online, and (folded away) who is
+  offline, with their picture and how long ago they were last seen. The button shows how many are online. Signed out, it offers to open Steam to sign in.
+* The same list is on the Steam game list (the Friends button next to Sort) and in the in-game menu (Steam > Friends). It refreshes every 45 seconds while open.
+* A "Friends playing" row on a Steam game's page: which of your friends are in that game right now.
+* Names, pictures and status come from Steam with the sign-in the app already has; nothing is sent to Porthole's servers and the list is kept in memory only. Ignored, blocked
+  and pending people are not shown. It uses Steam's older OAuth summaries call, which Valve could change; if it fails the list falls back to names and pictures without online status.
+
+Steam - Workshop (BETA)
+* A "Workshop" row (marked Beta) on a Steam game's page and on its page in the library:
+  - "Subscribed": the items you are subscribed to; opening it downloads items that are missing or out of date;
+  - "Browse and search": the game's items by trending, newest, most subscribed or top rated, with a text search;
+  - tap an item to subscribe and download it; tap an installed item to remove it (this unsubscribes you on Steam and deletes the files).
+  Subscribing happens on your Steam account (so it shows in Steam too). Files go where the game and Steam's client look for them (steamapps/workshop, with Steam's record file).
+* Updates: opening a Steam game's page checks the mods you are subscribed to and downloads missing or newer ones (at most every 5 minutes per game, never while a game runs).
+  The Workshop row shows "N updates available" when it only counts. The switch "Update mods automatically" on the Workshop page turns the automatic download off.
+* Items kept in a game's Workshop depot (such as American Truck Simulator mods) can be subscribed to while a game is running. They show "downloads when the game closes" and start by
+  themselves when the game ends. Everything unfinished (waiting, queued or half downloaded) is remembered if the app closes, which it does itself after a game, or is force-quit, and
+  starts again the next time the app opens. An item Steam's own client already fetched at the same version is not downloaded again.
+* The same Workshop inside the running game: in-game menu > Steam > Workshop (Beta). While a game runs it uses only Steam's web calls and plain file downloads.
+* The first time you open the Workshop in the app or in a game, a notice says it is mostly untested, that only a few games have been tried, and that older games have not worked so far.
+
+Steam overlay
+* When a Steam game asks for Steam's overlay (its own Workshop or Store button, or the Shift+Tab shortcut), the in-game Steam menu now opens at the Workshop instead, and an Escape
+  press is sent to close the overlay's empty screen. Before, the overlay could not draw and the game did not answer until you pressed Escape. A switch ("Open this menu instead")
+  is in the Steam tab. The app learns of the request from the line Steam's overlay writes to its own log ("Showing overlay"), so it cannot tell which page the game wanted.
+
+Steam - news and ratings
+* A "News and patch notes" row on a Steam game's page (in the Stores tab and in the library): the game's official announcements and patch notes from Steam, newest first, each with a link to read it on Steam. The same list is
+  in the in-game menu (Steam > News), where it only reads.
+* Chips on a Steam game's page: Steam's review summary (the Stores page already had it) (for example "Overwhelmingly Positive, 99%") and its Steam Deck rating (Verified, Playable or Unsupported). The Deck rating is
+  Valve's own test on a Steam Deck; it does not say how the game runs in Porthole.
+* These come from Steam's public pages. No sign-in is used and only the game's number is sent (scores are kept for a day, news for an hour).
+
+Restart game
+* In-game menu > Session > "Restart game", and on the Workshop page when a mod has just arrived or one is waiting for the game to close. It closes the game the usual way (so it can
+  save), closes Porthole, and sends a notification. Tap it, or open Porthole yourself within 30 minutes, and the same game starts again after any Workshop downloads that were waiting
+  have finished (up to two minutes). A notice on the Home screen shows this and has a Cancel button. iOS does not let an app reopen itself, which is why it takes one tap.
+  Some games ignore the close request (Alt+F4); if the game has not closed after 8 seconds, Porthole asks whether to stop it and restart (Keep playing / Stop and restart).
+
+In-game menu
+* A new "Steam" tab with Achievements, Friends and the Workshop.
+
+Launching Steam games
+* When a Steam game's launch is stuck because Steam has not signed in (usually a network that blocks Steam), the launch screen now says so after a short wait (about 12 seconds when
+  the app's own connection to Steam also failed, otherwise about 40) and asks you to check your internet connection. Before, it just kept saying it was waiting.
+
+Your own VPN
+* Settings > JIT and tunnel > Your own VPN > "Turn it back on as soon as JIT is on" (on by default; needs the shortcut that turns your VPN back on). The VPN that Porthole pauses
+  for its tunnel now comes back right after JIT is switched on, before the game starts, instead of when the game closes. This is for networks that block Steam, so the game's
+  Steam sign-in goes through your VPN. Porthole leaves the app for a moment to run the shortcut and waits for the VPN to be up.
+
+
+CHANGED
+-------
+* "Verify and update files" on a Steam game's page really checks every file against Steam now (a few minutes for a big game) and downloads only the parts that are missing or damaged.
+  Before, it never looked at the files. Updating a game (a newer build, a beta, DLC) also keeps the parts of files already on the device that have not changed, instead of downloading the
+  whole changed depot again.
+* Add a game > Import a game folder now says how to choose the folder (in Files, open the game's folder, then tap Open at the top right; tapping a folder only goes into it), and the
+  steps of an import are written to the log.
+* Megabonk now starts without a hand-typed engine line (real thread suspension is switched on for it), and its controller works in Automatic.
+* Sorting the all-games page by "recently played" now includes GOG and itch.io games.
+* Engine r14 and r15 (see Fixed): windows are sized the way Windows would size them.
+
+
+FIXED
+-----
+* Megabonk, and any Unity game that uses Rewired's Windows.Gaming.Input plugin, saw no controller in any mode but keyboard and mouse. The plugin only asks for gamepads, and the pad
+  was not one. The controller is now also offered as a Windows.Gaming.Input gamepad for these games, and Automatic keeps the Xbox pad for them instead of showing a PlayStation
+  controller as a DualSense. A line of your own (env.MADEIRA_WGI_HOST_PADS) still wins.
+* American Truck Simulator (and any game that creates a tiny placeholder window and relies on DirectX to size it) showed as a postage stamp (132x38 pixels) while rendering at
+  1920x1080. When a game asks DirectX to resize its window or go full screen, the window is now resized or made to cover the screen, if it does not already match. Games whose window
+  already has the right size are left as they were. (Engine r15, patch 0157.)
+* A default-size window can no longer be created tiny: the size comes from the start-up size when it is usable, else 3/4 of the work area, else 3/4 of the screen. Every window
+  request is written to the log as [createwin] / [winreq]. (Engine r14, patch 0156.)
+* Workshop items that are a single file at a web address (for example Portal 2 maps) are downloaded from that address, retrying up to eight times across Steam's two names for
+  the server, instead of failing with "Steam did not accept the sign-in token", and they download while a game runs.
+* Single-file Workshop maps (Portal 2) did not open where Steam's client inside the game times out reaching the content server (seen on one iPad's connection), even though the app had
+  downloaded them. The app now also puts each map where Steam's client keeps a finished download (userdata/<account>/ugc/referenced/<id>/ with the data.vdf Steam writes), so the game
+  finds it; maps already downloaded are filled in when the app opens and when a game's page opens.
+* When Valve's Steam client refuses to start a game because its files are out of date or marked damaged (it cannot download inside the game), the launch screen stayed on "Signing in to
+  Steam". It now says "Steam won't start the game yet" and what to do: update the game under Stores > Steam (when a newer build is on Steam), or use Verify files under Details and files.
+* Counter-Strike 2's first-person look stopped at a fixed angle (in every control layout). The game's mouse-input thread needs a small hidden window of the system class "Message", and
+  that class was registered only for the first program Porthole ran, not for the game Steam's client starts, so the window could not be created and the game never received raw mouse
+  movement (it fell back to the pointer position, which stops at the screen edge). The class is now registered for every program. (Engine r17, patch 0162. Not yet confirmed on a device.)
+* Steam games (Counter-Strike 2 seen) failed a minute after starting with "the system ran out of memory" on some starts of the app. iOS places memory differently on every start of Porthole;
+  on a bad one it had put something where Porthole keeps the room for the game's translated code, so that room shrank (544 MB instead of about 900 MB) and ran out as the game loaded.
+  Porthole now sees the small room before the game starts, stops, says so and offers Close Porthole: open it again and start the game.
+* Single-file Workshop items are recorded the way Steam's client records them (manifest -1 and the item's UGC handle). Before, Steam's client saw them as changed, marked the game
+  "needs update", tried to download them itself and cleaned away the copy the app put in its finished-download cache, so the game said the map was not downloaded. Items downloaded
+  earlier are corrected when the app opens and when a game's page opens.
+
+KNOWN LIMITS (also said in the app where they matter)
+-----------------------------------------------------
+* Confirmed on a device: achievements and their pop-ups, the Steam friends list and its Home Screen button, "Friends playing", Workshop update checks, news and ratings, achievement
+  progress, Restart game, the Workshop in Portal 2 and American Truck Simulator (including Portal 2 maps on a connection where Steam's client cannot download them itself), the overlay
+  opening the Steam menu, the VPN coming back right after JIT, and Counter-Strike 2's first-person look (the Message window class fix).
+* Not yet confirmed on a device: the Steam-not-signed-in message at launch, the Version and DLC page (including the beta-password check, never tried against a private beta), queued
+  depot Workshop downloads after the app was closed, and Left 4 Dead 2's Workshop.
+* The Workshop is a beta and mostly untested.
+  - Confirmed: Portal 2 (maps downloaded in the app launch in the game), American Truck Simulator (a subscribed depot-style mod is loaded: "received 1 mods total, 1 loaded"), and
+    Black Ops III (a depot item downloads).
+  - Not tried yet: Left 4 Dead 2 and most other games. Older games whose items are single files may behave like Portal 2 or may not.
+  - Items stored in a game's Workshop depot (American Truck Simulator, Black Ops III) cannot be downloaded by the app while a game is running, because the app's own Steam
+    connection is closed then; they wait and download when the game closes (use Restart game to get them right away).
+  - Needs a network that lets Steam's servers through. On a network that blocks Steam's content or user-content servers, downloads fail or time out (seen on one Wi-Fi).
+  - Not built: collections and item dependencies, and checking for updates when a game starts (it is checked when the game's page opens).
+* Version and DLC: files a version or a turned-off DLC no longer has are not deleted, and the
+  update badge for a beta version appears only after the page's details have loaded.
+* Restart game needs one tap on the notification (or opening Porthole yourself), because iOS does not let an app reopen itself.
+* Achievement pop-ups depend on Steam's client writing the achievement to its stats file when it is unlocked; only a few games have been tried.
+* Counter-Strike 2 online: Valve's anti-cheat (VAC) needs Steam's own service (steamservice), which cannot start here ("Failed to connect to Steam Service" in Steam's log), so VAC-secured
+  servers are expected to refuse the game. Offline play and bots are the supported way to play. Porthole does not try to get around or emulate the anti-cheat, and running a game on VAC servers
+  from an unofficial layer carries a real risk to the account: do not use a main account for it. CS2 has also closed unexpectedly after several minutes in some runs.
+* Chat, invites and friend requests are deliberately not built; the friends list is read only.
+* Compatibility badges start empty for engine r17.
+
+
+UNDER THE HOOD
+--------------
+* Engine r14 / r15: patch 0156 (win32u default-size guard and window-request log), patch 0157 (DXMT window resize and fullscreen handling in the Direct3D 11 layer).
+* Steam code: CM requests for beta passwords, user stats and subscribed Workshop items; branch-aware depot planner and installer (DLC, versions, Workshop items); Workshop record
+  files (appworkshop_<app>.acf); achievement watcher and schema parser; friends list reader; many new automated tests in app/Tests/Steam.
+
+
+Builds folded into 1.1.0: 1.1.1 (501) to 1.1.50 (550), all private test builds.

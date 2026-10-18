@@ -21,7 +21,7 @@ struct SessionView: View {
                         onClose: { session.requestClose() },
                         onBack: { session.dismiss() },
                         onReport: reportAction, onEditBinds: { editingBinds = true },
-                        onCreateLayout: { session.createLiveLayout(from: $0) }, onLayoutChanged: { session.saveLiveTouchLayout($0) }, gameName: session.game?.name)
+                        onCreateLayout: { session.createLiveLayout(from: $0) }, onLayoutChanged: { session.saveLiveTouchLayout($0) }, gameName: session.game?.name, steamAppID: session.game.flatMap { $0.steamAppID ?? $0.dockAppID })
                 .ignoresSafeArea()
         }
         .statusBarHidden(true)
@@ -56,6 +56,7 @@ struct GameSurface: UIViewRepresentable {
     var onLayoutChanged: ((TouchLayout) -> Void)? = nil
     /// Shown in the in-game menu's header.
     var gameName: String? = nil
+    var steamAppID: Int? = nil
 
     func makeUIView(context: Context) -> GameSurfaceView {
         let v = GameSurfaceView()
@@ -82,6 +83,7 @@ struct GameSurface: UIViewRepresentable {
         view.hud.onAdjustLook = onAdjustLook
         view.hud.setStatus(dockStatus)
         view.hud.gameName = gameName
+        view.hud.steamAppID = steamAppID
     }
     static func dismantleUIView(_ view: GameSurfaceView, coordinator: ()) { view.detach() }
 }

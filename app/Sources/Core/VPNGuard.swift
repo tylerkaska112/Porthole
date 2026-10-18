@@ -18,6 +18,8 @@ final class VPNGuard {
     /// Settings: whether to ask before pausing (default yes), and the name of the Shortcut that turns the VPN back on.
     static let askKey = "f4.vpnAsk"
     static let shortcutKey = "f4.vpnShortcut"
+    /// Whether the paused VPN is turned back on as soon as JIT is on, before the game starts (default yes), instead of only after the game closes.
+    static let earlyKey = "f4.vpnEarly"
     private static let pausedKey = "f4.vpnPaused"
 
     /// True from the moment a VPN was paused until it is back on (or the person said they know). Kept across launches: installing an update restarts the app.
@@ -27,6 +29,7 @@ final class VPNGuard {
     private(set) var hostedQuestion: String?
 
     private var waiting: CheckedContinuation<Bool, Never>?
+    private var shortcutWaiter: CheckedContinuation<Void, Never>?
     private var restoring = false
     private var window: UIWindow?
     private let scope = FocusScope()
@@ -67,7 +70,8 @@ final class VPNGuard {
         if ask {
             let back = hasShortcut ? "Porthole then runs your \u{201C}\(shortcutName)\u{201D} shortcut to turn it back on."
                                    : "Porthole then reminds you to turn it back on."
-            let text = "Porthole needs its own connection for a moment to \(what). Your VPN switches off now and stays off until \(until). \(back)"
+            let early = hasShortcut && (UserDefaults.standard.object(forKey: Self.earlyKey) as? Bool ?? true)
+            let text = "Porthole needs its own connection for a moment to \(what). Your VPN switches off now and stays off until \(early ? "JIT is on" : until). \(back)"
             guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState != .unattached }) else { return markPaused() }
             let yes = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
                 waiting = c
@@ -129,6 +133,56 @@ final class VPNGuard {
             LogStore.shared.log("[vpn] the paused VPN is still off" + (hasShortcut ? "; running the shortcut" : ""))
             if hasShortcut { runShortcut() }
         }
+    }
+
+    /// JIT is on and the debugger has gone, but the game has not started: turn the paused VPN back on now, so the game (and Steam's client in it) starts with the VPN up.
+    /// Some networks block Steam without it. Leaves the app for a moment (Shortcuts), like the cellular data guard. Does nothing unless a VPN was paused for this launch and
+    /// the person has a shortcut that turns it back on. Waits for the VPN to be up, at most about a minute.
+    nonisolated static func restoreBlocking() {
+        let done = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            await VPNGuard.shared.restoreForLaunch()
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 75)
+    }
+
+    private func restoreForLaunch() async {
+        guard paused, hasShortcut, UserDefaults.standard.object(forKey: Self.earlyKey) as? Bool ?? true else { return }
+        // Our tunnel has nothing left to do (JIT is on); it has to be gone before another VPN can start, and iOS takes its network interface down a moment later.
+        TunnelManager.shared.disconnect()
+        for _ in 0..<20 where ourTunnelBusy { try? await Task.sleep(for: .milliseconds(500)) }
+        try? await Task.sleep(for: .seconds(2))
+        if Self.vpnInterfaceUp() { setPaused(false); LogStore.shared.log("[vpn] a VPN is on again (before the game starts)"); return }
+        LogStore.shared.log("[vpn] JIT is on: running the shortcut to turn the paused VPN back on before the game starts")
+        await runShortcutAndWait()
+        for _ in 0..<40 where !Self.vpnInterfaceUp() { try? await Task.sleep(for: .milliseconds(500)) }
+        if Self.vpnInterfaceUp() {
+            setPaused(false)
+            LogStore.shared.log("[vpn] a VPN is on again (before the game starts)")
+        } else {
+            LogStore.shared.log("[vpn] the VPN did not come back; the game starts without it", level: .error)
+        }
+    }
+
+    /// Runs the Shortcut and waits until it has brought the app back (porthole://vpn), at most 30 seconds.
+    private func runShortcutAndWait() async {
+        guard hasShortcut else { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            shortcutWaiter = c
+            runShortcut()
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(30))
+                self.shortcutReturned()
+            }
+        }
+    }
+
+    /// Shortcuts is done and the app is in front again.
+    func shortcutReturned() {
+        guard let c = shortcutWaiter else { return }
+        shortcutWaiter = nil
+        c.resume()
     }
 
     /// The person is back in the app (from Shortcuts or Settings): if a VPN is on again, the reminder goes away.
