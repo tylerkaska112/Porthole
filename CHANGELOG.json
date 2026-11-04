@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.2.1",
+    "build": "688",
+    "summary": "Compatibility reports now carry the log of the run that played the game.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "A compatibility report sent after the app was opened again (the game ended, or iOS closed the app) carried only the few seconds of the new start-up instead of the game's run, because the new log is always the newest file. The report now takes the most recent log that mentions the game's launch: this run's, the run before, or the game's own session log."
+    ]
+  },
+  {
     "version": "1.2.131",
     "build": "683",
     "summary": "itch.io games that come as a .rar now install.",

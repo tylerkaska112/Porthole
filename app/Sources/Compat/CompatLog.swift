@@ -22,8 +22,10 @@ enum CompatLog {
         }
     }
 
-    /// The most recently written of: this run's log, the game's own session logs (Documents/logs), and the run before. A game that fails to start has only the run's log;
-    /// one that ran has its session log, a hard link to the run's (the same lines). Nil when none can be read.
+    /// The log of the run that played this game: of this run's log, the run before, and the game's own session logs (Documents/logs), the most recently written one that
+    /// mentions the game's launch (`game=<name>` in the launch-screen lines). A report is usually written after the app was opened again (the game ended, or iOS closed the app),
+    /// and by then this run's log is only a few seconds of start-up: it is always the newest file, but it holds no game. When no file mentions the game the newest one is used,
+    /// as before. Nil when none can be read.
     @MainActor static func gather(for game: Game) async -> Gathered? {
         let current = LogStore.shared.logFileURL
         let docs = current.deletingLastPathComponent()
@@ -32,8 +34,16 @@ enum CompatLog {
         let modified: (URL) -> Date = { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
         var candidates: [(url: URL, label: String)] = [(current, "this run"), (previous, "the run before")]
         let sessions = ((try? FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []).filter { $0.pathExtension == "txt" }
-        if let newest = sessions.max(by: { modified($0) < modified($1) }) { candidates.append((newest, "the game's log (\(newest.lastPathComponent))")) }
-        guard let pick = candidates.filter({ FileManager.default.fileExists(atPath: $0.url.path) }).max(by: { modified($0.url) < modified($1.url) }) else { return nil }
+        for newest in sessions.sorted(by: { modified($0) > modified($1) }).prefix(3) { candidates.append((newest, "the game's log (\(newest.lastPathComponent))")) }
+        let existing = candidates.filter { FileManager.default.fileExists(atPath: $0.url.path) }.sorted { modified($0.url) > modified($1.url) }
+        let marker = Data("game=\(game.name)".utf8)
+        let mentionsGame = await Task.detached(priority: .utility) { () -> [Bool] in
+            existing.map { c in
+                guard let data = try? Data(contentsOf: c.url, options: .mappedIfSafe) else { return false }
+                return data.range(of: marker) != nil
+            }
+        }.value
+        guard let pick = zip(existing, mentionsGame).first(where: { $0.1 })?.0 ?? existing.first else { return nil }
         let names = [EpicAuth.shared.accountName, SteamStore.shared.accountName, GogAuth.shared.accountName, ItchAuth.shared.accountName, AmazonAuth.shared.accountName, EAAuth.shared.accountName]
             .compactMap { $0 }.filter { !$0.isEmpty }
         let facts = ProblemReport.facts()
