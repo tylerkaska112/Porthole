@@ -31,13 +31,14 @@ struct StoragePage: View {
         if game.store == .gog { return "GOG" }
         if game.store == .itch { return "itch.io" }
         if game.store == .amazon { return "Amazon Games" }
+        if game.store == .ea { return "EA app" }
         if game.store == .steam { return "Steam" }
         return "Imported"
     }
     private func deletable(_ game: Game) -> Bool { game.store != nil }
 
     var body: some View {
-        PageScaffold(title: "Storage", symbol: "internaldrive.fill") {
+        PageScaffold(title: "Storage", symbol: "internaldrive.fill", subtitle: "Where your games live and the room they take") {
             SettingsGroup(title: "This device") {
                 let c = capacity
                 ValueRow(id: "sto-free", symbol: "externaldrive.fill", title: "Free space", value: c.total > 0 ? "\(text(c.free)) of \(text(c.total))" : text(c.free))
@@ -93,6 +94,7 @@ struct StoragePage: View {
         else if let id = game.gogID { GogInstaller.shared.uninstall(id) }
         else if let id = game.itchID { ItchInstaller.shared.uninstall(id) }
         else if let id = game.amazonID { AmazonInstaller.shared.uninstall(id) }
+        else if let id = game.eaOfferID { EAInstaller.shared.uninstall(id) }
         else {
             if let id = game.dockAppID, let owned = steam.owned.first(where: { $0.id == id }) { steam.uninstall(owned) }
             model.remove(game)

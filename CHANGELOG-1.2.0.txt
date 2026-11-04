@@ -1,0 +1,123 @@
+PORTHOLE 1.2.0 "AUTUMN TIDE" - CHANGELOG (2026-11-05)
+=============================================================
+
+Everything below is what changed since the public 1.1.0 ("Full Steam Ahead"). It was built as private test builds 1.2.1 to 1.2.129; they are folded into this one list.
+The engine is 3af3467-r1 (it was r17 in 1.1.0). Compatibility badges are tied to the engine, so every game starts at "Not yet tested" again until people have played it on this version.
+
+
+HEADLINES
+---------
+* The whole app works with a controller: an on-screen keyboard you drive with the D-pad, a fixed starting place on every screen, and a strip of hints that always says what each button does.
+* A keyboard and a mouse or trackpad (iPad) work in games: every key, the modifiers, five mouse buttons and the wheel, the game's own cursor in menus and a locked pointer for looking around.
+* A new look for the places you use most: Home, the Stores page, the launch screen, Reports and Settings are redesigned.
+* The EA app joins the stores (Steam, Epic Games, GOG, itch.io, Amazon Games and now EA).
+* A new game engine: Madeira's latest work (hundreds of upstream changes) is merged in, so more games can run.
+* Steam gets steadier and faster: it no longer signs you out at random, downloads ran at 160-170 MB/s in a test (up from 12-22), and the sizes shown finally add up.
+* Games that did not run now do: Final Fantasy Resonance (and its demo), Celeste and other .NET Framework games.
+* Compatibility reports are sent with the game's log and checked before they appear, so a game is not listed as broken without a reason.
+
+
+ADDED
+-----
+
+Keyboard and mouse
+* A Bluetooth or USB keyboard works in a game like on a PC: every key with its own press and release, Shift, Ctrl, Alt and Command (the Windows key), the keypad, function keys and arrows. Typing into a program's own text fields works, and Command-V pastes the clipboard's text.
+* A mouse or trackpad on iPad: the game's own cursor follows the pointer in menus; left, right, middle, back and forward buttons and the wheel work; a game that hides its cursor to look around gets the mouse's movement and the pointer is locked to the game, so the camera keeps turning at the screen edges.
+* F10 opens Porthole's in-game menu and Ctrl+Alt+P locks or frees the pointer; both keys can be changed under Settings > Engine options > Keyboard and mouse > Keys for Porthole (Ctrl+Alt+M and Ctrl+Alt+P always work as well). Keys reach the game only while it is in front (not while a sheet, an alert or a text box of Porthole has the keyboard), and everything held is released when it is not.
+* Settings > Engine options > Keyboard and mouse: mouse speed (also per game), always use the mouse to look, scroll direction, key repeat, keyboard layout for typing, the lock, and more. The on-screen controls step aside while a keyboard or mouse is in use.
+* The mouse wheel and press-and-drag scroll every screen of the app, including Home's shelf of games, which scrolls sideways. Right-click a game on Home for Play and Details; with a mouse, a double-click plays it.
+
+Controller
+* An on-screen keyboard for controllers. Press A on a text box or a search box and a keyboard opens that you drive with the D-pad: A types, B deletes (and closes when there is nothing left), X is space, Y is shift, LB and RB move the cursor, Menu is done. Letters, numbers and symbols (backslash and colon for program paths) and an eye button for passwords. A tap, or a hardware keyboard, still uses the iPhone's own keyboard.
+* The strip of hints at the bottom of the screen follows what has the glow: ITEM (what A, X and the left and right arrows do on it: Details, Play, Pause, Resume, Update, Open, Download, Install, Change) and PAGE (D-pad Move, B Back, LB and RB with the names of the sections they lead to, Y, Menu). Controls with nothing to do are left out.
+* Every section opens with the glow in the same place: Home on the first game, Stores on Steam, Reports on the first report, Settings on the Play page.
+* A slider is entered with A (the hints then read A Done, left and right Change) and left with A or B, so passing over a setting can no longer change it.
+
+Stores
+* The EA app as a sixth store: sign in on EA's own page, see your PC games with covers, install them straight from EA's servers (pause, resume, update, repair, uninstall, the same Downloads page and Live Activity as the other stores) and start them without the EA app. Games with EA's kernel anti-cheat (Battlefield 2042 and later, EA SPORTS FC, Madden) cannot run. Cloud saves, friends and the overlay are not supported.
+* The Steam library lists demos, betas, playtests and software you own, not only full games, each with a Demo, Beta or Software label. Tools, DLC and soundtracks stay out.
+* A Steam game's page shows two sizes: the download (what crosses the network) and the size on this device. The size counts the DLC you own.
+* Steam controller support is offered on the Steam page only until it is downloaded; after that it lives in Settings > Stores > Steam, where it can be removed or downloaded again.
+* itch.io games that come as .7z or .rar archives install (a password-protected .rar, or one split into parts, says so), and archives inside a download are unpacked where they lie.
+
+Games and engine
+* .NET Framework games (Celeste, and many indie games and launchers): Porthole can download Wine Mono (about 42 MB, from WineHQ, checked against a fixed fingerprint before use). Home offers it when you start such a game, the setup guide offers it next to the Visual C++ runtime, and Settings > Advanced > Windows components can remove it.
+* GOG Galaxy services: a GOG game built with GOG's Galaxy SDK gets its sign-in, achievements, stats, leaderboards and play time answered on this device while it runs, using your GOG sign-in (Settings > Stores > GOG turns it off). It needs a game installed from GOG's own builds.
+* Microsoft's 32-bit Visual C++ runtime for 32-bit programs such as older games and many launchers (about 14 MB from Microsoft's own installer, checked before use), offered in the setup guide and in Settings > Advanced > Windows components.
+* Keep a game running in the background (experimental, off by default; Settings > Play > Performance): a running game keeps loading for 2 to 30 minutes after you switch apps or lock the screen, muted and with its CPU held to a share of one core, then pauses with a notification. Restart Porthole after changing it. Not yet run on a device.
+* Keep compiled graphics pipelines between runs (Settings > Advanced > Performance > Graphics, with a size limit and an experimental background build in Engine options > Direct3D 12): games stutter the first time each graphics pipeline is used, and with the archive on the next start stutters less. Off by default.
+* Sound settings: Game volume (50% to 200%) and Bring sound back after a call, in Settings > Play > Sound. After a call, Siri or an alarm a game's sound used to stay off until the game restarted.
+* Wine Gecko, the web engine for launchers and installers that show a web page (about 110 MB from WineHQ, checked before use). It is offered in the setup guide beside the Visual C++ runtime and .NET, and in Settings > Advanced > Windows components. Without it Wine stops on its own download window, which can hang.
+* Visual C++ ARM64 marker (Settings > Advanced > Engine options > Starting a game): for Unreal games that stop with "Microsoft Visual C++ 2015-2022 Redistributable (arm64)". Final Fantasy Resonance gets it by itself.
+* Donor memory: an optional extension (Memory Host, one more App ID; it can be left out when signing) and Settings > Engine options > Donor memory (2, 4 or 6 GB) for games that run out of the app's memory. Off by default. Settings says whether the extension is inside, signed and matching.
+* The graphics card a game sees, per game in Game details: NVIDIA, AMD, Intel or this device's own GPU, named the same way to Direct3D 9 to 12, Windows and NVAPI.
+* Madeira's tested setups: for games Madeira has a settings list for, a "Madeira's tested setup" button appears under Performance, with what it contains and an Undo. Nothing is applied by itself.
+* Gyro aim and turbo buttons, per game in Game details > Controller, off until you turn them on.
+* Share a game's setup as a file or one line of text, and apply one from a file or the clipboard. The apply sheet lists everything first and nothing personal is in it.
+* Controller battery reaches games that show it, and the session log records how a Windows program ended (its exit code).
+
+Reports
+* The Reports tab is rebuilt around your own games: My games shows how each runs on this version, with a bar of how many work great, are playable, are broken or are not yet tested, and filters for each. All games can be filtered and ordered (Most reports, Recent, A to Z). My reports (what you sent, and deleting one) moved here from Settings.
+* A game's page shows the verdict in large type, how the reports divide, what people mention most, which settings worked and how it runs on each device (two columns on an iPad). A game nobody has reported on says "Be the first to report".
+* A report opens in full when you tap it: the note, what they mentioned, crashes, frame rates, play time, device, iOS, Porthole and engine versions, where the game files came from and every setting used. Flagging is a button inside it.
+* A report is sent with the game's own log (install facts first, then the run), cleaned of personal paths, account names, e-mail and public IP addresses. The log is private: it is never shown in Reports, and every report waits for approval before it appears or counts toward a badge. My reports says when one is waiting or was not accepted.
+
+Look and settings
+* A redesigned launch screen: the game in a porthole with a brushed-metal rim, a glowing ring that fills as the launch moves on, what is happening now in large type with what it means underneath, a bar that counts the steps ("Step 3 of 5") with the time taken, and the full list of steps one tap away. When a launch fails the reason sits in a card of its own that stays until you close it and can be copied.
+* A redesigned Home: game tiles with small round icons for how a game runs, its controller support and its store; the game you are on is lit and the others sit back; a "Your library" heading with "1 of 7"; a slowly zooming picture behind the page (off with Reduce Motion); tiles that ease in; bigger tiles on a phone held upright.
+* A redesigned Stores page: each store is a card in its own colour with its logo, whether you are signed in and as whom, how many games it has, how many are installed, and a download in progress; a store you have not signed in to says so. All games and Downloads sit at the top. Held sideways the page fits more.
+* A redesigned game page: the game's picture is a large card with its name on it, then how it runs (store, 32 or 64 bit, controller support, reviews, compatibility), a big Play button and three tiles (when you last played, how long you have played, the space it takes). On an iPad or a phone held sideways the page has two panes, the game on the left and its settings scrolling on the right. The rows are grouped as Play, Explore and Manage.
+* A redesigned setup guide: the first page shows the Porthole mark and the three steps as cards (a number, what it is, how long it takes, whether it is needed), a progress bar of circles with a check on each finished step, and "Add your games" is one list of stores with their logos and a Sign in or Open library button.
+* A redesigned performance overlay: the frame rate as a large number that turns amber and red when it drops, a graph with a soft fill and a line at 30 FPS, the other numbers in a compact grid that takes a fraction of the screen the old list did (a new Tiny size makes it smaller still), and a slim one-line version. Downloads got the same care: the download in progress is a card in its store's colour with a glowing bar.
+* A game's page in the Steam and Epic stores is laid out like a library game's page: the picture as a card with the name on it, who made it and when, how it runs, the buttons with a smooth progress bar, three number tiles (the download and disk sizes and the release date on Steam), and two panes held sideways.
+* Every store's game tiles and game sheets are redesigned to match the rest of the app: a status as a small round icon (a ring with the percent while a game downloads), a smooth progress bar, and a sheet for GOG, itch.io, Amazon Games and EA with the game's picture as a large card and a clear Install button.
+* Moving between sections is smoother: a line under the chosen section in the top bar slides to the next one, and a section's content fades in when it opens.
+* Every store page keeps its controls docked at the top (switch store, refresh, search, filters, sort); only the games scroll.
+* Settings is reorganised: headings (Playing, Accounts, App, Help), a page for each store, JIT and connection on its own page, Advanced split into Engine options (eight groups, a "Changed from default" list and one button to put everything back), Windows components, Links and remote control and Diagnostics, and a search box at the top that finds any setting by name. Every page opens with its icon, its name and a line that says what it is for.
+
+
+CHANGED
+-------
+* The game engine is merged with Madeira (FEX, Wine, the DXMT graphics layer and Dock): 374 upstream changes up to 2026-10-29, then 192 more up to 2026-11-03, rebuilt in full including the 32-bit side. It brings, among others, 16 KB code-write traps, a per-process directory cache, Dock's Steam-service handling and a session set-up for games whose launcher registers a Windows service.
+* The emulator's memory manager hands out 4 MB blocks in 64-bit programs (about half what it used) and says so clearly when the address space runs out instead of writing to address 0.
+* Sound: games that queue only one short audio period (Godot 4 and other low-latency games) played about half their sound; Porthole now asks iOS for 5 ms slices.
+* Launch options follow Windows' quoting rules; an unbalanced quote, more than 64 arguments or more than 4 KB stops the launch instead of being cut.
+* Repeated engine log lines are cut after 1000 of a kind per 10 seconds, so problem reports stay small.
+* With a controller connected a text box is a plain line that opens the pad keyboard, so iOS's own keyboard cannot appear by itself when the D-pad moves over a box.
+* The line of text at the top of the screen while a game starts is gone; the launch screen already says what is happening.
+* Cellular data and your VPN: after the shortcut that switches cellular data back on fails once, Porthole stops retrying by itself (each retry opened Shortcuts at every start). The question before a launch and the "Your VPN is paused" notice now say that iOS only lets a Shortcut turn a VPN back on, so you need to make one (Settings > JIT and connection > Your own VPN).
+* Your SSD game library keeps working as before; it is not yet moved to Madeira's new multi-drive design.
+* The JIT helper's message points to StikDebug as another way to switch JIT on.
+
+
+FIXED
+-----
+* Steam signing you out at random: one refused request deleted the saved sign-in, and a firewall, VPN, captive portal or content filter that answers 401 or 403 counted as Steam refusing it. Now only Steam's own numbered refusal counts and it has to repeat. The saved sign-in is also read again when the Keychain could not be read at launch (after a restart before the first unlock), instead of showing you signed out until a relaunch.
+* Steam download sizes did not add up: the Install button showed the compressed download while the progress counted the size on disk and the time left was two to three times too long. They now agree, the free-space check uses the size on disk, and games whose DLC comes with them no longer look about a quarter of their size.
+* Steam downloads were slower than the connection. Older chunks (LZMA) are unpacked with the system's own library (about 3.5 times faster), the downloader tries servers further down Steam's list and uses them more when they are faster, and keeps up to 96 chunks in flight (64 before). On a test phone and Wi-Fi a download that ran at 12-22 MB/s ran at 160-170 MB/s. When two depots list the same file only the later one writes it, so a repair no longer flips such files back and forth.
+* Tapping the launch screen while a game started could break the start (a blue picture, then a black screen with only the controls). The launch screen can no longer become the key window. A bug that had been there a long time.
+* A failed launch's message was gone about a second after it appeared, because Porthole at once started bringing back your VPN and cellular data, which runs Shortcuts and leaves the app. They now come back when you dismiss the message.
+* "Cellular data is off" stayed on Home and in Settings after cellular data was back on, because Porthole only noticed on cellular. It now counts cellular data as on whenever it is available and checks whenever the network changes.
+* Final Fantasy Resonance and its demo: they stopped with the Visual C++ ARM64 message, then could not map their 487 MB program (it must load at 0x140000000). Porthole now measures the game's folders, including those below the main program, widens the window over such a program, uses a split code pool, and, if iOS has already put something in that range on this start, says to close and reopen Porthole instead of failing ten seconds later. Unreal games start from a small program and run the real one in Binaries/Win64, so others may benefit too.
+* Celeste and other .NET Framework games ended at start with "Wine Mono is not installed", also when started through Steam. They now offer the download first.
+* Red Dead Redemption 2 and other games that need the large split memory pool crashed Porthole seconds after the Rockstar launcher began to start; ran out of the emulator's address space after a minute or so; and drew black screens with no text after the engine update (an old prebuilt graphics layer was in place). The Rockstar launcher now starts and signs in (the game itself is under Known limits).
+* A game's page in Stores no longer covers the top bar, so the sections can be tapped from it.
+* Home on a phone held sideways: a notice no longer squeezes the game tiles, which shrank, drifted and lost their badges.
+* The Stores list: the All games row no longer spreads its badges over the title, the round Downloads button no longer covers the Downloads row, and the page no longer bounces when everything fits.
+* The pencil (edit the on-screen controls) did nothing in a program started with "Run an installer"; edits are now kept for the run.
+* On a phone held upright, a Settings page inside another one (Advanced > Engine options > a group) showed two Back buttons that led to different places. Only the one for the level above is shown now.
+* Some performance overlay numbers (the busiest thread, GPU busy, GPU frame time, the swap file, the battery) came and went because the engine only measures them now and then. A number that is turned on now always shows, with its last value until a new one arrives.
+* Search boxes in the stores and Reports did nothing when A was pressed on them with a controller.
+* Games that ask Windows which memory is free are told only about memory they can really use; a game's stale XInputEnable(FALSE) no longer takes its controller away; a click or tap gives the game window keyboard focus as Windows does; every process of a session can read the certificate store (HTTPS in launcher-style games); a leftover thread of an exited program can no longer crash the session; a wineserver crash on misaligned shared objects (SimCity 4 on iPad) is fixed; Dark Souls Remastered with a Steam-emulator DLL finds its module again.
+
+
+KNOWN LIMITS
+------------
+* Keyboard and mouse were tried on an iPad with a wireless keyboard and a wired mouse (typing, mouse look with the pointer locked, menus, the Porthole menu key, scrolling). Not yet tried: holding a key to repeat it, double-click to play, the Split View notice and a game's own mouse speed. An iPhone gets a mouse only through AssistiveTouch and has no pointer lock; a game that never says it hides its cursor needs Settings > Engine options > Keyboard and mouse > Always use the mouse to look.
+* Not yet run on a device: Donor memory and its extension, gyro aim and turbo, Madeira's tested setups, Share setup, GOG Galaxy services, and .7z and .rar installs. They are written and built; please say if one does not work.
+* Red Dead Redemption 2: the Rockstar launcher signs in and starts the game, which draws its first screens, but the game's own Social Club overlay does not load with Rockstar's newest Social Club, so it stops with a Social Club error before the main menu. It is not playable yet. It can also be ended by iOS when it reaches about 6 GB of memory.
+* Call of Duty: Black Ops III: its copy protection only works with its 491 MB program at its own address (0x140000000). Porthole now widens that window automatically for such programs, but it did not start in testing on 2026-11-04.
+* Factorio 2.1.x: its Steam features do not start ("Couldn't initialize Steam API"); the game itself runs and plays.
+* A copy of Porthole signed without the extra-memory and large-address-space entitlements (a free Apple ID, or inside LiveContainer) has about 3.4 GB and 32 GB of address space; some Unity games can fail there.
+* The sign-in pages that ask you to paste a code or address (Epic, GOG, Amazon, itch.io) still need a finger: a controller cannot paste.
+* The compatibility list is empty for this engine until people play: every game shows "Not yet tested".

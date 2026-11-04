@@ -14,7 +14,20 @@ struct SettingsScreen: View {
     @AppStorage("f4.setupDone") private var setupDone = false
     @ObservedObject private var problems = ProblemTracker.shared
 
-    static let pages: [SettingsPage] = [.play, .accounts, .saves, .storage, .updates, .app, .advanced, .report]
+    /// The list on the left, in groups. A heading above each group says what its pages are about.
+    static let sections: [(title: String, pages: [SettingsPage])] = [
+        ("Playing", [.play, .saves, .storage]),
+        ("Accounts", [.stores, .jit]),
+        ("App", [.appearance, .updates, .advanced]),
+        ("Help", [.reports, .help, .report]),
+    ]
+    static let pages: [SettingsPage] = sections.flatMap(\.pages)
+
+    @State private var query = ""
+    private var sub: SettingsSub? {
+        get { router.settingsSub }
+        nonmutating set { router.settingsSub = newValue }
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -28,7 +41,8 @@ struct SettingsScreen: View {
                     }
                 } else if let page = selection {
                     VStack(alignment: .leading, spacing: 0) {
-                        PillButton(id: "settings-back", title: "Settings", symbol: "chevron.left") { selection = nil }.padding(.horizontal, 20).padding(.top, 8)
+                        // Inside a page of a page (Advanced > Engine options > ...) the page has its own Back button one level up; a second one here led somewhere else.
+                        if sub == nil { PillButton(id: "settings-back", title: "Settings", symbol: "chevron.left") { selection = nil }.padding(.horizontal, 20).padding(.top, 8) }
                         detail(wide: false, page: page)
                     }
                 } else {
@@ -36,15 +50,24 @@ struct SettingsScreen: View {
                 }
             }
             .onAppear {
+                // Opens on the Play page every time (or the page a link asked for), with the glow on its entry in the list.
                 if let page = router.settingsPage { selection = page; router.settingsPage = nil }
-                else if wide && selection == nil { selection = .play }
+                else { selection = wide ? .play : nil; sub = nil }
+                scope?.start(at: "set-\((selection ?? .play).rawValue)", force: true)
             }
             .onChange(of: router.settingsPage) { _, page in if let page { selection = page; router.settingsPage = nil } }
+            // Opening a page inside a page moves the highlight to its Back button, so the D-pad starts at the top of it.
+            .onChange(of: router.settingsSub) { old, new in
+                if let new, old?.parent != new { DispatchQueue.main.async { scope?.focused = "set-back" } }
+            }
             .onNavBack {
-                if wide {
-                    if let focused = scope?.focused as? String, focused.hasPrefix("set-") { return false }
-                    scope?.focused = "set-\((selection ?? .play).rawValue)"; return true
+                if wide, let focused = scope?.focused as? String, focused.hasPrefix("set-"), focused != "set-back" { return false }
+                if let open = sub {
+                    sub = open.parent
+                    DispatchQueue.main.async { scope?.focused = open.rowID }
+                    return true
                 }
+                if wide { scope?.focused = "set-\((selection ?? .play).rawValue)"; return true }
                 if selection != nil { selection = nil; return true }
                 return false
             }
@@ -53,23 +76,60 @@ struct SettingsScreen: View {
 
     // MARK: Pieces
 
+    private func choose(_ page: SettingsPage) {
+        if selection != page { selection = page; sub = nil }
+    }
+
     private func sidebar(wide: Bool) -> some View {
         FocusScroll {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Settings").font(.system(size: 30, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text).padding(.horizontal, 6)
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Self.pages) { page in
-                        SidebarRow(id: "set-\(page.rawValue)", symbol: page.symbol, tint: page.tint, title: page.title, detail: badge(for: page),
-                                   selected: wide && selection == page,
-                                   onFocus: wide ? { selection = page } : nil) {
-                            if wide { scope?.handle(.move(.right)) } else { selection = page }
+                SearchField(id: "set-search", prompt: "Search settings", text: $query, minWidth: 0)
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    ForEach(Self.sections, id: \.title) { section in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Theme.label(section.title).padding(.horizontal, 6)
+                            ForEach(section.pages) { page in
+                                SidebarRow(id: "set-\(page.rawValue)", symbol: page.symbol, tint: page.tint, title: page.title, detail: badge(for: page),
+                                           selected: wide && selection == page,
+                                           onFocus: wide ? { choose(page) } : nil) {
+                                    if wide { scope?.handle(.move(.right)) } else { choose(page) }
+                                }
+                            }
                         }
                     }
+                } else {
+                    results(wide: wide)
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 16)
             .frame(maxWidth: wide ? .infinity : 640, alignment: .leading).frame(maxWidth: .infinity, alignment: wide ? .leading : .center)
         }
+    }
+
+    /// What the search found. A result opens the page that holds the setting.
+    private func results(wide: Bool) -> some View {
+        let found = SettingsIndex.search(query)
+        return VStack(alignment: .leading, spacing: 10) {
+            if found.isEmpty {
+                Text("Nothing in Settings is called that.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
+            } else {
+                Theme.label("\(found.count) found").padding(.horizontal, 6)
+                ForEach(found) { entry in
+                    ActionRow(id: "sr-\(entry.id)", symbol: entry.page.symbol, tint: entry.page.tint, title: entry.title, subtitle: entry.path.isEmpty ? nil : entry.path, chevron: false) {
+                        open(entry, wide: wide)
+                    }
+                }
+            }
+        }
+    }
+
+    private func open(_ entry: SettingsIndex.Entry, wide: Bool) {
+        query = ""
+        selection = entry.page
+        sub = entry.sub
+        let target: String = entry.sub != nil ? "set-back" : (wide ? "set-\(entry.page.rawValue)" : "settings-back")
+        DispatchQueue.main.async { scope?.focused = target }
     }
 
     private func detail(wide: Bool, page: SettingsPage? = nil) -> some View {
@@ -86,8 +146,8 @@ struct SettingsScreen: View {
     private func badge(for page: SettingsPage) -> String? {
         switch page {
         case .updates: return updates.available != nil ? "1" : nil
-        case .app: return setupDone ? nil : "!"
-        case .accounts: return BuiltinJIT.hasPairing ? nil : "!"
+        case .help: return setupDone ? nil : "!"
+        case .jit: return BuiltinJIT.hasPairing ? nil : "!"
         case .report: return problems.unseen > 0 ? "\(problems.unseen)" : (CrashEvidence.latestUnreported() != nil ? "!" : nil)
         default: return nil
         }
@@ -98,36 +158,45 @@ extension SettingsPage {
     var title: String {
         switch self {
         case .play: "Play"
-        case .accounts: "Stores and JIT"
         case .saves: "Saves"
         case .storage: "Storage"
+        case .stores: "Stores"
+        case .jit: "JIT and connection"
+        case .appearance: "Appearance"
         case .updates: "Updates"
-        case .app: "App"
         case .advanced: "Advanced"
+        case .reports: "Compatibility reports"
+        case .help: "Help and about"
         case .report: "Report a problem"
         }
     }
     var symbol: String {
         switch self {
         case .play: "gamecontroller.fill"
-        case .accounts: "bolt.horizontal.fill"
         case .saves: "externaldrive.badge.icloud"
         case .storage: "internaldrive.fill"
+        case .stores: "storefront.fill"
+        case .jit: "bolt.horizontal.fill"
+        case .appearance: "paintpalette.fill"
         case .updates: "arrow.triangle.2.circlepath"
-        case .app: "paintpalette.fill"
         case .advanced: "wrench.and.screwdriver.fill"
+        case .reports: "checkmark.seal.fill"
+        case .help: "questionmark.circle.fill"
         case .report: "exclamationmark.bubble.fill"
         }
     }
     var tint: Color {
         switch self {
         case .play: .blue
-        case .accounts: .green
         case .saves: .teal
         case .storage: .orange
+        case .stores: .indigo
+        case .jit: .green
+        case .appearance: .pink
         case .updates: .mint
-        case .app: .pink
         case .advanced: .gray
+        case .reports: .purple
+        case .help: .cyan
         case .report: .red
         }
     }
@@ -141,15 +210,16 @@ struct SettingsPageView: View {
         switch page {
         case .play:
             CombinedPage(title: "Play", symbol: "gamecontroller.fill") { DisplayPage(); PerformancePage(); SoundPage(); ControlsPage() }
-        case .accounts:
-            CombinedPage(title: "Stores and JIT", symbol: "bolt.horizontal.fill") { SteamSettingsPage(); ConnectionPage() }
         case .saves: SavesPage()
         case .storage: StoragePage()
+        case .stores: StoresSettingsPage()
+        case .jit: ConnectionPage()
+        case .appearance: AppearancePage()
         case .updates: UpdatesPage()
-        case .app:
-            CombinedPage(title: "App", symbol: "paintpalette.fill") { AppearancePage(); ReportsSettingsPage(); SetupPage(); GuidesPage(); AboutPage() }
-        case .advanced:
-            CombinedPage(title: "Advanced", symbol: "wrench.and.screwdriver.fill") { AdvancedPage(); EngineOptionsPage(); LogPage() }
+        case .advanced: AdvancedPage()
+        case .reports: ReportsSettingsPage()
+        case .help:
+            CombinedPage(title: "Help and about", symbol: "questionmark.circle.fill") { SetupPage(); GuidesPage(); AboutPage() }
         case .report: ReportProblemPage()
         }
     }

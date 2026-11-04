@@ -55,17 +55,16 @@ struct AmazonGameTile: View {
             Button(action: open) {
                 Color.clear.aspectRatio(460.0 / 215.0, contentMode: .fit)
                     .overlay { EpicArtView(url: game.art) }
-                    .overlay(alignment: .topLeading) { if let badge { BadgePill(badge: badge).padding(8) } }
+                    .overlay(alignment: .topLeading) { if let badge { TileStatus(badge: badge).padding(8) } }
                     .overlay(alignment: .bottomTrailing) { if showStore { StoreCorner(store: .amazon, size: 26).padding(8) } }
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                    .storeTileStyle()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TilePress())
             .focusTarget("ag-\(game.id)", radius: 18, scale: 1.1, action: open)
             VStack(alignment: .leading, spacing: 3) {
                 Text(game.title).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1)
                 if install?.state == .active {
-                    ProgressView(value: install?.progress.fraction ?? 0).tint(Theme.accent)
+                    TileProgress(value: install?.progress.fraction ?? 0)
                     Text(EpicText.progress(install?.progress ?? SteamDownloadProgress())).font(.caption2).foregroundStyle(Theme.textDim)
                 } else if case .failed(let why)? = install?.state {
                     Text(why).font(.caption2).foregroundStyle(Theme.bad).lineLimit(3)
@@ -88,45 +87,31 @@ struct AmazonOwnedList: View {
     }
 
     var body: some View {
-        FocusScroll {
-            VStack(alignment: .leading, spacing: 18) {
-                FlowLayout(spacing: 10) {
-                    StoreSwitcher()
-                    if !network.isOnline { OfflineChip() }
-                    if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
-                    else { IconPillButton(id: "am-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
-                    searchField
-                    IconPillButton(id: "am-account", symbol: "person.crop.circle", label: "Amazon account") { showAccount = true }
-                }
-                if let error = network.isOnline ? library.error : nil { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
-                if shown.isEmpty && !library.isLoading {
-                    Text(library.games.isEmpty ? "No games found on this account yet. Games from Prime Gaming show up once they are claimed." : "No games match.")
-                        .foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
-                    ForEach(shown) { game in AmazonGameTile(game: game) { open = game } }
-                }
-                Text("Amazon games are downloaded straight from Amazon's servers. Some need the Amazon Games app's online services to start and may not run.")
-                    .font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
+        StorePage {
+            StoreSwitcher()
+            if !network.isOnline { OfflineChip() }
+            if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
+            else { IconPillButton(id: "am-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
+            searchField
+            IconPillButton(id: "am-account", symbol: "person.crop.circle", label: "Amazon account") { showAccount = true }
+        } content: {
+            if let error = network.isOnline ? library.error : nil { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
+            if shown.isEmpty && !library.isLoading {
+                Text(library.games.isEmpty ? "No games found on this account yet. Games from Prime Gaming show up once they are claimed." : "No games match.")
+                    .foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
             }
-            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 18)
-            .frame(maxWidth: 1400).frame(maxWidth: .infinity)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
+                ForEach(shown) { game in AmazonGameTile(game: game) { open = game } }
+            }
+            Text("Amazon games are downloaded straight from Amazon's servers. Some need the Amazon Games app's online services to start and may not run.")
+                .font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
         }
         .sheet(item: $open) { game in AmazonGameSheet(game: game) }
         .sheet(isPresented: $showAccount) { AmazonSignInView() }
         .task { library.refreshIfStale() }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
-            TextField("Search \(library.games.count) game\(library.games.count == 1 ? "" : "s")", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled().foregroundStyle(Theme.text)
-        }
-        .padding(.horizontal, 14).frame(minWidth: 200, minHeight: 40)
-        .background(Theme.panel, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
-        .focusTarget("am-search", radius: 20, scale: 1.02, action: {})
-    }
+    private var searchField: some View { SearchField(id: "am-search", prompt: "Search \(library.games.count) game\(library.games.count == 1 ? "" : "s")", text: $search) }
 }
 
 /// An Amazon game: its picture and name, and the install actions for its state (install, pause, uninstall).
@@ -139,23 +124,12 @@ struct AmazonGameSheet: View {
     private var state: AmazonInstaller.State? { installer.installs[game.id]?.state }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Color.clear.aspectRatio(460.0 / 215.0, contentMode: .fit)
-                        .overlay { EpicArtView(url: game.art) }
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    Text(game.title).font(.system(size: 24, weight: .heavy, design: .rounded))
+        StoreSheetShell(store: .amazon, title: game.title, subtitle: nil, close: { dismiss() }, art: { EpicArtView(url: game.art) }) {
                     actions
                     if let error = installer.error { Label(error, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.red) }
-                }
-                .padding(20)
-            }
-            .navigationTitle("Amazon Games").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
             .confirm("Uninstall \(game.title)?", message: "The game's folder is removed from this device. Your Amazon library and your save files in Porthole's backups are not touched.",
                      confirmTitle: "Uninstall and delete its files", destructive: true, isPresented: $confirmUninstall) { installer.uninstall(game.id) }
-        }
         .presentationDetents([.medium, .large])
     }
 
@@ -169,14 +143,14 @@ struct AmazonGameSheet: View {
             button("Cancel", symbol: "xmark") { installer.cancel(game.id) }
         case .active?:
             let progress = installer.installs[game.id]?.progress ?? SteamDownloadProgress()
-            ProgressView(value: progress.fraction)
+            TileProgress(value: progress.fraction)
             Text(EpicText.progress(progress)).font(.footnote).foregroundStyle(.secondary)
             HStack {
                 button("Pause", symbol: "pause.fill") { installer.pause(game.id) }
                 button("Cancel", symbol: "xmark", role: .destructive) { installer.cancel(game.id) }
             }
         case .paused?:
-            ProgressView(value: installer.installs[game.id]?.progress.fraction ?? 0)
+            TileProgress(value: installer.installs[game.id]?.progress.fraction ?? 0)
             HStack {
                 button("Resume", symbol: "play.fill", prominent: true) { installer.install(game) }
                 button("Remove", symbol: "trash", role: .destructive) { installer.cancel(game.id) }
@@ -193,12 +167,9 @@ struct AmazonGameSheet: View {
         }
     }
 
-    private func note(_ text: String) -> some View { Text(text).font(.footnote).foregroundStyle(.secondary) }
+    private func note(_ text: String) -> some View { Text(text).font(.footnote).foregroundStyle(Theme.textDim) }
 
     private func button(_ title: String, symbol: String, prominent: Bool = false, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            Label(title, systemImage: symbol).frame(maxWidth: .infinity).padding(.vertical, 6)
-        }
-        .buttonStyle(.borderedProminent).tint(prominent ? Theme.accent : (role == .destructive ? .red : .gray))
+        StoreSheetButton(title: title, symbol: symbol, prominent: prominent, destructive: role == .destructive, action: action)
     }
 }

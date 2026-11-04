@@ -92,6 +92,21 @@ struct DownloadItem: Identifiable {
             out.append(item)
         }
 
+        let ea = EAInstaller.shared
+        for (id, install) in ea.installs.sorted(by: { $0.key < $1.key }) {
+            guard let title = ea.title(for: id) else { continue }
+            var item = DownloadItem(store: .ea, key: id, title: title, art: ea.art(for: id), kind: .stopped, progress: install.progress)
+            switch install.state {
+            case .active: item.kind = .running
+            case .queued: item.kind = .queued
+            case .paused: break
+            case .failed(let why): item.failure = why
+            case .installed: continue
+            }
+            if id == ea.activeID { item.kind = .running }
+            out.append(item)
+        }
+
         // The waiting ones keep the order of their own store's queue.
         func position(_ item: DownloadItem) -> Int {
             switch item.store {
@@ -100,6 +115,7 @@ struct DownloadItem: Identifiable {
             case .gog: gog.queueOrder.firstIndex(of: Int(item.key) ?? -1) ?? 0
             case .itch: itch.queueOrder.firstIndex(of: Int(item.key) ?? -1) ?? 0
             case .amazon: amazon.queueOrder.firstIndex(of: item.key) ?? 0
+            case .ea: ea.queueOrder.firstIndex(of: item.key) ?? 0
             }
         }
         let storeOrder = Dictionary(uniqueKeysWithValues: GameStore.allCases.enumerated().map { ($1, $0) })
@@ -119,6 +135,7 @@ struct DownloadItem: Identifiable {
         case .gog: GogInstaller.shared.pause(Int(i.key) ?? 0)
         case .itch: ItchInstaller.shared.pause(Int(i.key) ?? 0)
         case .amazon: AmazonInstaller.shared.pause(i.key)
+        case .ea: EAInstaller.shared.pause(i.key)
         }
     }
     static func cancel(_ i: DownloadItem) {
@@ -128,6 +145,7 @@ struct DownloadItem: Identifiable {
         case .gog: GogInstaller.shared.cancel(Int(i.key) ?? 0)
         case .itch: ItchInstaller.shared.cancel(Int(i.key) ?? 0)
         case .amazon: AmazonInstaller.shared.cancel(i.key)
+        case .ea: EAInstaller.shared.cancel(i.key)
         }
     }
     static func startNow(_ i: DownloadItem) {
@@ -137,6 +155,7 @@ struct DownloadItem: Identifiable {
         case .gog: GogInstaller.shared.startNow(Int(i.key) ?? 0)
         case .itch: ItchInstaller.shared.startNow(Int(i.key) ?? 0)
         case .amazon: AmazonInstaller.shared.startNow(i.key)
+        case .ea: EAInstaller.shared.startNow(i.key)
         }
     }
     static func resume(_ i: DownloadItem) {
@@ -146,6 +165,7 @@ struct DownloadItem: Identifiable {
         case .gog: GogInstaller.shared.resume(Int(i.key) ?? 0)
         case .itch: ItchInstaller.shared.resume(Int(i.key) ?? 0)
         case .amazon: AmazonInstaller.shared.resume(i.key)
+        case .ea: EAInstaller.shared.resume(i.key)
         }
     }
     /// A downloaded setup program waiting to be run (GOG and itch.io).
@@ -156,8 +176,8 @@ struct DownloadItem: Identifiable {
         default: break
         }
     }
-    static func pauseAll() { SteamStore.shared.pauseAll(); EpicInstaller.shared.pauseAll(); GogInstaller.shared.pauseAll(); ItchInstaller.shared.pauseAll(); AmazonInstaller.shared.pauseAll() }
-    static func resumeAll() { SteamStore.shared.resumeAll(); EpicInstaller.shared.resumeAll(); GogInstaller.shared.resumeAll(); ItchInstaller.shared.resumeAll(); AmazonInstaller.shared.resumeAll() }
+    static func pauseAll() { SteamStore.shared.pauseAll(); EpicInstaller.shared.pauseAll(); GogInstaller.shared.pauseAll(); ItchInstaller.shared.pauseAll(); AmazonInstaller.shared.pauseAll(); EAInstaller.shared.pauseAll() }
+    static func resumeAll() { SteamStore.shared.resumeAll(); EpicInstaller.shared.resumeAll(); GogInstaller.shared.resumeAll(); ItchInstaller.shared.resumeAll(); AmazonInstaller.shared.resumeAll(); EAInstaller.shared.resumeAll() }
 
     // MARK: One line for buttons and cards
 
@@ -193,6 +213,7 @@ struct DownloadsButton: View {
     @ObservedObject private var gog = GogInstaller.shared
     @ObservedObject private var itch = ItchInstaller.shared
     @ObservedObject private var amazon = AmazonInstaller.shared
+    @ObservedObject private var ea = EAInstaller.shared
 
     var body: some View {
         let items = Downloads.items()
@@ -239,6 +260,7 @@ struct AllDownloadsScreen: View {
     @ObservedObject private var gog = GogInstaller.shared
     @ObservedObject private var itch = ItchInstaller.shared
     @ObservedObject private var amazon = AmazonInstaller.shared
+    @ObservedObject private var ea = EAInstaller.shared
 
     private func back() { router.closeDownloads() }
     private var backTitle: String {
@@ -277,7 +299,8 @@ struct AllDownloadsScreen: View {
                     }
                     if items.isEmpty {
                         VStack(spacing: 10) {
-                            Image(systemName: "checkmark.circle").font(.system(size: 44)).foregroundStyle(Theme.accentGradient)
+                            Image(systemName: "checkmark").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.accentGradient)
+                                .frame(width: 76, height: 76).background(Theme.accent.opacity(0.14), in: Circle())
                             Text("Nothing is downloading").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
                             PillButton(id: "dl-browse", title: "Browse your games", symbol: "square.grid.2x2.fill", action: back)
                         }
@@ -295,7 +318,8 @@ struct AllDownloadsScreen: View {
     private func art(_ item: DownloadItem, width: CGFloat) -> some View {
         Color.clear.frame(width: width, height: width * 215 / 460)
             .overlay { EpicArtView(url: item.art) }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.15), lineWidth: 1))
             .overlay(alignment: .topLeading) { StoreBadgeBacked(store: item.store, size: 22).padding(4) }
     }
 
@@ -311,15 +335,22 @@ struct AllDownloadsScreen: View {
                 Spacer(minLength: 0)
                 Text("\(Int(p.fraction * 100))%").font(.system(size: 26, weight: .heavy, design: .rounded).monospacedDigit()).foregroundStyle(Theme.accent)
             }
-            ProgressView(value: p.fraction).tint(Theme.accent).shadow(color: Theme.accent.opacity(0.5 * Theme.glowStrength), radius: 6)
+            Capsule().fill(.white.opacity(0.1)).frame(height: 8)
+                .overlay(alignment: .leading) {
+                    GeometryReader { geo in
+                        Capsule().fill(Theme.accentGradient).frame(width: max(8, geo.size.width * CGFloat(min(1, max(0, p.fraction)))))
+                            .shadow(color: Theme.accent.opacity(0.6 * Theme.glowStrength), radius: 6)
+                            .animation(.easeOut(duration: 0.4), value: p.fraction)
+                    }
+                }
             HStack(spacing: 10) {
                 PillButton(id: "dl-now-pause-\(item.id)", title: "Pause", symbol: "pause.fill", style: .primary) { Downloads.pause(item) }
                 PillButton(id: "dl-now-cancel-\(item.id)", title: "Cancel", symbol: "xmark", style: .danger) { Downloads.cancel(item) }
             }
         }
         .padding(16)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1.5))
+        .background { RoundedRectangle(cornerRadius: 20, style: .continuous).fill(LinearGradient(colors: [item.store.tint.opacity(0.2), Theme.panel], startPoint: .topLeading, endPoint: .bottomTrailing)) }
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(item.store.tint.opacity(0.55), lineWidth: 1.2))
     }
 
     private func row<Buttons: View>(_ item: DownloadItem, line: String, lineColor: Color = Theme.textDim, @ViewBuilder buttons: () -> Buttons) -> some View {
@@ -337,8 +368,8 @@ struct AllDownloadsScreen: View {
             HStack(spacing: 10) { buttons() }
         }
         .padding(12)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(item.store.tint.opacity(0.28), lineWidth: 1))
     }
 
     private func queueRow(_ item: DownloadItem) -> some View {

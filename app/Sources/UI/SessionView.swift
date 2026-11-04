@@ -17,7 +17,7 @@ struct SessionView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            GameSurface(state: session.state, dockStatus: session.padNotice ?? session.dockStatus, layout: session.activeLayout, customLayout: session.activeTouchLayout, lookSensitivity: session.lookSensitivity, onAdjustLook: { session.adjustLook(by: $0) }, onSwitchLayout: { session.switchLayout(to: $0) },
+            GameSurface(state: session.state, dockStatus: session.padNotice, layout: session.activeLayout, customLayout: session.activeTouchLayout, lookSensitivity: session.lookSensitivity, onAdjustLook: { session.adjustLook(by: $0) }, onSwitchLayout: { session.switchLayout(to: $0) },
                         onClose: { session.requestClose() },
                         onBack: { session.dismiss() },
                         onReport: reportAction, onEditBinds: { editingBinds = true },
@@ -111,6 +111,16 @@ final class MetalHostView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+/// Takes the keyboard's UIKit presses while a game has the keyboard. HardwareInput already reads every key raw (GameController); left alone, UIKit would also act on them,
+/// and Escape dismisses the full-screen cover the game runs in (the library showed for a moment, then the cover came back). Not a UIKeyInput, so no on-screen keyboard.
+final class PressSink: UIView {
+    override var canBecomeFirstResponder: Bool { true }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) { HardwareInput.shared.learnLayout(presses) }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {}
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {}
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {}
+}
+
 final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     let hud = GameHUDView.shared
     private static var layerRegistered = false
@@ -124,11 +134,29 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     private var nextTouchID = 1
     private var tickTimer: Timer?
 
+    /// The game's view (HardwareInput asks where keys and the pointer belong), and the desktop cursor a hardware mouse moves in a desktop session.
+    private let pressSink = PressSink()
+    /// A hardware keyboard belongs to the game (or not): its UIKit presses are swallowed, and the cover the game runs in cannot be dismissed by a key (Escape).
+    func captureKeys(_ on: Bool) {
+        if let top = HardwareInput.topmost(window?.rootViewController), top.viewIfLoaded.map({ isDescendant(of: $0) }) == true { top.isModalInPresentation = on }
+        if on { if !pressSink.isFirstResponder, !isFirstResponder { _ = pressSink.becomeFirstResponder() } }
+        else if pressSink.isFirstResponder { _ = pressSink.resignFirstResponder() }
+    }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) { HardwareInput.shared.learnLayout(presses); if !HardwareInput.shared.handlesTyping { super.pressesBegan(presses, with: event) } }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) { if !HardwareInput.shared.handlesTyping { super.pressesChanged(presses, with: event) } }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) { if !HardwareInput.shared.handlesTyping { super.pressesEnded(presses, with: event) } }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) { if !HardwareInput.shared.handlesTyping { super.pressesCancelled(presses, with: event) } }
+    static weak var current: GameSurfaceView?
+    static var cursor = CGPoint(x: CGFloat(SessionController.desktopWidth) / 2, y: CGFloat(SessionController.desktopHeight) / 2)
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         isMultipleTouchEnabled = true       // two-finger tap and pinch
         backgroundColor = .clear
         engine.sink = self
+        pressSink.isUserInteractionEnabled = false; pressSink.frame = .zero; addSubview(pressSink)
+        PointerFallback.install(on: self)   // hides the system pointer over the game and reports where it is (a mouse or trackpad on iPad)
+        Self.current = self
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -151,8 +179,9 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     // MARK: iOS keyboard (typed text goes to the game as key presses)
     override var canBecomeFirstResponder: Bool { true }
     var hasText: Bool { true }
-    func insertText(_ text: String) { HUDKeys.type(text) }
-    func deleteBackward() { HUDKeys.tap(VK.backspace) }
+    // A hardware keyboard delivers every key itself (HardwareInput): the same presses reaching the text bridge would type each one twice.
+    func insertText(_ text: String) { guard !HardwareInput.shared.handlesTyping else { return }; HUDKeys.type(text) }
+    func deleteBackward() { guard !HardwareInput.shared.handlesTyping else { return }; HUDKeys.tap(VK.backspace) }
     var autocorrectionType: UITextAutocorrectionType { get { .no } set {} }
     var autocapitalizationType: UITextAutocapitalizationType { get { .none } set {} }
     var spellCheckingType: UITextSpellCheckingType { get { .no } set {} }
@@ -163,12 +192,13 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     }
 
     func detach() {
+        if Self.current === self { Self.current = nil }
         raiseTimer?.invalidate(); raiseTimer = nil
         MetalHostView.shared.removeFromSuperview()
         hud.removeFromSuperview()
     }
 
-    override func didMoveToWindow() { super.didMoveToWindow(); attach(reason: "attach"); observeDisplay(); keepHUDOnTop() }
+    override func didMoveToWindow() { super.didMoveToWindow(); Self.current = self; attach(reason: "attach"); observeDisplay(); keepHUDOnTop() }
 
     private var raiseTimer: Timer?
     private var raises = 0
@@ -258,6 +288,11 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         return (Int32(max(0, min(gw - 1, x))), Int32(max(0, min(gh - 1, y))))
     }
 
+    /// The mouse's pointer position (view points) -> desktop pixels: the same mapping a finger gets. HardwareInput's absolute route and its drawn cursor use it.
+    func mapPoint(_ p: CGPoint) -> (Int32, Int32) { desktopPoint(p) }
+    /// The part of the game's screen the picture covers (all of it here): positions HardwareInput draws its cursor at.
+    func pointerRect() -> CGRect { let (w, h) = guestSize(); return CGRect(x: 0, y: 0, width: w, height: h) }
+
     /// A Wine desktop pixel -> a point in the HUD (the inverse of `desktopPoint`), for the controller's pointer arrow.
     func hudPoint(forDesktop x: Double, _ y: Double) -> CGPoint? {
         let r = fitRect()
@@ -302,6 +337,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if HardwareInput.shared.interceptTouches(touches, event, .began) { return }     // a mouse button (or AssistiveTouch's click), not a finger
         hud.noteTouch()
         let touches = takeMenuSwipe(touches)
         if touches.isEmpty { return }
@@ -320,6 +356,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         }
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if HardwareInput.shared.interceptTouches(touches, event, .moved) { return }
         if let st = menuSwipeTouch, touches.contains(st) {
             if !menuSwipeFired, menuSwipeStart.x - st.location(in: self).x > 18 { menuSwipeFired = true; hud.openMenu() }
         }
@@ -338,6 +375,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         for t in touches { if let i = touchIDs[ObjectIdentifier(t)] { engine.moved(i, to: t.location(in: self), time: t.timestamp) } }
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if HardwareInput.shared.interceptTouches(touches, event, .ended) { return }
         let edge = menuSwipeTouch
         if let st = edge, touches.contains(st) {
             let p = st.location(in: self)
@@ -354,6 +392,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if HardwareInput.shared.interceptTouches(touches, event, .cancelled) { return }
         if let st = menuSwipeTouch, touches.contains(st) { menuSwipeTouch = nil }
         if let lt = lookTouch, touches.contains(lt) { lookTouch = nil; return }
         for t in touches { if let i = touchIDs.removeValue(forKey: ObjectIdentifier(t)) { engine.cancelled(i) } }
@@ -365,7 +404,9 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         let (x, y) = desktopPoint(p)
         hud.cursor = (x, y)
         PadPointer.shared.set(x: x, y: y)
-        winios_pointer(x, y, flags, data)
+        // A raw mouse that owns the camera must not get a second, absolute stream from a touch that is really one of its clicks.
+        guard let event = HardwareInput.shared.surfacePointerEvent(x: x, y: y, flags: flags, data: data) else { return }
+        winios_pointer(event.x, event.y, event.flags, event.data)
     }
     private func logGesture(_ text: String) {
         if gestureLogs < 40 { gestureLogs += 1; LogStore.shared.log("[f4-touch] \(text)") }

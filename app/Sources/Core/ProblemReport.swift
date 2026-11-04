@@ -16,7 +16,7 @@ enum ProblemReport {
     // MARK: Reading
 
     /// A log file as it is, or, when it is huge, its first and last parts with a line saying what is between.
-    private static func read(_ url: URL, cap: Int = perSourceCap) -> Data? {
+    static func read(_ url: URL, cap: Int = perSourceCap) -> Data? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         let size = Int((try? handle.seekToEnd()) ?? 0)
@@ -55,7 +55,7 @@ enum ProblemReport {
         lines.append("Porthole \(version) (\(build))")
         lines.append("Engine: \(CompatEngine.label)")
         lines.append("Device: \(device?.name ?? "unknown") [\(device?.id ?? "?")], iOS \(UIDevice.current.systemVersion), \(gigabytes) GB memory, \(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) free")
-        lines.append("Install: \(InstallCheck.layoutTitle); JIT helper \(InstallCheck.hasJITHelper ? "yes" : "no"), tunnel \(InstallCheck.hasTunnel ? "yes" : "no"), download card \(InstallCheck.hasActivityExtension ? "yes" : "no")")
+        lines.append("Install: \(InstallCheck.layoutTitle); JIT helper \(InstallCheck.hasJITHelper ? "yes" : "no"), tunnel \(InstallCheck.hasTunnel ? "yes" : "no"), download card \(InstallCheck.hasActivityExtension ? "yes" : "no"), donor memory \(InstallCheck.hasMemoryHost ? "yes" : "no")")
         lines.append("Bundle id: \(Bundle.main.bundleIdentifier == "site.portholehq.app" ? "the default" : "custom")")
         lines.append("JIT: \(JITMethod.current.rawValue), pairing file \(BuiltinJIT.hasPairing ? "yes" : "no"), LocalDevVPN \(TunnelManager.useLocalDevVPN ? "on" : "off")")
         lines.append("Games in the library: \(AppModel.shared.games.count)")
@@ -80,7 +80,7 @@ enum ProblemReport {
     /// Reads the logs off the main thread, cleans them, and puts the parts together. With `crash`, the run that ended comes first, then the game's own log when it
     /// is a different file, then the end of the launch that followed.
     @MainActor static func build(description: String, includeLog: Bool, crash: CrashEvidence.Found? = nil) async -> Built {
-        let names = [EpicAuth.shared.accountName, SteamStore.shared.accountName, GogAuth.shared.accountName, ItchAuth.shared.accountName, AmazonAuth.shared.accountName].compactMap { $0 }.filter { !$0.isEmpty }
+        let names = [EpicAuth.shared.accountName, SteamStore.shared.accountName, GogAuth.shared.accountName, ItchAuth.shared.accountName, AmazonAuth.shared.accountName, EAAuth.shared.accountName].compactMap { $0 }.filter { !$0.isEmpty }
         var note = LogCleaner.clean(description.trimmingCharacters(in: .whitespacesAndNewlines), accountNames: names)
         var facts = facts()
         if let crash {

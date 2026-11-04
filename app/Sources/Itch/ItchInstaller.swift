@@ -2,7 +2,7 @@
 // Copyright (C) 2026 The Porthole authors. See LICENSE.
 //
 // Installing an itch.io game. itch.io games are plain downloads: pick the game's Windows upload, fetch it (resumable), and then
-//   * a .zip is unpacked into C:\itch\<name> and the game's program is found (itch's own .itch.toml manifest if there is one, else the likeliest .exe);
+//   * a .zip, .7z or .rar is unpacked into C:\itch\<name> and the game's program is found (itch's own .itch.toml manifest if there is one, else the likeliest .exe);
 //   * a bare .exe that is not an installer is the game itself and is moved into C:\itch\<name>;
 //   * an installer (.exe named setup/install, or an .msi) is run on the Wine desktop, and what it adds to Program Files is found afterwards.
 // The download files are deleted once the game is in. Nothing here logs the API key or a signed download address.
@@ -349,7 +349,7 @@ private actor ItchInstallWorker {
 
     private nonisolated static func score(_ upload: ItchUpload) -> Int {
         var s = 0
-        if ["zip", "exe", "msi"].contains(upload.ext) { s += 100 }
+        if ["zip", "7z", "rar", "exe", "msi"].contains(upload.ext) { s += 100 }
         if !upload.demo { s += 50 }
         let name = (upload.filename + " " + upload.displayName).lowercased()
         if name.contains("64") { s += 10 }
@@ -368,7 +368,7 @@ private actor ItchInstallWorker {
         guard let upload = uploads.first(where: { $0.id == uploadID }) ?? uploads.first else {
             throw ItchError.server("This game has no Windows download on itch.io (it may be a browser game, or Linux/Mac only).")
         }
-        guard ["zip", "exe", "msi"].contains(upload.ext) else {
+        guard ["zip", "7z", "rar", "exe", "msi"].contains(upload.ext) else {
             throw ItchError.server("The Windows download is a .\(upload.ext) file, which Porthole cannot unpack yet.")
         }
         LogStore.shared.log("[itch-install] \(uploads.count) Windows upload(s); using a .\(upload.ext) of \(upload.size / 1_048_576) MB")
@@ -406,10 +406,16 @@ private actor ItchInstallWorker {
         await progress(status)
 
         switch upload.ext {
-        case "zip":
+        case "zip", "7z", "rar":
             try? FileManager.default.removeItem(at: root)
             do {
-                try ItchZip.extract(final, to: root, stripCommonFolder: true) { _ in }
+                // By what the file really is (a ".zip" that is a 7z, or the other way round, does exist).
+                if ItchRar.isRar(final) { try ItchRar.extract(final, to: root, stripCommonFolder: true) { _ in } }
+                else if ItchSevenZip.is7z(final) { try ItchSevenZip.extract(final, to: root, stripCommonFolder: true) { _ in } }
+                else { try ItchZip.extract(final, to: root, stripCommonFolder: true) { _ in } }
+                // Some builds are a zip that holds the game's real .7z, .rar or .zip: unpack those where they lie.
+                let inner = try ItchSevenZip.unpackInner(in: root)
+                if inner > 0 { LogStore.shared.log("[itch-install] unpacked \(inner) archive(s) inside the download") }
             } catch {
                 try? FileManager.default.removeItem(at: root)
                 throw error

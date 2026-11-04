@@ -2,6 +2,7 @@
 // Copyright (C) 2026 The Porthole authors. See LICENSE.
 import Foundation
 import Network
+import NetworkExtension
 import Observation
 import SwiftUI
 import UIKit
@@ -26,6 +27,7 @@ final class CellularGuard {
     static let enabledKey = "f4.cellularAuto"
     private static let pausedKey = "f4.cellularPaused"
     private static let ranKey = "f4.cellularShortcutRan"
+    private static let blockedKey = "f4.cellularAutoBlocked"
     private static let setupShownKey = "f4.cellularSetupShown"
     static let offName = "Porthole Cellular Off"
     static let onName = "Porthole Cellular On"
@@ -50,15 +52,26 @@ final class CellularGuard {
     private var restoring = false
     private let scope = FocusScope()
 
+    /// The "on" shortcut failed: Porthole stops trying by itself (at app start, when a game ends, before a game starts). Each try opens the Shortcuts app and comes back, which is
+    /// all it did on every start while the shortcut was missing. The reminder on Home still turns cellular data on by hand; adding the shortcuts or a working test starts it again.
+    private(set) var autoBlocked = UserDefaults.standard.bool(forKey: blockedKey)
+
     private func setPaused(_ value: Bool) {
         paused = value
         UserDefaults.standard.set(value, forKey: Self.pausedKey)
+    }
+
+    private func setBlocked(_ value: Bool) {
+        autoBlocked = value
+        UserDefaults.standard.set(value, forKey: Self.blockedKey)
     }
 
     // MARK: The network
 
     nonisolated private static let monitor: NWPathMonitor = {
         let m = NWPathMonitor()
+        // A change of network is when "cellular data is off" may stop being true (the person switched it on themselves, on Wi-Fi or not).
+        m.pathUpdateHandler = { _ in Task { @MainActor in CellularGuard.shared.recheck() } }
         m.start(queue: DispatchQueue(label: "site.portholehq.cellular-guard", qos: .utility))
         return m
     }()
@@ -75,6 +88,12 @@ final class CellularGuard {
     /// Cellular data is switched on (an interface for it exists), whether or not it is the one in use.
     nonisolated static func cellularAvailable() -> Bool {
         monitor.currentPath.availableInterfaces.contains { $0.type == .cellular }
+    }
+
+    /// Porthole's own jobs (a game, or the tunnel for JIT or an update) are using the connection: cellular data is off on purpose until they are done.
+    private var jobRunning: Bool {
+        if AppModel.shared.session.isActive { return true }
+        switch TunnelManager.shared.status { case .connecting, .connected, .reasserting, .disconnecting: return true; default: return false }
     }
 
     nonisolated static func pathSummary() -> String {
@@ -171,14 +190,17 @@ final class CellularGuard {
         let ran = await runShortcut(Self.onName)
         if ran {
             setPaused(false)                  // the shortcut ran to the end: that is what counts, the network path may take a moment to show it
+            setBlocked(false)
             for _ in 0..<16 where !Self.cellularAvailable() { try? await Task.sleep(for: .milliseconds(500)) }
             LogStore.shared.log("[cellular] cellular data is back on: \(Self.pathSummary())", level: .success)
-        } else if Self.cellularInUse() {
+        } else if Self.cellularAvailable() {
             setPaused(false)                  // the person switched it on themselves
+            setBlocked(false)
             LogStore.shared.log("[cellular] cellular data is on again: \(Self.pathSummary())")
         } else {
             lastProblem = "The \u{201C}\(Self.onName)\u{201D} shortcut did not run, so cellular data may still be off."
-            LogStore.shared.log("[cellular] \(lastProblem ?? "") It stays marked as off; Porthole tries again when it is opened.", level: .error)
+            setBlocked(true)
+            LogStore.shared.log("[cellular] \(lastProblem ?? "") It stays marked as off; Porthole no longer tries by itself (the reminder on Home turns it on by hand).", level: .error)
         }
     }
 
@@ -187,7 +209,7 @@ final class CellularGuard {
     nonisolated static func restoreBlocking() {
         let done = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            await CellularGuard.shared.restoreNow()
+            if !CellularGuard.shared.autoBlocked { await CellularGuard.shared.restoreNow() }
             done.signal()
         }
         _ = done.wait(timeout: .now() + 60)
@@ -196,28 +218,31 @@ final class CellularGuard {
     /// Call when a game has ended or never started, when a job failed, and when the app opens. Does nothing unless cellular data was switched off by Porthole and is
     /// still off, and never while a game is starting or running.
     func restoreIfPaused() {
-        guard paused, !restoring, !busy else { return }
+        guard paused, !autoBlocked, !restoring, !busy else { return }
         restoring = true
         Task { @MainActor in
             defer { restoring = false }
             for _ in 0..<20 where TunnelManager.shared.status == .connecting || TunnelManager.shared.status == .disconnecting { try? await Task.sleep(for: .milliseconds(500)) }
             guard paused, !AppModel.shared.session.isActive else { return }
-            if Self.cellularInUse() { setPaused(false); LogStore.shared.log("[cellular] cellular data is on again"); return }
+            if Self.cellularAvailable() { setPaused(false); LogStore.shared.log("[cellular] cellular data is on again: \(Self.pathSummary())"); return }
             await restoreNow()
         }
     }
 
-    /// The person is back in the app: if cellular data is on again (they switched it on themselves), the reminder goes away.
+    /// The person is back in the app, or the network changed: if cellular data is on again (they switched it on themselves, and it need not be the network in use: on Wi-Fi it
+    /// is only available), the reminder goes away. Not while a game or the tunnel is running: cellular data is off then on purpose.
     func recheck() {
-        guard paused, !busy, Self.cellularInUse() else { return }
+        guard paused, !busy, !jobRunning, Self.cellularAvailable() else { return }
         setPaused(false)
-        LogStore.shared.log("[cellular] cellular data is on again")
+        setBlocked(false)
+        LogStore.shared.log("[cellular] cellular data is on again: \(Self.pathSummary())")
     }
 
     /// Settings: switches cellular data off and straight back on once, to check that both shortcuts are added and allowed. Works on Wi-Fi too.
     func selfTest() async {
         guard !paused, !busy else { return }
         lastProblem = nil
+        setBlocked(false)
         LogStore.shared.log("[cellular] test: switching cellular data off and on")
         setPaused(true)
         guard await runShortcut(Self.offName) else {
@@ -279,6 +304,7 @@ final class CellularGuard {
     /// Shares the two bundled, signed shortcut files, one after the other: the person picks Shortcuts in the share sheet and taps Add Shortcut for each.
     func addShortcuts() {
         UserDefaults.standard.set(true, forKey: Self.setupShownKey)
+        setBlocked(false)
         share(Self.offName) { [weak self] in self?.share(Self.onName, then: nil) }
     }
 

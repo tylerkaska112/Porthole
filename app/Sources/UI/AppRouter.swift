@@ -24,6 +24,11 @@ final class AppRouter {
     var settingsPage: SettingsPage?
     /// The Settings page being shown. Kept here, not in the screen, because changing the theme rebuilds the screen and it must come back to the same page.
     var settingsSelection: SettingsPage?
+    /// The page inside the chosen Settings page (one store's settings, one group of engine options ...), or nil for the page itself.
+    var settingsSub: SettingsSub?
+
+    /// The part of the Reports tab to show next time it appears (nil = leave it as it is).
+    var reportsScope: ReportsScope?
 
     /// The Stores tab's page (nil = the list of launchers).
     var storesSelection: StoresSelection?
@@ -39,11 +44,19 @@ final class AppRouter {
     func closeDownloads() { storesSelection = downloadsReturn; downloadsReturn = nil }
     func openStore(_ store: GameStore) { storesSelection = .store(store); tab = .stores }
     func openStores() { storesSelection = nil; tab = .stores }
-    func openSettings(_ page: SettingsPage? = nil) { settingsPage = page; tab = .settings }
+    func openReports(_ scope: ReportsScope) { reportsScope = scope; tab = .compatibility }
+    func openSettings(_ page: SettingsPage? = nil, sub: SettingsSub? = nil) { settingsSub = sub; settingsPage = page; tab = .settings }
 }
 
-/// The pages inside Settings.
+/// The pages in Settings' list, in the order of SettingsScreen.sections.
 enum SettingsPage: String, Hashable, CaseIterable, Identifiable {
-    case play, accounts, saves, storage, updates, app, advanced, report
+    case play, saves, storage, stores, jit, appearance, updates, advanced, reports, help, report
     var id: String { rawValue }
+}
+
+/// A page inside a Settings page: one store's own settings, a group of engine options, one of Advanced's pages.
+enum SettingsSub: Hashable {
+    case store(GameStore)
+    case engineGroups, engineGroup(String), engineChanged
+    case components, links, diagnostics
 }

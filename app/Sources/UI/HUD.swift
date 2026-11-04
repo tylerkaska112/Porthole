@@ -111,8 +111,8 @@ final class GameHUDView: UIView {
     /// Diagnostics shown in the full readout: how often the HUD was told something, and how often it really changed.
     static var stateCalls = 0, stateChanges = 0, attaches = 0
     private var lastState: SessionController.State?
-    /// A controller in use hides the on-screen controls (setting "Hide on-screen controls when a controller is used"); a touch on the screen brings them back
-    /// until the controller is used again.
+    /// A controller, keyboard or mouse in use hides the on-screen controls (settings "Hide on-screen controls when a controller is used" and "... a keyboard or mouse");
+    /// a touch on the screen brings them back until it is used again.
     private var hiddenByPad = false
     private var lastTouchAt: TimeInterval = 0
     private var padWatch: Timer?
@@ -124,8 +124,12 @@ final class GameHUDView: UIView {
         let now = ProcessInfo.processInfo.systemUptime
         let enabled = EngineOptions.value("env.PORTHOLE_HIDE_TOUCH_ON_PAD") != "0"
         let activity = PadInput.shared.lastActivity
-        let want = enabled && lastState == .running && layoutEditor.isHidden && activity > 0 && activity > lastTouchAt && now - activity < 3600
-            && !GCController.controllers().isEmpty
+        let padWant = enabled && activity > 0 && activity > lastTouchAt && now - activity < 3600 && !GCController.controllers().isEmpty
+        // A keyboard or mouse in use does the same (a touch brings the controls back until the next key or mouse movement).
+        let keysActivity = HardwareInput.shared.lastActivity
+        let keysWant = EngineOptions.value("env.PORTHOLE_HIDE_TOUCH_ON_KEYS") != "0" && keysActivity > 0 && keysActivity > lastTouchAt && now - keysActivity < 3600
+            && (HardwareInput.shared.keyboardConnected || HardwareInput.shared.mouseConnected)
+        let want = lastState == .running && layoutEditor.isHidden && (padWant || keysWant)
         if want != hiddenByPad { hiddenByPad = want; refreshControlVisibility() }
     }
     override func didMoveToWindow() {
@@ -797,7 +801,7 @@ final class GameHUDView: UIView {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: hide)
             } else { message.isHidden = true }
         case .ended: message.text = "Game ended. To play another game, close Porthole and open it again. The Home screen has a button for that."; message.isHidden = false; back.isHidden = false
-        default: message.text = "Starting..."; message.isHidden = false; back.isHidden = true
+        default: message.isHidden = true; back.isHidden = true        // starting: the launch screen says what is happening; no line of text over the top of the screen
         }
     }
 }

@@ -73,11 +73,14 @@ enum GuideCatalog {
         GuideStep(symbol: "gamecontroller.fill", title: "Play",
                   text: "The picture, speed, sound and controls every game starts with. Each game's own page can change any of them for that game only.",
                   art: .settings, action: .openSettings(.play)),
-        GuideStep(symbol: "bolt.horizontal.fill", title: "Stores and JIT",
-                  text: "Your store sign-ins and the connection that lets games run fast. If a game will not start, look here first.",
-                  art: .settings, action: .openSettings(.accounts)),
+        GuideStep(symbol: "storefront.fill", title: "Stores",
+                  text: "Your Steam, Epic, GOG, itch.io, Amazon and EA sign-ins, and each store's library and downloads.",
+                  art: .settings, action: .openSettings(.stores)),
+        GuideStep(symbol: "bolt.horizontal.fill", title: "JIT and connection",
+                  text: "The connection that lets games run fast: how JIT is switched on, the tunnel, your VPN and cellular data. If a game will not start, look here first.",
+                  art: .settings, action: .openSettings(.jit)),
         GuideStep(symbol: "wrench.and.screwdriver.fill", title: "Advanced and Report a problem",
-                  text: "Advanced holds the engine options and the log. Report a problem sends the log to the developer when something goes wrong.",
+                  text: "Advanced holds the engine options, Windows components such as .NET, and the log. Search at the top of Settings finds any setting by name. Report a problem sends the log to the developer when something goes wrong.",
                   art: .settings, action: .openSettings(.report)),
     ])
 

@@ -10,6 +10,7 @@ struct StoreBadge: View {
 
     private var asset: String {
         switch store {
+        case .ea: ""
         case .steam: "StoreSteam"
         case .epic: "StoreEpic"
         case .gog: "StoreGog"
@@ -19,9 +20,16 @@ struct StoreBadge: View {
     }
 
     var body: some View {
-        Image(asset).resizable().interpolation(.high).scaledToFit()
+        if store == .ea {
+            // No logo of EA's is shipped: a plain "EA" mark in the store's colour says where the game is from.
+            Text("EA").font(.system(size: size * 0.52, weight: .black, design: .rounded)).foregroundStyle(store.tint)
+                .frame(width: size, height: size).accessibilityLabel(store.title)
+        } else {
+        Image(uiImage: UIImage(named: asset) ?? Bundle.main.path(forResource: asset, ofType: "png").flatMap { UIImage(contentsOfFile: $0) } ?? UIImage())   // the loose file is for the UI preview app, which has no asset catalog
+        .resizable().interpolation(.high).scaledToFit()
         .frame(width: size, height: size)
         .accessibilityLabel(store.title)
+        }
     }
 }
 

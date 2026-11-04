@@ -5,8 +5,7 @@
 import Foundation
 
 // Valve's text KeyValues format is used for library folders and app manifests.
-// Keep this reader independent of the UI. SteamLibraryFolders serializes only
-// the explicitly registered library metadata; discovery remains read-only.
+// Keep this reader independent of the UI and never write Steam's own files.
 indirect enum SteamValue: Sendable {
     case text(String)
     case object([String: SteamValue])

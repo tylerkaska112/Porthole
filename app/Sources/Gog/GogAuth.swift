@@ -101,6 +101,13 @@ final class GogAuth: ObservableObject {
         return tokens.accessToken
     }
 
+    /// The signed-in session's refresh token, after making sure it still works (for the Galaxy service's game token; it is never logged).
+    func hostRefreshToken() async throws -> String {
+        _ = try await validAccessToken()
+        guard let tokens = store.loadTokens() else { throw GogAuthError.notSignedIn }
+        return tokens.refreshToken
+    }
+
     func signOut() {
         store.delete()
         accountName = nil

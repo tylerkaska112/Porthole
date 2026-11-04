@@ -2,7 +2,7 @@
 // Copyright (C) 2026 The Porthole authors. See LICENSE.
 import SwiftUI
 
-/// A text box as a row (the keyboard comes up when it is pressed). Typing needs a keyboard, so this is the one kind of row a controller cannot finish on its own.
+/// A text box as a row. Pressed with a tap, the iOS keyboard comes up; pressed with A on a controller, the pad keyboard opens instead.
 struct TextFieldRow: View {
     let id: AnyHashable
     var symbol: String?
@@ -14,17 +14,23 @@ struct TextFieldRow: View {
     var keyboard: UIKeyboardType = .default
     @Binding var text: String
     @FocusState private var focused: Bool
+    @State private var padOpen = false
 
     var body: some View {
-        RowBase(id: id, symbol: symbol, title: title, info: info, action: { focused = true }) {
+        RowBase(id: id, symbol: symbol, title: title, info: info, action: { if TextEntry.padMode { padOpen = true } else { focused = true } }) {
             Group {
-                if secure { SecureField(placeholder, text: $text) } else { TextField(placeholder, text: $text) }
+                if TextEntry.padMode {
+                    // A plain line while a controller is connected (see TextEntry.padMode): A or a tap opens the pad keyboard, nothing raises iOS's.
+                    Text(text.isEmpty ? placeholder : (secure ? String(repeating: "\u{2022}", count: text.count) : text)).lineLimit(1)
+                        .foregroundStyle(text.isEmpty ? Theme.textDim : Theme.accent)
+                } else if secure { SecureField(placeholder, text: $text) } else { TextField(placeholder, text: $text) }
             }
             .focused($focused)
             .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(keyboard)
             .font(monospaced ? .system(size: 14, design: .monospaced) : .system(size: 15, weight: .semibold, design: .rounded))
             .foregroundStyle(Theme.accent).multilineTextAlignment(.trailing).frame(maxWidth: 260)
         }
+        .sheet(isPresented: $padOpen) { PadKeyboardSheet(title: title, secure: secure, monospaced: monospaced, text: $text) }
     }
 }
 

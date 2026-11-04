@@ -1,7 +1,7 @@
 # Porthole
 
 Porthole runs Windows PC games on iPhone and iPad. It is the app around the [Madeira](https://github.com/willfaust/Madeira) runtime (Wine, FEX
-and DXMT), with a game library, sign-in and downloads for Steam, Epic Games, GOG and itch.io, JIT set-up, on-device updating, and an optional community compatibility list
+and DXMT), with a game library, sign-in and downloads for Steam, Epic Games, GOG, itch.io, Amazon Games and the EA app, JIT set-up, on-device updating, and an optional community compatibility list
 ([portholehq.site](https://portholehq.site)).
 
 **Status: early.** It is made and tested by one person on a few devices. Plenty of games do not run, and some that do run need tweaking.
@@ -23,19 +23,21 @@ Read [what to expect](#what-to-expect) before you spend an evening on it.
     expires after about a week. See [Install](docs/INSTALL.md#fewer-app-ids-optional) for the lighter install.
 - A way to switch on **JIT** for the app (see [Install](docs/INSTALL.md)). Porthole can do it by itself after a one-time "pairing file";
   on iOS 27 or later the device can make that file on its own, on earlier versions it is made once on a computer.
-- Games you own: from Steam, Epic Games, GOG or itch.io (sign in inside the app), or game folders and installers you copy in from the Files app.
+- Games you own: from Steam, Epic Games, GOG, itch.io, Amazon Games or the EA app (sign in inside the app), or game folders and installers you copy in from the Files app.
 
 Step by step: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ## What Porthole does
 
 - **Library:** your games with art, play time, per-game settings and an optional on-screen controller layout.
-- **Stores:** sign in to Steam (password with Steam Guard, or a QR code), Epic Games or GOG (on the store's own page, so Porthole never sees your
+- **Stores:** sign in to Steam (password with Steam Guard, or a QR code), Epic Games, GOG, Amazon Games or EA (on the store's own page, so Porthole never sees your
   password) or itch.io (with a personal API key you make there), see the games you own, and download them straight to the device. Downloads adapt
   to your connection and resume after interruptions. One **Downloads** page shows what every store is downloading, with pause, resume and
   "download now"; its round button stays at the bottom right of the Stores tab.
 - **Controllers:** PlayStation, Xbox and other controllers iOS supports work without setup. The on-screen controls hide while one is in use, a
   controller can act as keyboard and mouse, and each game's controller buttons can be remapped.
+- **Keyboard and mouse:** a Bluetooth or USB keyboard and a mouse or trackpad (iPad) work in games like on a PC: every key with its modifiers, five mouse buttons, the wheel,
+  the game's own cursor in menus and a locked pointer for looking around. Porthole's menu opens with a key you choose (F10 by default). See `docs/KEYBOARD_MOUSE.md`.
 - **Windows components:** many games need Microsoft's Visual C++ runtime. Porthole downloads Microsoft's own installer from Microsoft,
   checks it against a fixed fingerprint and unpacks the files itself. Nothing of Microsoft's is included in the app.
 - **JIT:** the iOS feature the speed of everything depends on. Built-in method, StikDebug, or another tool: your choice in the setup guide.
@@ -58,7 +60,7 @@ Step by step: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 Everything you set up stays on the device. Store sign-ins (tokens, never passwords) are kept in the iOS Keychain, for this device only, and are sent
 only to the store itself. Porthole goes online to download what you ask for (Microsoft's components, Valve's client files, your games from the
-four stores, updates). A build made with a community server address (a build setting; none is in this source) also asks that server which
+stores you signed in to, updates). A build made with a community server address (a build setting; none is in this source) also asks that server which
 update is newest, which compatibility badges apply to your games and which shared key binds exist, and sends something only when you choose to:
 a compatibility report (a random per-install key, the game, your device model and your answers) or a key-bind set you share (the same random key,
 the game and the set itself). Never your name, account or any device identifier. Details: [portholehq.site/privacy.html](https://portholehq.site/privacy.html).

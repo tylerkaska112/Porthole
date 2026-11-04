@@ -5,7 +5,7 @@ import SwiftUI
 /// A place games come from (a launcher with its own library). The Stores tab, the "all games" page and the badge on a game's card are all driven from this list, so
 /// adding a launcher later means: a case here, its drawing in `StoreBadge`, its library screen and its entries in `StoreCatalog` (all in the same few files).
 enum GameStore: String, CaseIterable, Identifiable, Hashable {
-    case steam, epic, gog, itch, amazon
+    case steam, epic, gog, itch, amazon, ea
     var id: String { rawValue }
 
     var title: String {
@@ -15,6 +15,7 @@ enum GameStore: String, CaseIterable, Identifiable, Hashable {
         case .gog: "GOG"
         case .itch: "itch.io"
         case .amazon: "Amazon Games"
+        case .ea: "EA app"
         }
     }
     var tint: Color {
@@ -24,6 +25,7 @@ enum GameStore: String, CaseIterable, Identifiable, Hashable {
         case .gog: Color(red: 0.62, green: 0.36, blue: 0.80)
         case .itch: Color(red: 0.98, green: 0.36, blue: 0.36)
         case .amazon: Color(red: 1.0, green: 0.60, blue: 0.0)
+        case .ea: Color(red: 1.0, green: 0.30, blue: 0.27)
         }
     }
 }
@@ -54,6 +56,7 @@ extension Game {
         if gogID != nil { return .gog }
         if itchID != nil { return .itch }
         if amazonID != nil { return .amazon }
+        if eaOfferID != nil { return .ea }
         if dockAppID != nil { return .steam }
         return nil
     }
@@ -81,6 +84,7 @@ struct StoreGameEntry: Identifiable, Equatable {
         case .gog: GogAuth.shared.signedIn
         case .itch: ItchAuth.shared.signedIn
         case .amazon: AmazonAuth.shared.signedIn
+        case .ea: EAAuth.shared.signedIn
         }
     }
 
@@ -91,6 +95,7 @@ struct StoreGameEntry: Identifiable, Equatable {
         case .gog: GogAuth.shared.accountName
         case .itch: ItchAuth.shared.accountName
         case .amazon: AmazonAuth.shared.accountName
+        case .ea: EAAuth.shared.accountName
         }
     }
 
@@ -171,6 +176,21 @@ struct StoreGameEntry: Identifiable, Equatable {
                     }
                 }
                 return StoreGameEntry(store: .amazon, key: game.key, title: game.title, art: game.art, status: status)
+            }
+        case .ea:
+            let installer = EAInstaller.shared
+            return EALibrary.shared.games.map { game in
+                var status = StoreGameEntry.Status.notInstalled
+                if let install = installer.installs[game.id] {
+                    switch install.state {
+                    case .installed: status = .installed
+                    case .queued: status = .queued
+                    case .active: status = .downloading(install.progress.fraction)
+                    case .paused: status = .paused
+                    case .failed(let message): status = .failed(message)
+                    }
+                }
+                return StoreGameEntry(store: .ea, key: game.id, title: game.title, art: game.art, status: status)
             }
         }
     }

@@ -1,7 +1,7 @@
 // The game engine this source builds (see tools/engine.sh). Compatibility badges belong to an engine, not to an app version.
 // Do not edit by hand: run  tools/engine.sh bump  after a change that affects how games run (a new Madeira pin, a patch, the runtime glue).
-PORTHOLE_ENGINE_MADEIRA = 279fd0f
-PORTHOLE_ENGINE_REVISION = 17
-PORTHOLE_ENGINE_ID = 279fd0f-r17
+PORTHOLE_ENGINE_MADEIRA = 3af3467
+PORTHOLE_ENGINE_REVISION = 1
+PORTHOLE_ENGINE_ID = 3af3467-r1
 // The inputs this engine was recorded from; tools/engine.sh check compares against them.
-PORTHOLE_ENGINE_INPUTS = 62ee96c82e2a48df42f6823acd00f42c8254a0778ba6994bda2f53dc582816b4
+PORTHOLE_ENGINE_INPUTS = 011792a1c3ca87dcfff02180b743e5db90a505e54fd346cfd6ecd3fe047edb51

@@ -1,0 +1,125 @@
+diff --git a/src/launch.c b/src/launch.c
+index 8ee966d..bd98488 100644
+--- a/src/launch.c
++++ b/src/launch.c
+@@ -83,6 +83,22 @@ static BOOL WINAPI on_control(DWORD control)
+ #define SH_CEG_BUSY_RETRY_MS 10000
+ typedef int32_t (__thiscall *ceg_request_fn)(void *, uint32_t, bool, bool, uint32_t *);
+ 
++/* Porthole 0014: which of the game's launch options to ask Valve's client for. The options are the numbered entries under the app's
++ * config/launch, and not every app starts at 0 (Factorio's are 1, 2, 3 and 5, so asking for option 0 fails with "entry for launch option 0 not found").
++ * The app that starts this host names the right one in MADEIRA_DOCK_LAUNCH_OPTION; unset, empty or not a plain number below 1000 means 0, as before. */
++static uint32_t launch_option_from_environment(void)
++{
++    wchar_t value[8] = {0};
++    DWORD length = GetEnvironmentVariableW(L"MADEIRA_DOCK_LAUNCH_OPTION", value, 8);
++    if (length == 0 || length >= 8) return 0;
++    uint32_t option = 0;
++    for (DWORD i = 0; i < length; i++) {
++        if (value[i] < L'0' || value[i] > L'9') return 0;
++        option = option * 10 + (uint32_t)(value[i] - L'0');
++    }
++    return option < 1000 ? option : 0;
++}
++
+ static bool wide_flag(const wchar_t *name, wchar_t expected)
+ {
+     wchar_t value[4] = {0};
+@@ -167,6 +183,67 @@ static int prepare_custom_binaries(HMODULE module, void *client_user,
+     return 49;
+ }
+ 
++/* Porthole 0075: start a program of the game's own, next to Valve's signed-in client, instead of asking Valve's client to launch the game.
++ * Some games cannot be started the way Valve lists them (Rust: its listed program starts Easy Anti-Cheat, which does not run here; its own
++ * program, RustClient.exe, plays on servers that do not require it). Everything before this point is unchanged and still gates it: the
++ * authenticated session, the entitlement to the app and the check that the app's install folder is the one the app expects. The program must be
++ * a .exe inside that verified folder; anything else is refused. It runs with the Steam discovery values published (the caller did that), so its
++ * Steam library finds this client, and with SteamAppId / SteamGameId set to the app, the way Valve's client sets them for a game it starts.
++ * The client's callbacks are served until the program ends. MADEIRA_DOCK_PROGRAM = the program's Windows path; MADEIRA_DOCK_PROGRAM_ARGS =
++ * optional arguments. Unset = the normal LaunchApp route. Valve's licence and DRM checks are not skipped or replaced: this only chooses which of
++ * the game's own programs starts. */
++static int run_own_program(const wchar_t *program, const wchar_t *install_dir, uint32_t appid,
++                           const struct sh_api *api, const struct sh_observer *o, int32_t pipe)
++{
++    static wchar_t full[32768], command[32768], folder[32768], args[4096];
++    size_t install_len = wcslen(install_dir);
++    DWORD length = GetFullPathNameW(program, 32768, full, NULL);
++    if (!length || length >= 32768) { o->event("launch-program-refused", 1); return 50; }
++    size_t full_len = wcslen(full);
++    if (full_len <= install_len + 5 || _wcsnicmp(full, install_dir, install_len) != 0 ||
++        (full[install_len] != L'\\' && full[install_len] != L'/') || _wcsicmp(full + full_len - 4, L".exe") != 0) {
++        o->event("launch-program-refused", 2);   /* not inside the verified install folder, or not an .exe */
++        return 50;
++    }
++    DWORD attributes = GetFileAttributesW(full);
++    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) { o->event("launch-program-refused", 3); return 50; }
++    wcscpy(folder, full);
++    for (size_t i = full_len; i > 0; --i) if (folder[i - 1] == L'\\' || folder[i - 1] == L'/') { folder[i - 1] = 0; break; }
++    args[0] = 0;
++    length = GetEnvironmentVariableW(L"MADEIRA_DOCK_PROGRAM_ARGS", args, 4096);
++    if (length >= 4096) args[0] = 0;
++    if (swprintf(command, 32768, L"\"%ls\"%ls%ls", full, args[0] ? L" " : L"", args) < 0) { o->event("launch-program-refused", 4); return 50; }
++    wchar_t id[16];
++    swprintf(id, 16, L"%u", (unsigned)appid);
++    SetEnvironmentVariableW(L"SteamAppId", id);
++    SetEnvironmentVariableW(L"SteamGameId", id);
++    STARTUPINFOW startup = {0};
++    startup.cb = sizeof(startup);
++    PROCESS_INFORMATION process = {0};
++    if (!CreateProcessW(full, command, NULL, NULL, FALSE, 0, NULL, folder, &startup, &process)) {
++        o->event("launch-program-start-failed", (int32_t)GetLastError());
++        return 51;
++    }
++    CloseHandle(process.hThread);
++    o->event("launch-program-started", 1);
++    o->event("launch-client-error", 0);   /* what the app waits for to say "Steam started the game" */
++    int result = 0;
++    for (;;) {
++        for (unsigned batch = 0; batch < 64; ++batch) {
++            struct sh_callback cb = {0};
++            if (!api->get_callback(pipe, &cb)) break;
++            api->free_callback(pipe);
++        }
++        DWORD wait = WaitForSingleObject(process.hProcess, 50);
++        if (wait == WAIT_OBJECT_0) break;
++        if (wait != WAIT_TIMEOUT) { result = 52; break; }
++        if (InterlockedCompareExchange(&interrupted, 0, 0)) { result = 52; break; }
++    }
++    CloseHandle(process.hProcess);
++    o->event("launch-game-ended", 1);
++    return result;
++}
++
+ int sh_launch(HMODULE module, void *engine, void *client_user,
+               const struct sh_api *api, const struct sh_observer *o,
+               int32_t pipe, int32_t user, uint64_t steamid, uint32_t appid,
+@@ -182,8 +259,11 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+     uint32_t launch_option = 0;
+     SetLastError(ERROR_SUCCESS);
+     DWORD option_length = GetEnvironmentVariableA("MADEIRA_STEAM_HOST_LAUNCH_OPTION", option_text, sizeof(option_text));
+-    if ((!option_length && GetLastError() != ERROR_ENVVAR_NOT_FOUND) || option_length >= sizeof(option_text) ||
+-        (option_length && !sh_parse_launch_option(option_text, &launch_option))) {
++    if (!option_length && GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
++        /* Porthole 0014: the app names the launch option in its own variable (see launch_option_from_environment). Upstream's variable wins when set. */
++        launch_option = launch_option_from_environment();
++    } else if (!option_length || option_length >= sizeof(option_text) ||
++               !sh_parse_launch_option(option_text, &launch_option)) {
+         o->event("launch-option-invalid", 1);
+         return 45;
+     }
+@@ -286,6 +366,15 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+         !publish(&values[1], (DWORD)steamid) || !publish(&values[2], GetCurrentProcessId())) goto done;
+     o->event("launch-client-discovery-published", 1);
+     SetConsoleCtrlHandler(on_control, TRUE);
++    {
++        /* Porthole 0075: the app named a program of the game to start next to the client (see run_own_program). */
++        static wchar_t own_program[32768];
++        DWORD own_length = GetEnvironmentVariableW(L"MADEIRA_DOCK_PROGRAM", own_program, 32768);
++        if (own_length && own_length < 32768) {
++            result = run_own_program(own_program, normalized, appid, api, o, pipe);
++            goto done;
++        }
++    }
+     uint64_t gameid = appid;
+     uint64_t call = ((launch_fn)(*(void ***)manager)[2])(manager, &gameid, launch_option, 0, user_arguments);
+     o->event("launch-request-submitted", call != 0);

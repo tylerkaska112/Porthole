@@ -6,7 +6,7 @@ import LauncherCore
 private typealias SecTaskRef = OpaquePointer
 
 @_silgen_name("SecTaskCopyValueForEntitlement")
-private func _copyEntitlement(_ task: SecTaskRef, _ entitlement: NSString, _ error: NSErrorPointer) -> CFTypeRef?
+private func _copyEntitlement(_ task: SecTaskRef, _ entitlement: NSString, _ error: NSErrorPointer) -> Unmanaged<CFTypeRef>?
 
 @_silgen_name("SecTaskCreateFromSelf")
 private func _taskFromSelf(_ allocator: CFAllocator?) -> SecTaskRef?
@@ -21,6 +21,7 @@ enum InstallCheck {
     static let helperName = "F4JITHelper.appex"
     static let tunnelName = "F4Tunnel.appex"
     static let activityName = "F4Activity.appex"
+    static let memoryHostName = "F4MemoryHost.appex"
 
     // MARK: Which extensions are inside
 
@@ -41,13 +42,43 @@ enum InstallCheck {
     /// The Live Activity extension (the download card with its Pause and Cancel buttons on the lock screen).
     static var hasActivityExtension: Bool { exists(activityName) }
 
+    /// The donor-RAM extension (extra memory for a game that needs more than the app's own limit; Settings > Engine options > Donor memory).
+    static var hasMemoryHost: Bool { exists(memoryHostName) }
+
+    enum DonorMemory: Equatable {
+        case ready
+        /// Left out of this install (signed without it to save an App ID).
+        case missing
+        /// Inside the app but iOS will not run it: no signature of its own, or the profile ran out.
+        case unusable(String)
+    }
+
+    /// Whether Settings > Engine options > Donor memory can work in this install: the extension is inside, carries its own profile and iOS knows it by its bundle id.
+    static var donorMemory: DonorMemory {
+        guard hasMemoryHost else { return .missing }
+        guard let bundle = extensionBundle(memoryHostName) else { return .unusable("its folder cannot be read") }
+        guard let ext = profile(in: bundle) else { return .unusable("it was not signed with a profile of its own") }
+        if ext.isExpired { return .unusable("its profile has expired") }
+        if bundle.bundleIdentifier != (Bundle.main.bundleIdentifier ?? "") + ".MemoryHost" { return .unusable("its bundle id does not match the app's") }
+        return .ready
+    }
+
+    /// One line for the Donor memory row.
+    static var donorMemoryNote: String {
+        switch donorMemory {
+        case .ready: "Memory Host extension found: ready."
+        case .missing: "No Memory Host extension in this install: this does nothing here."
+        case .unusable(let why): "Memory Host extension found, but iOS will not run it (\(why))."
+        }
+    }
+
     /// Extensions that were left out of this install: an update has to be signed the same way, so they are not put back.
     static var missingExtensions: [String] {
-        [(helperName, hasJITHelper), (tunnelName, hasTunnel), (activityName, hasActivityExtension)].filter { !$0.1 }.map(\.0)
+        [(helperName, hasJITHelper), (tunnelName, hasTunnel), (activityName, hasActivityExtension), (memoryHostName, hasMemoryHost)].filter { !$0.1 }.map(\.0)
     }
 
     /// How many App IDs this install uses: the app, plus one for each extension inside.
-    static var appIDCount: Int { 1 + (hasJITHelper ? 1 : 0) + (hasTunnel ? 1 : 0) + (hasActivityExtension ? 1 : 0) }
+    static var appIDCount: Int { 1 + (hasJITHelper ? 1 : 0) + (hasTunnel ? 1 : 0) + (hasActivityExtension ? 1 : 0) + (hasMemoryHost ? 1 : 0) }
 
     enum Layout { case full, noTunnel, noHelper, minimal }
 
@@ -85,7 +116,7 @@ enum InstallCheck {
     // MARK: What the signature carries
 
     private static func entitlement(_ key: String) -> Any? {
-        guard let task = _taskFromSelf(nil), let value = _copyEntitlement(task, key as NSString, nil) else { return nil }
+        guard let task = _taskFromSelf(nil), let value = _copyEntitlement(task, key as NSString, nil)?.takeRetainedValue() else { return nil }
         return value
     }
 
@@ -189,6 +220,17 @@ enum InstallCheck {
                              detail: "Downloads show iOS's own download card (percentage, size and speed) instead of the one with Pause and Cancel buttons. It saves an App ID."))
         }
 
+        switch donorMemory {
+        case .ready:
+            out.append(.init(id: "memoryhost", level: .good, title: "Donor memory can start", detail: "The Memory Host extension is inside and signed."))
+        case .missing:
+            out.append(.init(id: "memoryhost-absent", level: .info, title: "No donor memory extension inside this install",
+                             detail: "Settings > Advanced > Engine options > Memory > Donor memory does nothing in this install. It saves an App ID."))
+        case .unusable(let why):
+            out.append(.init(id: "memoryhost", level: .warning, title: "Donor memory cannot start",
+                             detail: "The Memory Host extension is inside, but \(why), so iOS will not run it. Sign Porthole again, or install without it to save an App ID."))
+        }
+
         // A free account's profile lasts seven days.
         if let end = appProfile?.expiration {
             let days = Calendar.current.dateComponents([.day], from: Date(), to: end).day ?? 0
@@ -211,7 +253,7 @@ enum InstallCheck {
 
     /// One log line per fact, written at start so a bug report shows how the app was installed and signed.
     static func logReport() {
-        LogStore.shared.log("[install] \(layoutTitle): JIT helper \(hasJITHelper ? "yes" : "no"), tunnel \(hasTunnel ? "yes" : "no"), download card \(hasActivityExtension ? "yes" : "no")")
+        LogStore.shared.log("[install] \(layoutTitle): JIT helper \(hasJITHelper ? "yes" : "no"), tunnel \(hasTunnel ? "yes" : "no"), download card \(hasActivityExtension ? "yes" : "no"), donor memory \(hasMemoryHost ? "yes" : "no")")
         for f in findings() where f.level != .info {
             let level: LogStore.LogEntry.Level = f.level == .problem ? .error : (f.level == .good ? .success : .info)
             LogStore.shared.log("[install] \(f.level == .good ? "ok" : f.level == .problem ? "PROBLEM" : "note"): \(f.title)", level: level)

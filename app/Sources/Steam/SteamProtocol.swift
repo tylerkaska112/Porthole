@@ -234,8 +234,58 @@ enum Deflate {
 // MARK: - LZMA (Steam's "VZip" chunks)
 
 enum LZMA {
+    /// The system's own liblzma (every iPhone and iPad has it, compiled and tuned by Apple; the SDK ships it without headers, so the three calls are looked up by name).
+    /// The Swift decoder below is about 4 to 6 times slower: unpacking chunks used up most of the processor while a game downloaded, which held the download far below the connection.
+    private struct Native {
+        typealias AloneDecoder = @convention(c) (UnsafeMutableRawPointer, UInt64) -> Int32
+        typealias Code = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
+        typealias End = @convention(c) (UnsafeMutableRawPointer) -> Void
+        let aloneDecoder: AloneDecoder, code: Code, end: End
+        static let shared: Native? = {
+            var handle: UnsafeMutableRawPointer?
+            for path in ["/usr/lib/liblzma.5.dylib", "/usr/lib/liblzma.dylib", "liblzma.5.dylib"] { handle = dlopen(path, RTLD_NOW); if handle != nil { break } }
+            guard let handle, let a = dlsym(handle, "lzma_alone_decoder"), let c = dlsym(handle, "lzma_code"), let e = dlsym(handle, "lzma_end") else { return nil }
+            return Native(aloneDecoder: unsafeBitCast(a, to: AloneDecoder.self), code: unsafeBitCast(c, to: Code.self), end: unsafeBitCast(e, to: End.self))
+        }()
+    }
+    /// Turn it off to use the Swift decoder everywhere (the tests compare the two).
+    nonisolated(unsafe) static var useSystemLibrary = true
+
     /// LZMA with the 5 properties bytes given separately and the output size known: the same stream 7-Zip's LZMA SDK decodes.
     static func decode(properties: [UInt8], input: [UInt8], start: Int, outputSize: Int) -> [UInt8]? {
+        if useSystemLibrary, let native = Native.shared, let out = decodeNative(native, properties: properties, input: input, start: start, outputSize: outputSize) { return out }
+        return decodeSwift(properties: properties, input: input, start: start, outputSize: outputSize)
+    }
+
+    /// A raw LZMA1 stream has no end marker, so it is wrapped as an ".lzma alone" stream, whose 13-byte header (properties, then the size) lets liblzma know where it ends.
+    private static func decodeNative(_ lib: Native, properties: [UInt8], input: [UInt8], start: Int, outputSize: Int) -> [UInt8]? {
+        guard properties.count == 5, outputSize > 0, outputSize < 1 << 30, start >= 0, start < input.count else { return nil }
+        let payload = input.count - start
+        var stream = [UInt8](repeating: 0, count: 13 + payload)
+        for i in 0..<5 { stream[i] = properties[i] }
+        for i in 0..<8 { stream[5 + i] = UInt8((UInt64(outputSize) >> (8 * UInt64(i))) & 0xFF) }
+        stream.withUnsafeMutableBufferPointer { $0.baseAddress!.advanced(by: 13).update(from: input.withUnsafeBufferPointer { $0.baseAddress!.advanced(by: start) }, count: payload) }
+        var out = [UInt8](repeating: 0, count: outputSize)
+        // lzma_stream, by offset (next_in 0, avail_in 8, total_in 16, next_out 24, avail_out 32, total_out 40); the rest of its 136 bytes stays zero.
+        let state = UnsafeMutableRawPointer.allocate(byteCount: 256, alignment: 8)
+        defer { state.deallocate() }
+        state.initializeMemory(as: UInt8.self, repeating: 0, count: 256)
+        guard lib.aloneDecoder(state, UInt64.max) == 0 else { return nil }
+        defer { lib.end(state) }
+        let result: Int32 = stream.withUnsafeBufferPointer { src in
+            out.withUnsafeMutableBufferPointer { dst in
+                state.storeBytes(of: src.baseAddress, toByteOffset: 0, as: UnsafePointer<UInt8>?.self)
+                state.storeBytes(of: src.count, toByteOffset: 8, as: Int.self)
+                state.storeBytes(of: dst.baseAddress, toByteOffset: 24, as: UnsafeMutablePointer<UInt8>?.self)
+                state.storeBytes(of: dst.count, toByteOffset: 32, as: Int.self)
+                return lib.code(state, 3)                                  // LZMA_FINISH
+            }
+        }
+        guard result == 1, state.load(fromByteOffset: 40, as: UInt64.self) == UInt64(outputSize) else { return nil }          // LZMA_STREAM_END, and every byte produced
+        return out
+    }
+
+    static func decodeSwift(properties: [UInt8], input: [UInt8], start: Int, outputSize: Int) -> [UInt8]? {
         guard properties.count >= 5, outputSize >= 0, outputSize < 1 << 30 else { return nil }
         var d = properties[0]
         guard d < 9 * 5 * 5 else { return nil }

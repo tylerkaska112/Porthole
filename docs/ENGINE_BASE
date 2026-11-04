@@ -1,0 +1,3 @@
+5fda6a0e9543e5de1df010aff35748ab913fd0d9
+# The Madeira commit the PUBLIC source records for vendor/Madeira (willfaust/Madeira). The engine Porthole ships is this commit plus patches/0172-0176 (see docs/SOURCE.md);
+# the working tree's own gitlink is a local merge commit (3af3467) that exists in no public repository. tools/export_public.sh writes this commit into the public tree instead.

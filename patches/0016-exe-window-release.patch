@@ -10,10 +10,10 @@
  
      // madeira-jit.js in Copy Bundle Resources is the only script source.
  
-@@ -274,8 +277,9 @@
-         // against ends at +117MB; ntdll hands the window to the first fixed map
-         // of >=64MB that fits, and reads the size from WINE_IOS_EXE_WINDOW.
-         let exeWinSize: vm_address_t = 0x8000000           // 128MB
+@@ -439,8 +442,9 @@
+             guard mb > 128 else { return 0 }
+             return min(mb, 960)                             // the window must end below 0x180000000
+         }()
 +        var windowReleased = false          // Porthole 0016: true once the window was given back on purpose; then a pool may cover 0x140000000
          func overlapsExeWindow(_ base: vm_address_t, _ len: vm_address_t) -> Bool {
 -            return base < exeWinBase + exeWinSize && base + len > exeWinBase
@@ -21,7 +21,7 @@
          }
          let skipWindow = (ProcessInfo.processInfo.environment["MADEIRA_NO_EXE_WINDOW"].map { $0 != "0" } ?? false)
          var windowHeld = false
-@@ -330,6 +334,21 @@
+@@ -495,6 +499,21 @@
              }
          }
  

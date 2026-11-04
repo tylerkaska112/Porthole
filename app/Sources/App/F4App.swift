@@ -8,6 +8,7 @@ struct F4App: App {
     @State private var updates = UpdateService()
 
     init() {
+        PointerScrollEverywhere.install()          // every scroll view takes a mouse: wheel, trackpad and press-and-drag
         OnDevicePairing.registerBackgroundTask()
         // The download card's buttons run here, possibly before any window exists.
         DownloadActivityBridge.handler = { action, store in

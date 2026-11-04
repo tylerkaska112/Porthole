@@ -1,5 +1,1503 @@
 [
   {
+    "version": "1.2.131",
+    "build": "683",
+    "summary": "itch.io games that come as a .rar now install.",
+    "added": [
+      "itch.io games whose download is a .rar archive (RAR 4 and RAR 5), or holds a .rar inside a .zip, are unpacked and installed like .zip and .7z ones. A password-protected .rar, or one split into several parts, says so instead of failing."
+    ],
+    "changed": [],
+    "fixed": [
+      "A .rar download from itch.io was either refused (\"cannot unpack yet\") or placed in the game folder as a single file instead of being unpacked."
+    ]
+  },
+  {
+    "version": "1.2.130",
+    "build": "682",
+    "summary": "Red Dead Redemption 2 writes a smaller log.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 no longer asks Social Club's browser for its extra information log, which was only there to chase a problem and made logs larger."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.0",
+    "build": "681",
+    "summary": "Autumn Tide: keyboard and mouse in games, the whole app on a controller, the EA store, a new look and a new game engine.",
+    "added": [
+      "A keyboard and a mouse or trackpad (iPad) work in games: every key with the modifiers, five mouse buttons and the wheel, the game's own cursor in menus, a locked pointer for looking around, and your own key for Porthole's menu (F10 by default). The mouse wheel and press-and-drag scroll every screen.",
+      "The whole app works with a controller: an on-screen keyboard you drive with the D-pad, a fixed starting place on every screen, and live button hints.",
+      "The EA app joins Steam, Epic Games, GOG, itch.io and Amazon Games as a store.",
+      "A new look for Home, Stores, game pages, the launch screen, setup, Reports, Settings (with search) and the performance overlay.",
+      "Optional Donor memory for big games, gyro aim and turbo, sharing a game's setup, and .7z installs for itch.io."
+    ],
+    "changed": [
+      "A new game engine: Madeira's latest work is merged in, so more games can run. Compatibility badges start again at \"Not yet tested\" for it.",
+      "Steam is steadier and faster: no random sign-outs, downloads of 160-170 MB/s in testing, and sizes that add up.",
+      "Game reports are sent with the game's log and checked before they appear."
+    ],
+    "fixed": [
+      "Final Fantasy Resonance, Celeste and other .NET Framework games now run."
+    ]
+  },
+  {
+    "version": "1.2.129",
+    "build": "680",
+    "summary": "The mouse wheel scrolls every screen again.",
+    "added": [
+      "Every scroll view in the app takes a mouse: press and drag scrolls it, the wheel and trackpad scroll it as iPadOS does, and shelves that only run sideways follow the wheel's up-and-down turn."
+    ],
+    "changed": [],
+    "fixed": [
+      "1.2.128 made the mouse wheel stop scrolling most screens (Settings, game pages, stores, sheets): the wheel handler added for Home's shelf was attached to every scroll container and competed with its own scrolling. It now acts only on views that scroll sideways and nothing else."
+    ]
+  },
+  {
+    "version": "1.2.128",
+    "build": "679",
+    "summary": "Scroll the game shelf with a mouse, choose your own menu key, and more keyboard and mouse polish.",
+    "added": [
+      "Home's shelf of games scrolls with a mouse: the wheel scrolls it sideways and you can press and drag it. A big library was out of reach before. Click-and-drag also scrolls the other lists and the tab row.",
+      "Settings > Engine options > Keyboard and mouse > Keys for Porthole: choose the key (or key combination) that opens Porthole's menu in a game (default F10) and the one that locks or frees the pointer (default Ctrl+Alt+P). Tap a row, press the key. Ctrl+Alt+M and Ctrl+Alt+P always work too. The first few games with a keyboard say which key opens the menu.",
+      "Scroll direction: follow iPadOS or reversed, for games and the shelf on Home.",
+      "Hold a key to repeat it: Backspace, Delete, the arrows, Home, End and Page Up/Down repeat after half a second in games (a choice: all keys, or off).",
+      "Keyboard layout for typing: follow the keyboard's letters instead of US key positions, for typing on a French, German or other keyboard (opt-in).",
+      "Each game has its own Mouse speed and 'Always use the mouse to look' on its page, under Engine.",
+      "A notice when iPadOS will not lock the pointer (Porthole must fill the screen, not Split View or Stage Manager).",
+      "Right-click a game on Home has Details as well as Play; with a mouse, a double-click plays the game and a single click opens its page."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.127",
+    "build": "678",
+    "summary": "Backspace in a search box no longer goes back.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "With a keyboard, Backspace, Space, Return and the arrows in a text box (searching for a game) moved around or went back a screen instead of editing the text. While a text box has the keyboard they are the text's."
+    ]
+  },
+  {
+    "version": "1.2.126",
+    "build": "677",
+    "summary": "A mouse only opens things when you click.",
+    "added": [],
+    "changed": [
+      "With a mouse or trackpad, resting the pointer over a Settings page or a game tile only highlights it; the page opens and the game shows in the hero when you click (a controller still opens them as it moves)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.125",
+    "build": "676",
+    "summary": "Escape no longer closes the game's screen.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Pressing Escape on a keyboard in a game showed the game library for a moment and then went back to the game: UIKit also acted on the key and dismissed the full-screen cover the game runs in, and the app put it back. While a game has the keyboard, its UIKit key presses are now swallowed and the cover cannot be dismissed by a key."
+    ]
+  },
+  {
+    "version": "1.2.124",
+    "build": "675",
+    "summary": "Keyboard and mouse: the game was never given focus.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Keyboard and mouse in games did nothing: the game screen is shown as a full-screen cover, and the focus check took any presented screen for a sheet over the game, so keys and clicks never reached it. Only a screen over the game's own counts now. The log says why the game does not have focus (`[hwinput] keyboard focus: elsewhere (...)`)."
+    ]
+  },
+  {
+    "version": "1.2.123",
+    "build": "674",
+    "summary": "A keyboard and a mouse or trackpad work in games.",
+    "added": [
+      "A Bluetooth or USB keyboard works in a game like on a PC: every key with its own press and release, Shift, Ctrl, Alt and Command (the Windows key) as keys, the keypad, function keys and arrows. Typing into a program's own text fields works, and Command-V pastes the iPad's clipboard text.",
+      "A mouse or trackpad on iPad: the game's own cursor follows the pointer in menus, left, right, middle, back and forward buttons and the wheel work, and a game that hides its cursor to look around gets the mouse's movement with the pointer locked to the game, so the camera keeps turning at the screen edges. (Ported from Madeira's own hardware input layer; nothing here has run on a device yet.)",
+      "Ctrl+Alt+P locks or frees the pointer by hand, Ctrl+Alt+M opens Porthole's in-game menu. Keys reach the game only while it is in front: not while a sheet, alert or text field of Porthole has the keyboard, and everything held is released when focus leaves.",
+      "Settings > Engine options > Keyboard and mouse: turn it off, mouse speed, always use the mouse to look, the pointer lock, focus, hiding the on-screen controls while a keyboard or mouse is used, and extra logging.",
+      "Outside a game and while the in-game menu is open the keyboard still moves around Porthole's own screens."
+    ],
+    "changed": [
+      "The on-screen controls step aside while a keyboard or mouse is being used (as they do for a controller); a touch brings them back until the next key or mouse movement."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.122",
+    "build": "673",
+    "summary": "Red Dead Redemption 2: Social Club page sharing back on.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Red Dead Redemption 2: the 1.2.121 experiment (Social Club's IPC split off) stopped the Rockstar launcher's own page from loading, so it is back on, as in 1.2.120."
+    ]
+  },
+  {
+    "version": "1.2.121",
+    "build": "672",
+    "summary": "Red Dead Redemption 2: experiment with Social Club's page sharing.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 starts with Social Club's IPC split switched off (MADEIRA_SC_IPC_SPLIT=0), to find out whether the game's in-game Social Club page can finish loading without it. Experiment for this game only."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.120",
+    "build": "671",
+    "summary": "Red Dead Redemption 2: log capture fixed.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Red Dead Redemption 2: 1.2.119 asked for a longer game-log mirror than the engine accepts (4000 lines is the most; more falls back to 400), so the log stopped before the game's Social Club phase. Back to 4000, with Chromium's own log from Social Club's helper kept on."
+    ]
+  },
+  {
+    "version": "1.2.119",
+    "build": "670",
+    "summary": "Red Dead Redemption 2: more logging while we chase the Social Club overlay delay.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 now writes Chromium's own log from Social Club's web helper and keeps up to 30000 log lines. In the game, Social Club's page can take over two minutes to appear and Rockstar gives up after 130 seconds; the extra log should show why. Nothing else changes."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.118",
+    "build": "669",
+    "summary": "Rockstar launcher works with the new Social Club.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Rockstar Games Launcher (Red Dead Redemption 2, GTA V): Social Club updated to 2.4.0.296 on 3 November and the launcher then stopped at 'timed out loading both its online and offline content', because the engine only knew the previous Social Club build. The engine now recognises both. Needs a new engine, so compatibility badges start again for it."
+    ]
+  },
+  {
+    "version": "1.2.117",
+    "build": "668",
+    "summary": "Keep a game running in the background (experimental).",
+    "added": [
+      "Settings > Play > Performance > Keep a game running in the background (off by default; restart Porthole after changing it): iOS pauses an app a few seconds after you switch apps or lock the screen, which stops a game mid-load. With this on, a running game keeps going for 2, 5, 10 or 30 minutes with its sound muted, its CPU held to a share of one core (iOS ends an app that uses more for long) and its drawing held until you are back; then it pauses and a notification says so. Settings > Advanced > Engine options has the sound and CPU cap choices. Ported from Madeira."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.116",
+    "build": "667",
+    "summary": "Keep compiled graphics pipelines between runs.",
+    "added": [
+      "Settings > Advanced (Performance > Graphics, and Engine options > Direct3D 12): Keep compiled pipelines between runs, a size limit for the archive, and Build pipelines in the background. Games compile their graphics pipelines while they run, which stutters the first time each is used; with the archive on, the next start stutters less. Off by default, applies the next time a game starts."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.115",
+    "build": "666",
+    "summary": "Audio settings, a redone Steam and Epic game page, Big Picture hidden.",
+    "added": [
+      "Settings > Play > Sound: Game volume (50% to 200% of the level a game sends) and Bring sound back after a call (after a call, Siri, an alarm or a suspension, a game's sound stays off until the game restarts; on, Porthole activates the audio again). Both are also in Settings > Advanced > Engine options. They apply the next time a game starts."
+    ],
+    "changed": [
+      "A game's page in the Steam and Epic stores is redone like a library game's page: the picture as a card with the game's name on it, who made it and when, how it runs, the install, pause, update or play buttons with a smooth progress bar, and three number tiles. Held sideways or on an iPad it has two panes, the game on the left and what the store says about it on the right. The picture also sits blurred behind the page.",
+      "Steam Big Picture is hidden: its row in Settings > Stores > Steam shows only after seven taps on the version (Settings > Help and about) and the switch there. Its web helper has been seen to crash on the first click."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.114",
+    "build": "665",
+    "summary": "Steam Big Picture no longer widens the memory window for another game.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Starting Steam Big Picture (or any program run from the top of drive C, or a batch file) measured every game on the drive for the executable-window widening and widened the window to 480 MB for Final Fantasy Resonance's program, which has nothing to do with it. That changed the memory layout Madeira tested for Big Picture. A batch file and a program at the top of drive C are no longer measured."
+    ]
+  },
+  {
+    "version": "1.2.113",
+    "build": "664",
+    "summary": "GOG Galaxy services for GOG games.",
+    "added": [
+      "GOG Galaxy services: a GOG game built with GOG's Galaxy SDK talks to GOG's client for its sign-in, achievements, stats, leaderboards and play time. While one of your GOG games runs, Porthole answers for that client on this device only (127.0.0.1:9977), with a token GOG mints for that one game from your GOG sign-in. It needs a game installed from GOG's own builds (one installed before this is read once, at its next start). Settings > Stores > GOG turns it off. Without a sign-in the game runs offline, as before. Ported from Madeira (Playport's Galaxy service)."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.112",
+    "build": "663",
+    "summary": "Steam Big Picture (experimental).",
+    "added": [
+      "Settings > Stores > Steam > Steam Big Picture: starts Valve's own Steam client in Big Picture mode (its gamepad interface) inside the Wine desktop. Experimental: Madeira leaves it out of its releases because it is heavy and unfinished. It needs the Steam client, its first start downloads Valve's client from Valve into a folder of its own, and it asks for a lot of memory (a 4 GB swap file and 4 GB of donor RAM, Madeira's tested lines for it). Not started by itself, and your games are not changed."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.111",
+    "build": "662",
+    "summary": "The 32-bit Visual C++ runtime.",
+    "added": [
+      "Microsoft's 32-bit Visual C++ runtime for 32-bit programs (older games, many launchers): about 14 MB from Microsoft's own installer, checked against a pinned fingerprint and unpacked on the device. Offered in the setup guide and in Settings > Advanced > Windows components. Without it, 32-bit programs keep running on Wine's own C++ runtime. Ported from Madeira."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.110",
+    "build": "661",
+    "summary": "Wine Gecko: the web engine for launchers and installers.",
+    "added": [
+      "Wine Gecko, the web engine Wine uses for programs that show a web page (many launchers and installers). About 110 MB from WineHQ, checked against fixed fingerprints, offered in the setup guide next to the Visual C++ runtime and .NET, and in Settings > Advanced > Windows components. Without it Wine stops on its own download window, which can hang. Ported from Madeira."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.109",
+    "build": "660",
+    "summary": "Steam and Epic game pages polished.",
+    "added": [
+      "Three number tiles under the Install button: on Steam what it downloads, what it takes on the device and when it came out; on Epic where the game stands on the device, who made it and its build.",
+      "The Steam page shows the Steam store chip under the title, like Epic's."
+    ],
+    "changed": [
+      "The banner picture at the top of a game's store page is taller and fades into the page instead of ending in an edge.",
+      "The progress of a download is the same smooth bar as on the tiles, the screenshots have rounder corners and a soft shadow and give a little when pressed, and the Steam rows have an Explore heading."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.108",
+    "build": "659",
+    "summary": "Moving between sections is smoother.",
+    "added": [
+      "A gradient line sits under the chosen section in the top bar and slides to the next one when you change section."
+    ],
+    "changed": [
+      "A section's content fades in when it opens (Home, Stores, Reports, Settings) instead of cutting in. It is skipped when Reduce Motion is on."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.107",
+    "build": "658",
+    "summary": "Settings pages open with a proper header.",
+    "added": [],
+    "changed": [
+      "Every Settings page (and the pages inside Advanced and Stores) opens with its icon on a gradient tile, its name and one line that says what the page is for."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.106",
+    "build": "657",
+    "summary": "Store game tiles and sheets that match the rest of the app.",
+    "added": [],
+    "changed": [
+      "Every store's game tile (Steam, Epic Games, GOG, itch.io, Amazon Games, EA) looks the same now and like the tiles on Home: a status as a small round icon (a ring with the percent while it downloads, a check when installed, an arrow for an update), a soft shade at the foot of the picture, a thin light edge and a shadow, and a smooth bar under the name while it downloads. The tile gives a little when pressed.",
+      "The sheet GOG, itch.io, Amazon Games and the EA app open for a game is redesigned: the Porthole background instead of the plain system one, the store at the top, the game's picture as a card with its name on it, a gradient Install button, red for what deletes, and a Done button."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.105",
+    "build": "656",
+    "summary": "A much smaller performance overlay.",
+    "added": [
+      "A Tiny size for the performance overlay (the smallest it could be before was Small)."
+    ],
+    "changed": [
+      "The overlay's numbers are in a compact grid, the value on top with a small label under it, instead of a list with a label on the left and the value far away on the right. With every number turned on it takes about a third of the screen it did, and with the usual handful it is a small strip.",
+      "The frame rate sits at the left with its graph under it, and the rest of the numbers sit to its right instead of under it.",
+      "The power mode shows only its name (Performance) instead of the long line, in amber when the heat has forced it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.104",
+    "build": "655",
+    "summary": "Every performance overlay number stays on screen.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Some numbers of the performance overlay (the busiest thread, GPU busy, GPU frame time, the swap file and the battery) came and went: the engine only measures them now and then, and the overlay dropped a row whenever a sample had no value for it. A number that is turned on now always shows, with its last value until a new one arrives and a dash before the first."
+    ]
+  },
+  {
+    "version": "1.2.103",
+    "build": "654",
+    "summary": "Holiday looks end sooner.",
+    "added": [],
+    "changed": [
+      "A holiday look is now on from a week before the day to two days after it (it was a week after)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.102",
+    "build": "653",
+    "summary": "One Back button in Settings pages inside pages.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "On a phone held upright, a Settings page inside another one (Advanced > Engine options > Graphics and more) showed two Back buttons, 'Settings' above 'Advanced', and they led to different places. Now only the one for the level above is shown; 'Settings' comes back once you are on the page itself."
+    ]
+  },
+  {
+    "version": "1.2.101",
+    "build": "652",
+    "summary": "A redesigned performance overlay and a polished Downloads page.",
+    "added": [
+      "The performance overlay shows the frame rate as a large number (green when it is smooth, amber and red when it drops), with a graph that has a soft fill and a faint line at 30 FPS beside it.",
+      "Every other number has a small icon (frame time, CPU, memory, heat, battery and so on), and a number that is in trouble turns red."
+    ],
+    "changed": [
+      "The one-line version of the overlay is a slim pill with an icon for each number.",
+      "The overlay is a darker card with a thin light edge, so it reads on bright and dark games alike.",
+      "Downloads: the download in progress is a card in its store's colour with a smooth glowing bar, the other rows carry a thin edge in their store's colour, and the empty page is friendlier."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.100",
+    "build": "651",
+    "summary": "A redesigned setup guide.",
+    "added": [
+      "The first page shows the Porthole mark with the three steps as cards: a number, what it is, how long it takes, and whether it is needed, recommended, optional or already done.",
+      "A progress bar of circles joined by a line sits at the top of the steps: a check on each step that is done, the one you are on lit."
+    ],
+    "changed": [
+      "'Add your games' is one list of stores with each store's logo, whether you are signed in, and a Sign in or Open library button, instead of six separate groups."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.99",
+    "build": "650",
+    "summary": "A redesigned game page.",
+    "added": [
+      "A game's page opens with its picture as a large card with the name on it, the chips under it (store, 32 or 64 bit, controller support, reviews, how it runs), a big Play button, and three tiles: when you last played, how long you have played, and the space it takes."
+    ],
+    "changed": [
+      "On an iPad or a phone held sideways the page has two panes: the game on the left, its settings scrolling on the right.",
+      "The rows are in three groups: Play, Explore (controls, how it runs for others, news, achievements, friends, Workshop) and Manage (more options, about and files).",
+      "Held upright, the picture and Play scroll away with the page and a Home button stays at the top."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.98",
+    "build": "649",
+    "summary": "A redesigned Stores page.",
+    "added": [
+      "Each store is a card tinted in its own colour with its logo, whether you are signed in (and as whom), how many games it has, how many are installed with a bar, and a download in progress.",
+      "A store you have not signed in to says so, with a Sign in button, instead of looking the same as one you use."
+    ],
+    "changed": [
+      "'All games' is a larger card at the top with the number of games and how many are installed, and Downloads sits right under it with a live progress bar.",
+      "Held sideways, All games and Downloads share one row and the stores sit in two columns, so more of the page fits on the screen.",
+      "Cards give a little when pressed."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.97",
+    "build": "648",
+    "summary": "The 'Cellular data is off' notice no longer sticks.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Home said 'Cellular data is off' (and Settings showed it too) even after cellular data was back on. Porthole only noticed that it was back when cellular data was the network in use, so on Wi-Fi the notice stayed for good, and it could even open Shortcuts to switch on what was already on. It now counts cellular data as on whenever it is available, and checks again whenever the network changes. It still waits while a game or JIT is running, when cellular data is off on purpose."
+    ]
+  },
+  {
+    "version": "1.2.96",
+    "build": "647",
+    "summary": "Home feels more alive.",
+    "added": [
+      "The picture behind the page zooms in very slowly, so it is never quite still (off when Reduce Motion is on).",
+      "The tiles on the shelf ease in one after another when the page opens.",
+      "'1 of 7' beside the 'Your library' heading shows where the chosen game is on the shelf."
+    ],
+    "changed": [
+      "The shelf fades out at its far edge instead of cutting a tile off, and 'Played 2 hours ago' has a clock icon."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.95",
+    "build": "646",
+    "summary": "A smoother, cleaner game library on Home.",
+    "added": [
+      "A 'Your library' heading with the number of games sits above the shelf.",
+      "The game you are on is lit and the others sit back a little, and a tile gives under your finger when you press it."
+    ],
+    "changed": [
+      "Game tiles are cleaner: how a game runs, its controller support and its store are small round icons instead of word pills on top of the artwork (the full words are under the game's name), with a soft shade at the bottom and rounder corners.",
+      "The chosen game's page is tidier: 'Continue playing', the name, when you last played on its own line, then one row of chips (store, how it runs, controller support) and Play.",
+      "On a phone held upright the tiles are bigger and the artwork fades into the page sooner so the text is easy to read."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.94",
+    "build": "645",
+    "summary": "The launch screen, redesigned again.",
+    "added": [
+      "The porthole is now a real one: a brushed-metal rim with bolts, the game behind the glass, and a glowing ring inside it that fills as the launch moves on.",
+      "A segmented bar counts the steps (one capsule per step, the running one pulsing), with 'Step 3 of 5' and the running time under it."
+    ],
+    "changed": [
+      "What is happening now is in large type with what it means underneath, instead of behind an info button. The full list of steps is one tap away under 'Show all steps'.",
+      "The settings the game starts with are one quiet line that no longer breaks in the middle of a value."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.93",
+    "build": "644",
+    "summary": "A redesigned launch screen.",
+    "added": [
+      "The launch screen shows how long the launch has taken, 'Step 3 of 5', and a note after 45 seconds that the first start can take a few minutes.",
+      "When a launch fails, the reason is in a card of its own that can be selected and read for as long as you like, with a Copy the message button next to Close."
+    ],
+    "changed": [
+      "The launch screen is redesigned: a smaller porthole with the game's name under it, the steps as a connected timeline (green checks, a lit ring on the running step), the way the game is started as one quiet line, and the Cancel button in easy reach. On a failure the porthole turns red with a badge and the picture dims. Short screens (a phone held sideways) get a more compact version that fits without scrolling."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.92",
+    "build": "643",
+    "summary": "A report now carries the game's log, and every report waits for approval before it appears in Reports.",
+    "added": [
+      "Sending a report now sends the game's own log with it (the install facts first, then the log of the run), cleaned of personal paths, account names, e-mail and public IP addresses. The log is private: it is never shown in Reports and only the developer's Launcher can read it, so a game is not listed as not working before the log has been looked at. The report sheet says so, with the log's size.",
+      "My reports (Reports > My reports) says when a report is waiting for review or was not accepted."
+    ],
+    "changed": [
+      "Every report waits for the developer's approval before it appears in Reports or counts toward a game's badge, with or without a note. This needs the Hub updated: until then reports still appear at once, and a server that refuses the log gets the report without it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.91",
+    "build": "642",
+    "summary": "Porthole stops opening Shortcuts at every start, and says plainly that your VPN needs a shortcut to come back.",
+    "added": [],
+    "changed": [
+      "Cellular data: when the 'Porthole Cellular On' shortcut fails once, Porthole no longer retries by itself (at app start, when a game ends, before a game starts). Each retry opened the Shortcuts app and came back, at every start, for as long as the shortcut was missing. The reminder on Home still turns cellular data on by hand, and adding the shortcuts or a working test makes it automatic again.",
+      "Your VPN: the question before a launch, and the 'Your VPN is paused' notice on Home, now say that iOS only lets a Shortcut turn a VPN back on, so Porthole cannot do it until you make one (Settings > JIT and connection > Your own VPN). The notice's button opens that setting."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.90",
+    "build": "641",
+    "summary": "When the executable window cannot be widened on a start, say so at once.",
+    "added": [],
+    "changed": [
+      "If a game's program needs the executable window widened (Final Fantasy Resonance: 480 MB at 0x140000000) and iOS has already put something inside that range on this start, Porthole now stops before starting Steam and says to close and reopen Porthole, instead of starting everything and ending ten seconds later with 'failed to create main module'. Where iOS places memory is different on every start of the app, so a second try usually works."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.89",
+    "build": "640",
+    "summary": "Games with a big fixed-address program (Final Fantasy Resonance) get the executable window widened over it.",
+    "added": [],
+    "changed": [
+      "Before the pool is allocated, Porthole measures the game's folder for a program that must load at 0x140000000 and is bigger than the 128 MB window held there, and tells the engine to widen the window over it (the engine's exe-window-mb, Madeira's automatic setting for its Dock launches) and put the pool above it. A game file's own exe-window-mb line still wins.",
+      "A Steam game whose window had to be widened needs at least 448 MB of usable pool to start, not 640 MB: the widened window takes that room from the pool for good."
+    ],
+    "fixed": [
+      "Final Fantasy Resonance (and its demo) still ended with 'failed to create main module ... c0000018' on 1.2.88: the window stayed 128 MB, and the game's 487 MB program needs about 496 MB at that address, so the code pool sat on top of it. Same case as the engine's notes for The Adventures of Elliot. Not yet confirmed on a device."
+    ]
+  },
+  {
+    "version": "1.2.88",
+    "build": "639",
+    "summary": "A failed launch's message stays on screen, and Final Fantasy Resonance gets a bigger code pool.",
+    "added": [],
+    "changed": [
+      "Final Fantasy Resonance and its demo use the split code pool (pool-split), as Madeira's lists for Minecraft Dungeons II and Red Dead Redemption 2 do: with the 0x140000000 range kept for the game's program, the code pool is left in two pieces, and one start gave 416 of the 896 MB it needs.",
+      "The check that refuses to start a Steam game when iOS left too little room now counts only the usable part of a split pool, not the stretch in the middle that is never handed out."
+    ],
+    "fixed": [
+      "The message after a launch fails (such as 'iOS left too little room for this game') was gone about a second after it appeared: Porthole at once started bringing back your VPN and cellular data, which runs Shortcuts and leaves the app. They now come back when you dismiss the message. Based on how the code behaves, not on a log of that moment; tell me if it still disappears."
+    ]
+  },
+  {
+    "version": "1.2.87",
+    "build": "638",
+    "summary": "Final Fantasy Resonance and its demo get past the program that could not be mapped.",
+    "added": [],
+    "changed": [
+      "The demo of Final Fantasy Resonance gets the same settings as the full game (the Visual C++ ARM64 marker and keeping its big program out of the code pool).",
+      "When deciding whether the executable window at 0x140000000 can go to the code pool, Porthole now reads the programs in the folders below the game's main program too (four deep, installers and runtimes left out), not only the ones next to it."
+    ],
+    "fixed": [
+      "Final Fantasy Resonance (demo) got past the Visual C++ ARM64 message and then ended: its real program, FFRS-Win64-Shipping.exe (487 MB, loads at 0x140000000, no relocations), could not be mapped because the window had been given to the code pool after reading only the small launcher next to it (status c0000018, 'failed to create main module'). Unreal games start from a small program and run the real one in Binaries/Win64, so this likely affected others too. Not yet confirmed on a device."
+    ]
+  },
+  {
+    "version": "1.2.86",
+    "build": "637",
+    "summary": "Store pages keep their controls at the top, Steam controller support moves to Settings once downloaded, and setup offers the .NET download.",
+    "added": [
+      "Setup guide: the Windows components page also offers the .NET download (Wine Mono, about 42 MB), under the Visual C++ runtime, so it can be chosen while setting the app up."
+    ],
+    "changed": [
+      "Every store page (Steam, Epic, GOG, itch.io, Amazon, EA and All games) keeps its controls docked at the top: switch store, refresh, search, filters, sort. Only the games scroll, so there is no scrolling back up to change store or search. On a narrow screen the row scrolls sideways.",
+      "Steam controller support: the Steam page offers the download only until it is on the device, like the Steam client. After that it is in Settings > Stores > Steam, where it can be removed or downloaded again."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.85",
+    "build": "636",
+    "summary": "Demos and similar Steam apps show in the Steam library, and Final Fantasy Resonance gets past its Visual C++ ARM64 error.",
+    "added": [
+      "The Steam library lists demos, beta and playtest apps and software you own, not only full games. They carry a Demo, Beta or Software label on their tile. Tools, DLC and soundtracks stay out. The list refreshes by itself the first time.",
+      "Settings > Advanced > Engine options > Starting a game > Visual C++ ARM64 marker: for Unreal games that stop with 'Microsoft Visual C++ 2015-2022 Redistributable (arm64)' it marks that runtime as installed for the session."
+    ],
+    "changed": [],
+    "fixed": [
+      "FINAL FANTASY RESONANCE (Steam) stopped at once with 'The following component(s) are required to run this program: Microsoft Visual C++ 2015-2022 Redistributable (arm64)'. It now gets the ARM64 marker by itself. Based on a user's log and Madeira's tested list for the demo; not confirmed on a device."
+    ]
+  },
+  {
+    "version": "1.2.84",
+    "build": "635",
+    "summary": "Tap a report to read all of it.",
+    "added": [
+      "A report opens in full when you tap it: the verdict, the person's note, what they mentioned, crashes, frame rates and play time, the device, iOS, Porthole and engine versions, where the game files came from, and every setting they used. Flagging a report is now a button inside it."
+    ],
+    "changed": [
+      "Tapping a report no longer asks to flag it straight away."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.83",
+    "build": "634",
+    "summary": "The Reports tab is rebuilt around your own games, with filters, a summary and a clearer page for each game.",
+    "added": [
+      "Reports opens on My games: how each of your games runs on this version of the engine, a bar that shows how many work great, playable, broken or are not yet tested, and filters for each.",
+      "All games can be filtered by verdict and ordered by Most reports, Recent or A to Z. The last list is kept, so the tab still shows something without a connection.",
+      "My reports (what you sent, and deleting one) moved from Settings to the Reports tab.",
+      "A game's page shows the verdict in large type with a bar of how reports divide, what people mention most, what settings worked, and how it runs on each device. On an iPad it has two columns.",
+      "Games nobody has reported on this version say 'Be the first to report' on their page and in the list, and the button is the main one on the page."
+    ],
+    "changed": [
+      "Earlier-engine reports are collapsed under 'Earlier versions' on a game's page. Settings > Compatibility reports now has the badge toggles and the privacy reset, with links to the Reports tab."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.82",
+    "build": "633",
+    "summary": "Settings reorganised: sections, a page per store, JIT on its own page, Advanced split into pages, and a search box.",
+    "added": [
+      "Search at the top of Settings finds any setting by name and opens the page that holds it.",
+      "Settings > Stores lists Steam, Epic, GOG, itch.io, Amazon and EA with who is signed in; each store has its own page for its sign-in, library, installed games and downloads.",
+      "Settings > Advanced > Engine options is now one page per group (eight groups), with a 'Changed from default' list and a button to put every option back to Default. Rows say when they are experimental or apply on the next start.",
+      "Short descriptions under the headings of most Settings groups."
+    ],
+    "changed": [
+      "Settings has headings (Playing, Accounts, App, Help). 'Stores and JIT' is now Stores and, separately, JIT and connection; 'App' is now Appearance and Help and about; compatibility reports have their own page.",
+      "Advanced is a short page that opens Engine options, Windows components, Links and remote control, and Diagnostics.",
+      "Some engine options moved to groups that fit them (CPU and power, Graphics video and sound, controller menus and pointer)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.81",
+    "build": "632",
+    "summary": "Steam games built on .NET Framework (Celeste) now offer the Wine Mono download too.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Steam games launched through Steam's client were not checked for .NET Framework, so Celeste still ended at start with 'Wine Mono is not installed' and no offer to download it. They are now: Home offers the Wine Mono download (about 42 MB) before the game starts."
+    ]
+  },
+  {
+    "version": "1.2.80",
+    "build": "631",
+    "summary": ".NET Framework games: Porthole can now download Wine Mono, so games like Celeste can start.",
+    "added": [
+      "Wine Mono (.NET Framework support): when you start a .NET Framework game (Celeste, and many indie games and launchers) and it is not on the device, Home offers a one-time download of about 42 MB from WineHQ, checked against a fixed fingerprint before use. It is also in Settings > Advanced > Windows components, where it can be removed. Before this the game ended as soon as it started. Untested on a device."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.79",
+    "build": "630",
+    "summary": "Settings now checks the donor memory extension and says whether it can run.",
+    "added": [
+      "Donor memory: Settings > Engine options shows whether the Memory Host extension is inside this install, signed and matching; Install check has a matching entry; a game started with Donor memory on but no usable extension logs it."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.78",
+    "build": "629",
+    "summary": "Engine updated to Madeira 1608a25; EA app store, donor memory, graphics card picker, tested setups, gyro aim, share setup, .7z for itch.io.",
+    "added": [
+      "EA app as a sixth store: sign in on EA's own page, install your PC games straight from EA, and start them without the EA app. Untested on a device. Games with EA's kernel anti-cheat cannot run.",
+      "Donor memory: a new optional extension (Memory Host, one more App ID) and Settings > Engine options > Donor memory (2, 4 or 6 GB) for games that run out of the app's memory. Off by default.",
+      "Graphics card the game sees: a per-game choice in Game details (NVIDIA, AMD, Intel or this device's GPU) that names the same card to Direct3D 9 to 12, Windows and NVAPI.",
+      "Madeira's tested setups: games Madeira has a settings list for show a 'Madeira's tested setup' button under Performance, with Undo. Nothing is applied by itself.",
+      "Gyro aim and turbo buttons per game (Game details > Controller), off until turned on.",
+      "Share this game's setup as a file or one line of text, and apply one from a file or the clipboard.",
+      "itch.io games shipped as .7z install; archives inside a download are unpacked."
+    ],
+    "changed": [
+      "The engine is merged with Madeira up to 1608a25 (FEX 16 KB code-write traps, per-process directory cache, DXMT and Dock updates). Compatibility badges start again on the new engine.",
+      "Steam games whose launcher registers a Windows service, or that hold a 32-bit program, get Madeira's session set-up (service manager, guest-window hold, donor RAM first for 64-bit titles).",
+      "The JIT helper message now points to StikDebug as another way to switch JIT on."
+    ],
+    "fixed": [
+      "Steam downloads: when two depots list the same file only the later one writes it, so a repair no longer flips such files back and forth."
+    ]
+  },
+  {
+    "version": "1.2.77",
+    "build": "628",
+    "summary": "The on-screen controls editor works in a program started as an installer.",
+    "added": [],
+    "changed": [
+      "A program started through \"Run an installer\" (how a game still in development is started) has an entry that is never stored in the library, so the pencil's editor had nowhere to save its layout and did nothing; the same went for the in-game look speed, controller choice and layout choice. Edits made in the game are now kept on the running session's own copy of the entry when the library does not hold it, so the editor opens and the changes apply for that run."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.76",
+    "build": "627",
+    "summary": "Red Dead Redemption 2: file trace and the folder cleanup are off again.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2's settings no longer turn the file trace on or clear Rockstar's saved folders before each start. Neither changed whether the Activation error appears: the one start that passed looked the same as the failing ones in every log comparison. The engine keeps 1.2.74's safe removal of vectored exception handlers."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.75",
+    "build": "626",
+    "summary": "Red Dead Redemption 2: file trace on again (experiment on the activation error).",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2's settings turn the file trace on again. The only start that passed the activation error was the one with the trace on, which slows everything down; this build tests whether timing is what matters. Engine unchanged from 1.2.74."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.74",
+    "build": "625",
+    "summary": "Red Dead Redemption 2 no longer crashes while its anti-tamper code adds and removes exception handlers on every new thread.",
+    "added": [],
+    "changed": [
+      "1.2.73 ended the game seconds after it started in two ways: a null write inside Windows' exception dispatch (ntdll) and a runaway recursion that used up a thread's stack. Both trace to the list of vectored exception handlers. Rockstar's code adds and removes one on every thread it starts, and the engine's list code freed an entry that another thread was still about to read (freed memory reads as zeros here). Handlers are now unlinked at once, marked removed and never freed, so a thread in the middle of the list can no longer step onto freed memory. Engine revision changed, so compatibility badges start from zero."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.73",
+    "build": "624",
+    "summary": "Red Dead Redemption 2: Rockstar's saved sign-in state is cleared before every start (the second start showed the Activation error).",
+    "added": [],
+    "changed": [
+      "After a first successful start, Red Dead Redemption 2 showed \"Activation error: your Social Club account is not entitled\" on every later start, although Rockstar's servers said yes; deleting the Social Club and Rockstar AppData folders fixed one start. Porthole now clears those two folders (in the prefix: users/mobile/Documents/Rockstar Games/Social Club and users/mobile/AppData/Local/Rockstar Games) before each start of this game. Social Club asks for the sign-in each time anyway; what is lost is its cached web pages, so the first page load is slower. This is a workaround until the cause is found."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.72",
+    "build": "623",
+    "summary": "Red Dead Redemption 2 starts and plays: file trace off again.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 now runs from the Rockstar launcher into the game on the new engine. The file trace added in 1.2.71 is off again. If the game shows \"Activation error: your Social Club account is not entitled\" on a phone that has run older test builds, deleting the Social Club and AppData/Local Rockstar Games folders (Files > Porthole > wine > drive_c > users > mobile) clears old sign-in state and fixed it here."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.71",
+    "build": "622",
+    "summary": "Red Dead Redemption 2: file trace on, to find what its activation check cannot read.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2's settings now turn on the file trace (MADEIRA_FILE_TRACE, 100,000 lines), so the log lists every file the Rockstar launcher, Social Club and the game open or fail to open. Diagnostic only; the engine is unchanged."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.70",
+    "build": "621",
+    "summary": "Red Dead Redemption 2 no longer gets stuck while loading on the new engine: a leftover from the engine merge released a lock twice.",
+    "added": [],
+    "changed": [
+      "On 1.2.69 the DirectX 12 layer, now built from the new sources, hung the game's graphics start-up: the engine merge had left one line in twice, so a lock that guards the graphics layer's resource lists was released a second time. That broke the lock and the game's main thread waited for graphics work that never finished (10 fps, no graphics pipelines built). The duplicate line is gone and the layer now matches upstream's source exactly. Engine revision changed, so compatibility badges start from zero."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.69",
+    "build": "620",
+    "summary": "Red Dead Redemption 2 and other DirectX 12 games show their pictures again on the new engine.",
+    "added": [],
+    "changed": [
+      "After the engine update, DirectX 12 games drew black or grey screens with almost nothing on them (Red Dead Redemption 2's text and menus were invisible, so a tap on its Accept button looked like a crash). The update had left an old prebuilt DirectX 12 layer in place instead of building it from the new sources; it did not fit the new Metal layer. It is now built from the new sources. Engine revision raised, so compatibility badges start from zero."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.68",
+    "build": "619",
+    "summary": "Test build: only the DirectX 12 layer of 1.2.46 on the new engine.",
+    "added": [],
+    "changed": [
+      "Test build for finding why Red Dead Redemption 2's screens are blank on the new engine: the DirectX 12 translator (d3d12.dll) is the one 1.2.46 shipped; the Metal layer, DXGI, DirectX 11 and everything else are the new engine's. Not meant for other games."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.67",
+    "build": "618",
+    "summary": "Test build: the graphics layer of 1.2.46 on the new engine (Red Dead Redemption 2 shows no pictures on the new engine).",
+    "added": [],
+    "changed": [
+      "Test build for finding why Red Dead Redemption 2's screens are blank since the engine update: the DirectX 12 and 11 layers, the DXGI/Metal layer (winemetal) and the Metal library are the ones 1.2.46 shipped; everything else is the new engine. Not meant for other games."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.66",
+    "build": "617",
+    "summary": "Red Dead Redemption 2: a frame capture now also records the textures its text draws sample (to find why its screens are blank).",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2's settings now name the pixel shader of the game's text draws (capture-ps), so a frame capture from the in-game menu (Tools) also logs those draws' descriptor tables and adds every texture they sample to the contact sheet. It does nothing outside a capture. The engine is unchanged."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.65",
+    "build": "616",
+    "summary": "Red Dead Redemption 2 no longer runs out of emulator memory: it kept the game from starting or ended it a minute in.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 uses a lot of threads, and each one took big 16 MB blocks from the emulator's own 15 GB address space. Two runs on 1.2.64 filled it (97 percent used, 1,800 blocks): one made RDR2.exe stop with \"Unable to launch game, please try reinstalling the game\", the other ended Porthole after about a minute. The emulator's memory manager now hands out 4 MB blocks in 64-bit programs (about half the address space in use, according to the engine's own authors), and when the space does run out it stops with a clear message instead of writing to address 0. The shadow call stack is also no longer reserved per thread when it is switched off. Engine revision raised, so compatibility badges start from zero."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.64",
+    "build": "615",
+    "summary": "Red Dead Redemption 2 starts again: the Rockstar launcher and the game no longer crash Porthole while they load.",
+    "added": [],
+    "changed": [
+      "When the game's memory pool is split in two (Red Dead Redemption 2 and other games that need a big pool), the part in between holds thread stacks. A program starting inside Wine, such as RockstarService.exe or PlayRDR2.exe, asked the Wine server something and Porthole tried to put the answer into that area as if it were pool memory. That memory does not exist there, so the whole app crashed a few seconds after the game started. The answer now goes straight to the stack. Engine revision raised (c1653cb-r0), so compatibility badges start from zero."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.63",
+    "build": "614",
+    "summary": "Faster Steam downloads: chunks unpack 3 to 4 times faster, and slow servers are no longer stuck with.",
+    "added": [],
+    "changed": [
+      "Steam downloads unpack the older kind of compressed chunks (LZMA) with the system's own library instead of Porthole's slower Swift code: about 3.5 times faster in a test. While such a game downloaded, unpacking used most of the phone's processor (28 to 66 ms a chunk in the log) and held the download near 20 MB/s however fast the connection was. The Swift code is still the fallback.",
+      "The downloader now and then sends one chunk to a Steam server outside the first few Steam lists, and uses it more once it proves fast. Before, it used only those first few unless they backed up: on one slow run Steam listed six busy Los Angeles servers first (565 to 907 ms a chunk, 15 MB/s) and the nearer ones that gave 160 MB/s the next day were never tried.",
+      "The most chunks the downloader keeps in flight at once goes from 64 to 96, for connections fast enough to use more."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.62",
+    "build": "613",
+    "summary": "Steam download sizes now add up: the size shown, the progress and the time left use the same numbers.",
+    "added": [
+      "A game's page in Steam now shows both the download size (what crosses the network) and the size on this device (what the files take once installed)."
+    ],
+    "changed": [
+      "The size on the Install button counts the DLC your account owns (it is installed by default, minus anything you turned off), not only the base game. Games whose DLC comes with them (Black Ops III, for one) showed about a quarter of the real size."
+    ],
+    "fixed": [
+      "While a Steam game downloaded, 'x of y' and the bar counted the size on disk (for example 4.0 GB for a game listed as 1.7 GB), and the time left divided that by the network speed, so it came out two to three times too long. The progress, the amount and the time left now all count the compressed download, the same figure the Install button shows.",
+      "The free-space check used the download size, which is smaller than what the files take. It now uses the size on disk (and a little extra for the files being written)."
+    ]
+  },
+  {
+    "version": "1.2.61",
+    "build": "612",
+    "summary": "Launch-screen debug logging removed.",
+    "added": [],
+    "changed": [
+      "The extra launch-screen logging added while tracking down the tap bug (every touch, the window stack, who called Cancel) is gone again; the log keeps one line when the launch screen is shown or hidden."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.60",
+    "build": "611",
+    "summary": "Fixed: tapping the launch screen no longer breaks a game start.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Tapping the launch screen while a game started (most of all on its picture once Steam had started) could break the start: the game's picture appeared as a blue screen over the launch screen, and when the launch screen went away the game was a black screen with only the controls on it. A touch made the launch screen's window the 'key' window, and the game's picture is attached to whichever window is key at that moment, so it ended up inside the launch screen's window and left with it. The launch screen's window can no longer become the key window."
+    ]
+  },
+  {
+    "version": "1.2.59",
+    "build": "610",
+    "summary": "More launch-screen logging (which window is on top while a game starts).",
+    "added": [],
+    "changed": [
+      "The log now also records, for every touch on the launch screen and when the game's picture layer is attached, every window's level, whether it is shown, its transparency and whether it is the key window, and the layers inside the main window. This is to find out why tapping the game's picture on the launch screen after Steam has started can leave a blue or black picture with the controls over it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.58",
+    "build": "609",
+    "summary": "No more text at the top of the screen while a game starts; the launch screen now logs what a tap on it sets off.",
+    "added": [],
+    "changed": [
+      "The line of text at the top of the screen while a game starts ('Starting...' and what Steam's client is doing) is gone: the launch screen already says what is happening. Controller notices in the game still show.",
+      "The log now records when the launch screen is shown and hidden and why, every touch that lands on it, and what called Cancel or dismiss, to find out why a tap on the launch screen can break a start (the screen goes away, then the game comes up as a black picture with the controls over it). Please send the log if it happens again."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.57",
+    "build": "608",
+    "summary": "Halloween that sticks: a witch across the moon, bats roosting under the bar, eyes in the dark, mist, and props that react.",
+    "added": [
+      "A witch on her broom flies across the screen now and then and passes in front of the moon (about every minute and a half; more often on 31 October itself).",
+      "Three bats hang upside down under the top bar. Every so often one opens its wings, drops, flies off, and later comes back and hangs up again.",
+      "A pair of eyes opens in a dark corner of the screen every half minute or so, blinks once and closes again.",
+      "Low mist drifts along the bottom of every screen.",
+      "Tap the ghost and it swells, says 'Boo!', fades away and drifts back; tap a pumpkin and it hops and flares. (A small tap of feedback goes with it.)",
+      "The pumpkin on the Steam row in Stores throws a faint flickering warm light along the card's edge.",
+      "The screen that shows while a game starts has a pumpkin sitting on the porthole, a bat flying round its ring, and a cobweb with a spider in the corner.",
+      "Some game tiles on Home get a cobweb in their corner (the same tiles every time), and a few have a spider."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.56",
+    "build": "607",
+    "summary": "Holiday looks are a surprise: Settings no longer lists them.",
+    "added": [],
+    "changed": [
+      "Settings > Theme and colours > Festive themes no longer lists the holiday looks or lets you preview them, and its explanation names no holiday. A holiday look is a surprise when its week comes. The switch to turn them all off is still there."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.55",
+    "build": "606",
+    "summary": "A Thanksgiving look, and holiday looks now run from a week before to a week after.",
+    "added": [
+      "Thanksgiving: a warm harvest look (deep brown, harvest gold and cranberry), maple leaves falling behind the text, a low harvest moon and drifting gold dust. A turkey in a pilgrim hat sits on the Steam row in Stores, a plain pumpkin pair with a small turkey fills the end of the games shelf on Home, an acorn sits on the Porthole logo, and the screen corners have heaps of leaves with one hanging on a thread. It is on from a week before Thanksgiving (the fourth Thursday of November) to a week after, and Settings can preview it."
+    ],
+    "changed": [
+      "Holiday looks now run from a week before the day to a week after it, so Halloween is on from 24 October to 7 November (it used to be 15 October to 1 November). Settings > Theme and colours > Festive themes still switches them all off."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.54",
+    "build": "605",
+    "summary": "Halloween bats: three to five on screen at a time, on random routes.",
+    "added": [],
+    "changed": [
+      "Three to five bats are on screen at a time (over a long run about a quarter of the time three, half four, a fifth five). Each crossing is its own random one: where it comes in, whether it drifts up or down on the way, which direction, how big and how far away. The pace is still calm and even."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.53",
+    "build": "604",
+    "summary": "The Halloween bats and the moving background no longer stop when you scroll; calmer, fewer bats.",
+    "added": [],
+    "changed": [
+      "The bats are fewer and calmer: one or two cross the screen at a time at an even pace, with gaps between, instead of several at once. No more sudden dives or wobbling tilts; the wings beat about once a second and the body rises a little with each beat.",
+      "The moving background, the bats, the spider and the embers keep moving while a list is being scrolled. They used to stand still until the scrolling stopped."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.52",
+    "build": "603",
+    "summary": "A better Halloween: bats that never cover text, and pumpkins, ghosts, cobwebs and a spider.",
+    "added": [
+      "Halloween: jack-o'-lanterns (three faces, glowing and flickering) sit on the Porthole logo, on the corner of the Steam row in Stores, and at the end of the games shelf on Home, with a small ghost bobbing above them. Cobwebs hang in two corners of every screen, with a spider that lowers itself on a thread and climbs back."
+    ],
+    "changed": [
+      "The Halloween bats are redrawn: pointed ears, wings that fold as they flap, glowing eyes on the near ones, leaning into the way they fly, gliding between bursts of flapping, near and far ones of different sizes, and every so often a loose flock crosses.",
+      "The bats now fly behind the text instead of over everything. They show through the cards and panels but never cover a word. On Home they fly above the game's picture and still behind the text."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.51",
+    "build": "602",
+    "summary": "Home on a phone held sideways: a notice no longer squeezes the game tiles.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "On a small screen held sideways, a notice on Home (for example 'Factorio closed unexpectedly') made the row of games shrink, shift out of line and cut off the badges on the tiles. The notices now sit beside the Friends button in the top row, so the page looks the same with or without one."
+    ]
+  },
+  {
+    "version": "1.2.50",
+    "build": "601",
+    "summary": "The Stores list is tidied: nothing overlaps any more.",
+    "added": [],
+    "changed": [
+      "The 'All games' row on the Stores list shows up to three store badges, overlapped, inside the same square as the other rows. Five badges used to spread out over the row's title and past the card's edge."
+    ],
+    "fixed": [
+      "The round Downloads button sat on top of the arrow of the Downloads row on the Stores list. It is no longer shown there (the row is the way in); it still shows inside the stores.",
+      "The Stores list no longer bounces when everything fits, so the 'Stores' heading is not left cut off under the top bar after a drag."
+    ]
+  },
+  {
+    "version": "1.2.49",
+    "build": "600",
+    "summary": "Steam no longer signs you out at random.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Steam signed people out at random. One refused request was enough to delete the saved sign-in, and a firewall, VPN, captive portal or content filter that answers 401 or 403 counted as Steam refusing it. Now only Steam's own numbered refusal counts, and it has to repeat a few seconds later before the sign-in is forgotten. A single bad answer keeps you signed in and tries again.",
+      "If the Keychain could not be read at launch (the device not yet unlocked after a restart, or the app started in the background), the app showed you as signed out until it was relaunched. The saved sign-in is now read again when it is needed.",
+      "The log now says when Steam refused the saved sign-in and what it answered (HTTP code and Steam's number, never a token), so a report shows why."
+    ]
+  },
+  {
+    "version": "1.2.48",
+    "build": "599",
+    "summary": "Fixes 1.2.47: games and the Steam host crashed at startup.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Factorio (and any x64 game) did not launch on the merged engine, and Steam sometimes would not start. The emulator queues 'a module was mapped' notices that arrive while it is still starting up; the time-zone resource DLL (tzres.dll) was loaded and freed in that window, and the replay then read the header of memory that no longer existed. A queued module is now dropped when it is unmapped, and the replay skips anything already gone."
+    ]
+  },
+  {
+    "version": "1.2.47",
+    "build": "598",
+    "summary": "Engine updated to the latest Madeira (374 upstream commits). Test build: nothing has been run on a device yet.",
+    "added": [],
+    "changed": [
+      "The game engine (Madeira, FEX, Wine, DXMT, Dock) is merged with upstream as of 2026-10-29. This is a new engine, so compatibility badges start from zero. Please try your usual games (Factorio, The Forest, Subnautica, Red Dead Redemption 2, Steam sign-in) and send logs for anything that got worse.",
+      "Your SSD library still uses the existing design; upstream's multi-drive model is not adopted yet.",
+      "Black Ops III and Red Dead Redemption 2 upstream fixes are in the engine but not switched on yet."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.46",
+    "build": "597",
+    "summary": "Black Ops III: experiments switched off; what the logs showed.",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III no longer runs the diagnostic settings (hypervisor bit, compile log, header fix). Findings from 1.2.36-1.2.45: its copy protection only works with the 491 MB exe at its own address 0x140000000, where the engine's code pool sits. At another address it either loops forever or, with the header corrected, runs about 20 s and then jumps through absolute addresses that were never adjusted. Making it work would mean loading the exe at 0x140000000 and fitting a smaller pool around it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.45",
+    "build": "596",
+    "summary": "Fix: Black Ops III died at once with 1.2.44's longer log lines.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "1.2.44's compile log wrote 1 KB lines, which overflow Wine's debug buffer and ended the game with 0x80000005 after 24 blocks. Long blocks are now written in 192-byte pieces."
+    ]
+  },
+  {
+    "version": "1.2.44",
+    "build": "595",
+    "summary": "Black Ops III: log whole code blocks (diagnostic).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III: the 1.2.43 log showed nothing is ever written where the game jumps to (its .data stays empty beyond the file's own 3.7 MB). So the jump target itself is probably wrong. The compile log now keeps up to 512 bytes of each block instead of 96 (and skips repeats of all-zero blocks), so the instruction that makes the jump can be read."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.43",
+    "build": "594",
+    "summary": "Black Ops III: watch where the game unpacks itself (diagnostic).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III: the 1.2.42 log showed the exe's code sections are encrypted on disk and its 370 MB .data is nearly all empty space the game fills itself; the game then jumps to an address in that space that is still zeros. This build logs every few seconds which parts of .data have become non-zero ('[data-watch]'), to see where the unpacker writes."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.42",
+    "build": "593",
+    "summary": "Black Ops III: past the copy-protection loop; log shows the exe's sections.",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III: with 1.2.41 the copy protection's endless loop is gone (the exe's header now names its real address). The game runs about 20 s further, makes its whole image writable and executable, then jumps into a stretch of zero bytes in its .data section (exe+0x14deaea1) and dies with an access violation. 1.2.42 logs the exe's section table and what memory holds at that address at start, to tell whether that code should come from the file or be written by the game."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.41",
+    "build": "592",
+    "summary": "Steam sign-in works again (Black Ops III experiment limited to its own exe).",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "1.2.40's Black Ops III experiment (header ImageBase) ran in every program of the game's session, including the Steam client, and crashed it, so Steam never signed in. It now runs only in blackops3.exe."
+    ]
+  },
+  {
+    "version": "1.2.40",
+    "build": "591",
+    "summary": "Black Ops III: header ImageBase written at the right moment (experiment).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III: 1.2.39's ImageBase fix never ran (the exe is moved by the Windows-side loader, not the code it hooked). It now runs just before the game's first instruction, when the exe is already in its new place. Log line '[imagebase] 0170: main exe header ImageBase … -> …' shows it fired."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.39",
+    "build": "590",
+    "summary": "Black Ops III: the relocated exe's header says where it really is (experiment).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III: after the engine moves the 491 MB exe away from 0x140000000 it now writes the new address into the exe's own PE header (ImageBase), as Windows does. The 1.2.38 log showed the time-counter idea was not it (65 more blocks compiled, same dead-end loop); the loop is a closed state machine that only a failed check upstream can enter, and a program that reads its own header would otherwise think it was never moved. The timing option of 1.2.38 is off again. Experiment: the log line '[imagebase] 0170' shows it fired."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.38",
+    "build": "589",
+    "summary": "Black Ops III: a time counter whose low bits change (experiment).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III now reads a time counter whose lowest bits change (FEX option SmallTSCScale off). The log of 1.2.37 showed its copy protection picking between two paths from the lowest bits of rdtsc ('test al, 0xf' then cmovne) at six places; our scaled counter has those bits always 0, so it can only ever take one path and never leaves its loop. Experiment: if the loop at blackops3.exe+0x212da06 is gone, that was it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.37",
+    "build": "588",
+    "summary": "Black Ops III: record the copy protection's code (diagnostic).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III now logs the address and first bytes of every block of its own code the emulator compiles (new FEX option MADEIRA_COMPILE_LOG, off for every other game). The hypervisor-bit experiment of 1.2.36 changed nothing; with these bytes the copy-protection loop can be read instruction by instruction to find which check never passes."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.36",
+    "build": "587",
+    "summary": "Black Ops III: hide the hypervisor bit (experiment).",
+    "added": [],
+    "changed": [
+      "Call of Duty: Black Ops III: the emulator no longer reports a hypervisor in the processor's feature bits for this game (FEX option HideHypervisorBit). Its copy protection spins forever 12 s after the start and the game never opens a window; anti-tamper code often looks for exactly this bit. Experiment: if the log still shows the same loop (blackops3.exe+0x212da06), it was not that."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.35",
+    "build": "586",
+    "summary": "Controller: iOS's keyboard no longer comes up by itself.",
+    "added": [],
+    "changed": [
+      "With a controller connected (and no hardware keyboard) a text box is a plain line, not a text field: A or a tap opens the pad keyboard, and iOS's own keyboard can no longer be raised just by moving over a box with the D-pad or stick. This covers the search boxes, the text rows in Settings and a game's page, the Workshop search in the game menu and the label of an on-screen control. Without a controller nothing changes.",
+      "If iOS's keyboard is up when a controller button is pressed (a field was tapped, an alert's password box), it is put away."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.34",
+    "build": "585",
+    "summary": "Stores: the sections work from a game's page.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "On a game's page in Stores (Steam and Epic) the sections in the top bar could not be tapped until you went back to the store's list: the page's picture reaches up behind the bar and sat on top of it. The bar is now always above the page, and the pictures (the store pages' and a game's page on Home) no longer take taps."
+    ]
+  },
+  {
+    "version": "1.2.33",
+    "build": "584",
+    "summary": "Controller: a fixed starting place on every screen, and settings no longer change by passing over them.",
+    "added": [
+      "With a controller connected, every section opens with the glow in the same place: Home on the first game in the list, Stores on Steam, Reports on the first report (the search box until the list has loaded), Settings on the Play page. The glow is put there when the section opens, so it is always clear where the controller is, and again when you switch sections with LB and RB.",
+      "A slider is gone into with A (the hints then read A Done, ◀ ▶ Change) and left with A or B; the slider shows a thicker outline while you are in it."
+    ],
+    "changed": [
+      "Left and Right on the D-pad or the left stick only move the glow in the settings now. Switches are toggled with A and choices open their list with A; passing over a setting never changes it. (The media viewer on a game's page still steps through its pictures with Left and Right.)"
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.32",
+    "build": "583",
+    "summary": "Hint bar: controls with nothing to do are hidden.",
+    "added": [],
+    "changed": [
+      "The controller hints at the bottom only list the controls that do something right now (the item's A, X and ◀ ▶; the page's D-pad, B, LB and RB with the names of the sections they lead to, Y and Menu). A control with nothing to do is no longer shown dimmed, it is left out."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.31",
+    "build": "582",
+    "summary": "All controls in the hint bar, for the item and the page.",
+    "added": [],
+    "changed": [
+      "The strip of controller hints at the bottom now always lists every control, in two groups: ITEM (what the highlighted item does with A, X and ◀ ▶) and PAGE (D-pad Move, B Back, LB and RB with the names of the sections they lead to, Y and Menu). A control with nothing to do right now stays in the list, dimmed with a dash, instead of disappearing. On a narrow phone the two groups sit on two lines."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.30",
+    "build": "581",
+    "summary": "Controller hints for every button that does something.",
+    "added": [
+      "The strip of button hints at the bottom of the screen now follows what has the glow: D-pad Move, A (✕) Select, B (○) Back, and a hint for each other button that does something right now: X (□) with what it does on that game (Play, Pause, Resume, Update, Open, Download, Install), ◀ ▶ Change on a slider or choice, Y (△) and Menu (Options / +) where a screen uses them, and LB RB Switch where the sections can be switched. A game's A press is now named Details."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.2.29",
+    "build": "580",
+    "summary": "Controller hints sit next to the sections.",
+    "added": [],
+    "changed": [
+      "With a controller connected, the RB hint in the top bar now sits right after the last section (Settings) and LB right before the first one, instead of RB being pushed to the far end of the bar by the clock. On a narrow phone the section names get a little tighter so all four fit beside the two hints before anything scrolls."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.28",
+    "build": "579",
+    "summary": "Test build: the original emulator DLL.",
+    "added": [],
+    "changed": [
+      "Test build for Red Dead Redemption 2: the emulator's main DLL (xtajit64.dll) is the one Madeira ships, not Porthole's own rebuild, to find out whether Porthole's changes to it use more of the emulator's address range per thread. Other games lose Porthole's emulator changes in this build (shorter call-ret stack fixes, hot lookup cache, the exit guard)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.27",
+    "build": "578",
+    "summary": "Red Dead Redemption 2: the split code pool is told to the engine.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "When a game's code pool is split (pool-split, pool-mid) or has its own region for code buffers (pool-low), Porthole did not tell the engine: Madeira's own app passes it the pool's hole (the main thread's stack sits inside it), its second hole and the code-buffer region, Porthole passed none of them. The engine then handed the stack's range out as program copies (the app ended seconds after launch with the split pool in 1.2.8 and 1.2.20), and Social Club's address layout fell back to the wrong one (1.2.26). Both now get the values."
+    ]
+  },
+  {
+    "version": "1.2.26",
+    "build": "577",
+    "summary": "Red Dead Redemption 2: Madeira's own settings list, with the code window held.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 now uses Madeira's complete recommended settings list as BCD 0.1.573 ships it (separate code-pool regions, swap settings, thread-stack and image settings). That list is written for the executable window at 0x140000000 being kept, which Porthole's own \"bigger code pool\" option gives back for a bigger pool; for this game the window is kept now. A BCD log from the same iPad has the game running with this layout; 1.2.8 used the list with the window given back and ended seconds after launch. Our own additions stay: dllhost.exe and the game's crash reporter refused, 2 MB lookup caches, the mirrored launcher logs."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.25",
+    "build": "576",
+    "summary": "Red Dead Redemption 2: smaller per-thread caches, no crash reporter.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: each emulated thread reserved 8 MB of the emulator's address range for a lookup cache that grows only in busy threads; with that growth off in this game it reserves 2 MB (about 1.8 GB back with 300 threads). The game's own crash-reporter process (about 10 threads) is no longer started either."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.24",
+    "build": "575",
+    "summary": "Emulator allocator change undone.",
+    "added": [],
+    "changed": [
+      "1.2.23's allocator change (medium blocks sharing the small blocks' span) is undone: with it the Steam client host and a second helper process crashed within seconds of starting, so Steam would not start. The emulator is the same as in 1.2.21 again (engine r22)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.23",
+    "build": "574",
+    "summary": "Emulator: one memory span per thread less.",
+    "added": [],
+    "changed": [
+      "The emulator's allocator gave each thread a separate 16 MB address-space span for small blocks and another for medium ones; medium blocks now share the small blocks' span. With the Rockstar launcher chain (about 250 threads) that returns several GB of the emulator's 15 GB address range, which was what ended Red Dead Redemption 2. 1.2.22's CPU-core experiment is out again: it slowed the launcher's start-up and left the thread count unchanged."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.22",
+    "build": "573",
+    "summary": "Red Dead Redemption 2: fewer threads (experiment).",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: 1.2.21 got the game's window open (the code pool is 1104 MB now), but the emulator's address range was 83-87 % full from the launcher's roughly 250 threads before the game started, and the game's own threads used up the rest within seconds. Programs size their thread pools from the number of CPU cores they see, so the game session now reports 4 cores instead of 9. Experiment: it may cost frame rate in the game."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.21",
+    "build": "572",
+    "summary": "Red Dead Redemption 2: keep room in the code pool for the game's programs.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: 1.2.20's \"split pool\" experiment joined the two free gaps into one 1152 MB pool, but the app ended 18 seconds after launch, so it is out again. Instead the emulator now keeps 256 MB of its code pool for the programs' copies: with a small pool the launcher's helpers were given large code buffers early and the game's own programs no longer fitted, so it never opened a window."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.20",
+    "build": "571",
+    "summary": "Red Dead Redemption 2: bigger code pool (experiment).",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: the emulator's code pool (where the game's and the launcher's programs are copied for the emulator) is only as big as the largest free gap when the app starts, between 830 and 990 MB, and it ran out while the game was loading, so the game never opened a window. Madeira's \"split pool\" setting now joins the second gap (about 290 MB) into it. Experiment."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.19",
+    "build": "570",
+    "summary": "Red Dead Redemption 2: fewer extra processes.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: Rockstar's browser helper asks for a Windows component that is not installed, and Wine answered by starting up to six 32-bit helper programs (dllhost.exe) in a row, which used about a gigabyte of the emulator's address space just as the game was starting. Those are refused now. The helper's extra Chromium logging is off again."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.18",
+    "build": "569",
+    "summary": "Emulator: half the address space per thread call stack.",
+    "added": [],
+    "changed": [
+      "Each emulated thread's call stack now reserves 8 MB of the emulator's address range instead of 16 MB (the other half was padding). With a launcher, its browser helper and a game running, that frees about 1.6 GB."
+    ],
+    "fixed": [
+      "Red Dead Redemption 2: the game was started by Rockstar's launcher but died within seconds because the emulator's address range was 96 % full; it has more room now."
+    ]
+  },
+  {
+    "version": "1.2.17",
+    "build": "568",
+    "summary": "Emulator: threads can use the free address space again.",
+    "added": [],
+    "changed": [
+      "The emulator reserved 8 KB more for each thread's call stack than a freed 16 MB hole holds, so about 1.4 GB of free address space could not be used and new threads failed while Rockstar's launcher was starting a game. Each thread now reserves exactly 16 MB."
+    ],
+    "fixed": [
+      "Red Dead Redemption 2: the launcher no longer runs the emulator's address range dry while it starts the game (it crashed or said \"Unable to launch game\")."
+    ]
+  },
+  {
+    "version": "1.2.16",
+    "build": "567",
+    "summary": "Emulator allocator back to 16 MB spans.",
+    "added": [],
+    "changed": [
+      "The 8 MB allocator spans of 1.2.15 are undone: with them Rockstar's browser helper crashed within seconds of starting in both test runs, which earlier builds did not do. The emulator is the same as in 1.2.14 again (engine r20, so game badges carry over)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.15",
+    "build": "566",
+    "summary": "Emulator memory: half-size allocator spans.",
+    "added": [],
+    "changed": [
+      "The emulator's allocator now reserves its memory in 8 MB spans instead of 16 MB. A session with many threads (Rockstar's launcher plus its browser helper plus Steam: about 190) used about 8 GB of the emulator's 15 GB address range just for those spans; this frees about 4 GB of it."
+    ],
+    "fixed": [
+      "Red Dead Redemption 2: the emulator's address range filled up while the launcher was starting the game, new threads could not be created and the launcher said \"Unable to launch game, please try reinstalling the game.\""
+    ]
+  },
+  {
+    "version": "1.2.14",
+    "build": "565",
+    "summary": "Red Dead Redemption 2: helper back to the interpreter, full logs.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: the launcher helper's V8 is back to the interpreter (the JIT made it exit within seconds); the launcher's, Social Club's and helper's logs are mirrored into the session log (up to 4000 lines)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.13",
+    "build": "564",
+    "summary": "Red Dead Redemption 2: experiment with the helper's V8 JIT.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: the launcher's browser helper runs V8 with its JIT (it was forced to the much slower interpreter), and the launcher's own log goes whole into the session log. Experiment."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.12",
+    "build": "563",
+    "summary": "Red Dead Redemption 2: helper log to the session log.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: the browser helper's log goes to the session log instead of a file (diagnosis only)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.11",
+    "build": "562",
+    "summary": "Red Dead Redemption 2: helper log in a known place.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: the browser helper's own log is written to Documents/wine/drive_c/users/mobile/Documents/sc-helper.log (diagnosis only)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.10",
+    "build": "561",
+    "summary": "Red Dead Redemption 2: web helper logging.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2: Rockstar's browser helper writes a detailed log and a network log (Documents/wine/drive_c/users/mobile/Documents/sc-netlog.json) while the launcher is stuck on its loading screen. For diagnosis only."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.9",
+    "build": "560",
+    "summary": "Red Dead Redemption 2: back to the 1.2.7 memory layout.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Red Dead Redemption 2: 1.2.8's long settings list made the app end a few seconds after launch (the JIT pool could not find its place and shrank to about 500 MB first). RDR2 is back to 1.2.7's settings plus two harmless ones (the Rockstar crash reporter is not started; freed memory is kept for 2 seconds)."
+    ]
+  },
+  {
+    "version": "1.2.8",
+    "build": "559",
+    "summary": "Red Dead Redemption 2: Madeira's tested settings.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 starts with the settings Madeira's own tested list for the game uses (memory pools, a swap file, the crash handler not started, a smaller memory footprint for the launcher), added to the game's lines; your own lines still win."
+    ],
+    "fixed": [
+      "Red Dead Redemption 2: with Social Club's layout 2 the launcher's browser helper stays up, but the emulator's memory arena filled up (80% used 39 seconds in, with 189 threads) and the app ended itself in a fault storm before the game started."
+    ]
+  },
+  {
+    "version": "1.2.7",
+    "build": "558",
+    "summary": "Red Dead Redemption 2: layout 2 for real.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Red Dead Redemption 2: 1.2.6 asked for Madeira's Social Club layout 2 only in the process environment, but the JIT helper reads that setting from the game's config lines, so the pool's alias stayed at 0x7000000000 and the engine fell back to layout 1 (log: \"needs the JIT pool's RW alias at 0x7900000000 ... layout 1\"). The setting is now in the game's config lines too."
+    ]
+  },
+  {
+    "version": "1.2.6",
+    "build": "557",
+    "summary": "Red Dead Redemption 2: Madeira's Social Club layout.",
+    "added": [],
+    "changed": [
+      "Red Dead Redemption 2 uses Madeira's own Social Club layout (MADEIRA_SC_PA_POOLS = 2, plus its 8 GB address-space hold) instead of Porthole's earlier soft pools."
+    ],
+    "fixed": [
+      "Red Dead Redemption 2: Rockstar's browser helper still ended at start in 1.2.5 (five refused 16 GB asks, exit 0x80000003, restarted every 5 seconds). Since the engine took Madeira's Social Club handling, Porthole's soft-pool path never ran for that helper. The arena guard is back on for it."
+    ]
+  },
+  {
+    "version": "1.2.5",
+    "build": "556",
+    "summary": "Red Dead Redemption 2: Rockstar's browser helper starts again.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Red Dead Redemption 2: 1.2.4's arena guard stopped Rockstar's browser helper (SocialClubHelper.exe) at start again (it asked for 16 GB five times, was refused, and ended with 0x80000003; the launcher restarted it every 5 seconds and never started the game). RDR2 now turns the guard off for itself (env.MADEIRA_ARENA_GUARD = 0), as in earlier builds."
+    ]
+  },
+  {
+    "version": "1.2.4",
+    "build": "555",
+    "summary": "Engine update: controller battery, audio, memory and multi-process fixes.",
+    "added": [
+      "Controller battery for games: a game that shows a controller's battery now gets the real level (charging or full counts as a wired pad). Set env.MADEIRA_XINPUT_BATTERY = 0 to go back to \"unknown\".",
+      "The session log says how the Windows program ended (its exit code)."
+    ],
+    "changed": [
+      "Sound: games that keep only one short audio period queued (Godot 4 games, anything using low-latency shared audio) played about half their sound, choppy and slow. The app now asks iOS for 5 ms audio slices and the audio driver's period covers two of them. env.MADEIRA_AUDIO_IO_MS = 0 keeps iOS's own length.",
+      "Launch options follow Windows' quoting rules; an unbalanced quote, control characters, more than 64 arguments or more than 4 KB now stops the launch instead of being silently cut.",
+      "Repeated engine log lines (a crash or fault repeating thousands of times) are cut off after 1000 of one kind per 10 seconds, so problem reports stay small."
+    ],
+    "fixed": [
+      "A game that turns the controller off while its window is in front (XInputEnable(FALSE)) no longer loses the pad.",
+      "A click or tap now gives the game window keyboard focus, as Windows does, for games that ignore input without it.",
+      "Red Dead Redemption 2 and other games with a launcher that reserves a lot of memory: reservations are kept out of the emulator's own memory arena (reported to reach gameplay; not tried here).",
+      "Dark Souls Remastered with a Steam-emulator DLL: a program that narrows its own module address to 32 bits now finds it.",
+      "Games that ask Windows which memory is free (VirtualQuery) are told only about memory they can really use.",
+      "HTTPS in launcher-style games: every process of a session can read the certificate store (the first one used to empty it).",
+      "A leftover thread of a program that has already exited can no longer crash the session.",
+      "A wineserver crash on misaligned shared objects (SimCity 4 on iPad)."
+    ]
+  },
+  {
+    "version": "1.2.3",
+    "build": "554",
+    "summary": "A keyboard a controller can type on.",
+    "added": [
+      "On-screen keyboard for controllers. Pressing A on a text box or a search box now opens a keyboard you drive with the D-pad: A types, B deletes (and closes when there is nothing left), X is space, Y is shift, LB and RB move the cursor, Menu is done. Letters, numbers and symbols (including backslash and colon, for program paths), and an eye button to show a password. A tap, or a hardware keyboard, still uses the iPhone's own keyboard."
+    ],
+    "changed": [
+      "The search boxes in Steam, Epic, GOG, itch.io, Amazon, All stores and Reports are one shared control now, and pressing A on them used to do nothing."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.2",
+    "build": "553",
+    "summary": "Halloween bats fly over the whole app.",
+    "added": [],
+    "changed": [
+      "The Halloween bats now fly in front of everything, over the screens and buttons and sheets, instead of behind them. They never take a touch: you tap straight through them. They stay away while a game is on screen, and they are off when Reduce Motion is on or Animated background is off."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.2.1",
+    "build": "552",
+    "summary": "Halloween: festive themes.",
+    "added": [
+      "Festive themes: Porthole dresses up by the date. Halloween (15 October to 1 November) gives a pumpkin-orange and purple look with embers rising, a pale moon and a few bats crossing slowly. Settings > Theme and colours > Festive turns it off, and previews a holiday out of season. Your own colours come back when the holiday ends."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
     "version": "1.1.0",
     "build": "551",
     "summary": "Full Steam Ahead: much more Steam (versions, DLC, achievements, friends, the Workshop), Amazon Games, Restart game, and fixes for American Truck Simulator, Megabonk and Counter-Strike 2.",

@@ -1,0 +1,49 @@
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -93,12 +93,17 @@
+ 
+   // Allocate the call-ret stack with guard pages on both sides
+   /* 0.50.339: CALLRET_BASE_ALIGNMENT extra address space (only reserved, not touched) so that the base can be moved up to an 8MB boundary. */
+-  /* Porthole 0165: exactly CALLRET_STACK_SIZE + CALLRET_BASE_ALIGNMENT (16 MB), not that plus two guard pages (16 MB + 8 KB). A freed rpmalloc span leaves a
+-   * 16 MB hole in the emulator band and the old size missed it by 8 KB: a log of RDR2 through Rockstar's launcher had 1.45 GB free in 688 holes, the largest
+-   * 0x1000000, and every new thread failed with "call-ret stack unavailable". Wine hands out 64 KB-aligned addresses, so the base (rounded up to 8 MB) is at most
+-   * 8 MB - 64 KB above the start and the stack plus the page after it still fit. The guard pages were never enforced on iOS (see below); only the JIT's inline
+-   * bounds check keeps the stack inside its window. */
+-  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + CALLRET_BASE_ALIGNMENT;
++  /* Porthole 0165/0166: on iOS the reservation is exactly CALLRET_STACK_SIZE (8 MB) and the emulator band hands it out 8 MB ALIGNED
++   * (MEM_ADDRESS_REQUIREMENTS.Alignment), so the base needs no slack. Before it reserved CALLRET_STACK_SIZE + 2 guard pages + CALLRET_BASE_ALIGNMENT
++   * (16 MB + 8 KB) and rounded the base up inside it: half of every thread's reservation was padding (about 1.6 GB with 200 threads), and the 8 KB
++   * made it miss the 16 MB holes that freed allocator spans leave (a log of RDR2 through Rockstar's launcher had 1.45 GB free in 688 holes, the
++   * largest exactly 0x1000000, and new threads failed with "call-ret stack unavailable"). The guard pages were never enforced on iOS (see below);
++   * the JIT's inline bounds check keeps the stack inside its window. Other hosts keep the padded reservation. */
++#ifdef FEX_IOS_HOST
++  size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
++#else
++  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE + CALLRET_BASE_ALIGNMENT;
++#endif
+   const void* CallRetStackAlloc = nullptr;
+ #ifdef FEX_IOS_HOST
+   /* iOS-Madeira ml324: steer the call-ret stack out of the guest VA band.
+@@ -118,6 +123,7 @@
+     /* ml706: follow the band rpmalloc selected, do not hardcode it. */
+     AddrReq.LowestStartingAddress = reinterpret_cast<void*>(ios_fex_band_base);
+     AddrReq.HighestEndingAddress = reinterpret_cast<void*>(ios_fex_band_end);
++    AddrReq.Alignment = CALLRET_BASE_ALIGNMENT;   /* Porthole 0166 */
+     AddrParam.Type = MemExtendedParameterAddressRequirements;
+     AddrParam.Pointer = &AddrReq;
+       if (InjectReserve) {
+@@ -125,6 +131,14 @@
+                           "containment path", ThisCall);
+       } else if (ios_fex_band_base) {
+       CallRetStackAlloc = ::VirtualAlloc2(nullptr, nullptr, CallRetStackAllocSize, MEM_RESERVE, PAGE_NOACCESS, &AddrParam, 1);
++      if (CallRetStackAlloc && (reinterpret_cast<uintptr_t>(CallRetStackAlloc) & (CALLRET_BASE_ALIGNMENT - 1))) {
++        /* Porthole 0166: the alignment was not honoured; the base cannot be rounded up inside an exact-size block. Take the old padded reservation. */
++        LogMan::Msg::EFmt("[callret] 0166: reservation {} is not {:#x}-aligned -- retrying with the padded size", CallRetStackAlloc, (unsigned long long)CALLRET_BASE_ALIGNMENT);
++        ::VirtualFree(const_cast<void*>(CallRetStackAlloc), 0, MEM_RELEASE);
++        CallRetStackAllocSize += 2 * FEXCore::Utils::FEX_PAGE_SIZE + CALLRET_BASE_ALIGNMENT;
++        AddrReq.Alignment = 0;
++        CallRetStackAlloc = ::VirtualAlloc2(nullptr, nullptr, CallRetStackAllocSize, MEM_RESERVE, PAGE_NOACCESS, &AddrParam, 1);
++      }
+     }
+   }
+   /* ml706: NO unconstrained fallback here. Each 16-byte frame holds a HOST

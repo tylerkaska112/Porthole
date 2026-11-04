@@ -38,12 +38,34 @@ struct GamePage: View {
             if let game {
                 ZStack(alignment: .top) {
                     backdrop(game)
-                    VStack(alignment: .leading, spacing: 0) {
-                        header(game)
-                        FocusScroll {
-                            VStack(alignment: .leading, spacing: vSize == .compact ? 12 : 18) { content(game) }
-                                .padding(.horizontal, 24).padding(.vertical, vSize == .compact ? 8 : 14)
-                                .frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
+                    GeometryReader { geo in
+                        let wide = geo.size.width > geo.size.height * 1.05
+                        if wide {
+                            // Wide (an iPad, a phone held sideways): the game on the left, its settings scrolling on the right.
+                            HStack(alignment: .top, spacing: 0) {
+                                FocusScroll {
+                                    hero(game, back: true).padding(.horizontal, 20).padding(.vertical, vSize == .compact ? 8 : 14)
+                                }
+                                .frame(width: min(vSize == .compact ? 340 : 400, geo.size.width * 0.42))
+                                FocusScroll {
+                                    VStack(alignment: .leading, spacing: vSize == .compact ? 12 : 18) { content(game) }
+                                        .padding(.horizontal, 20).padding(.vertical, vSize == .compact ? 8 : 14)
+                                        .frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+                                }
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 0) {
+                                PillButton(id: "gp-back", title: "Home", symbol: "chevron.left") { leave() }
+                                    .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 6)
+                                FocusScroll {
+                                    VStack(alignment: .leading, spacing: 18) {
+                                        hero(game, back: false)
+                                        content(game)
+                                    }
+                                    .padding(.horizontal, 24).padding(.vertical, 8)
+                                    .frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
+                                }
+                            }
                         }
                     }
                 }
@@ -108,39 +130,18 @@ struct GamePage: View {
                 .overlay { LinearGradient(colors: [.clear, Theme.backgroundBottom.opacity(0.55), Theme.backgroundBottom.opacity(0.9)], startPoint: .top, endPoint: .bottom) }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
-    private func header(_ g: Game) -> some View {
+    private func hero(_ g: Game, back: Bool) -> some View {
         let busy = session.isActive
         let preparing = busy && session.game == g
         let steamLaunch = g.dockAppID != nil && g.launchDirect != true
-        let play = PillButton(id: "gp-play", title: preparing ? "Preparing" : "Play", symbol: "play.fill", style: .primary, enabled: !busy) { session.start(g) }
-        if vSize == .compact {
-            // Sideways on a phone the height is what is scarce: back, the name and Play share one row, the chips sit in a short row of their own under it
-            // (they wrap rather than scroll, so every one of them is always in view), and the settings get the rest.
-            return AnyView(
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 12) {
-                        PillButton(id: "gp-back", title: "Home", symbol: "chevron.left") { leave() }
-                        Text(g.name).font(.system(size: 24, weight: .heavy, design: .rounded)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.6).shadow(radius: 6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        play
-                    }
-                    FlowLayout(spacing: 8) { chips(g, steamLaunch: steamLaunch) }
-                }
-                .padding(.horizontal, 24).padding(.top, 4).padding(.bottom, 8)
-            )
-        }
-        return AnyView(
-            VStack(alignment: .leading, spacing: 10) {
-                PillButton(id: "gp-back", title: "Home", symbol: "chevron.left") { leave() }
-                Text(g.name).font(.system(size: 32, weight: .heavy, design: .rounded)).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6).shadow(radius: 6)
-                // The chips wrap onto another line when the screen is narrow; they are never squeezed into a column.
-                FlowLayout(spacing: 8) { chips(g, steamLaunch: steamLaunch) }
-                play.padding(.top, 4)
-            }
-            .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12)
-        )
+        let stats = [GameHeroStat(symbol: "clock.fill", title: "Last played", value: g.lastPlayed.map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: Date()) } ?? "Never"),
+                     GameHeroStat(symbol: "hourglass", title: "Time played", value: GameInfo.duration(g.playSeconds ?? 0)),
+                     GameHeroStat(symbol: "internaldrive.fill", title: "On this device", value: sizeText)]
+        return GameHero(id: g.id, name: g.name, stats: stats, playTitle: preparing ? "Preparing" : "Play", playEnabled: !busy, play: { session.start(g) },
+                        back: back ? { leave() } : nil, compact: vSize == .compact) { chips(g, steamLaunch: steamLaunch) }
     }
 
     @ViewBuilder private func chips(_ g: Game, steamLaunch: Bool) -> some View {
@@ -172,7 +173,7 @@ struct GamePage: View {
 
     @ViewBuilder private func content(_ g: Game) -> some View {
         playSection(g)
-        SettingsGroup {
+        SettingsGroup(title: "Explore") {
             ActionRow(id: "gp-door-controls", symbol: "gamecontroller.fill", title: "Controls and key binds", subtitle: (g.controls ?? .standard) == .firstPerson ? "First person" : "Mouse and keys") { open(.controls) }
             ActionRow(id: "gp-door-compat", symbol: "checkmark.seal.fill", title: "How it runs for others", subtitle: compatSummary(g)) { open(.compat) }
             if g.steamAppID ?? g.dockAppID != nil {
@@ -183,6 +184,8 @@ struct GamePage: View {
                 ActionRow(id: "gp-door-friends", symbol: "person.2.fill", title: "Friends playing", subtitle: friendsSubtitle(g.steamAppID ?? g.dockAppID ?? 0)) { open(.friends) }
                 ActionRow(id: "gp-door-workshop", symbol: "puzzlepiece.extension.fill", title: "Workshop", subtitle: workshopSubtitle(g.steamAppID ?? g.dockAppID ?? 0), badge: "Beta") { open(.workshop) }
             }
+        }
+        SettingsGroup(title: "Manage") {
             ActionRow(id: "gp-door-more", symbol: "slider.horizontal.3", title: "More options", subtitle: "Speed, memory, engine and launch options") { open(.more) }
             ActionRow(id: "gp-door-about", symbol: "info.circle.fill", title: "About and files", subtitle: sizeText) { open(.about) }
         }
@@ -209,7 +212,7 @@ struct GamePage: View {
     private func compatSummary(_ g: Game) -> String {
         if let v = compat.badges[g.id]?.verdict { return v.title }
         if let p = compat.badges[g.id]?.past { return p.text }
-        return "Not yet tested"
+        return compat.hasReported(g) ? "Not yet tested" : "Not yet tested \u{00B7} be the first to report"
     }
 
     @ViewBuilder private func subContent(_ s: Sub, _ g: Game) -> some View {
@@ -219,6 +222,7 @@ struct GamePage: View {
             GameBindsSection(gameID: g.id)
         case .compat: compatSection(g)
         case .more:
+            TestedSetupGroup(gameID: g.id)
             RecommendedSettingsGroup(gameID: g.id)
             performanceSection(g)
             GameEngineSection(gameID: g.id)
@@ -248,10 +252,10 @@ struct GamePage: View {
                               info: "Through Steam: Valve's own client checks your licence first. Most Steam games need this. Run directly: starts the game without Steam. Only use it for games that don't check Steam when they start; a game that does will freeze on its first screen.",
                               options: [(false, "Through Steam"), (true, "Run directly")], selection: Binding(get: { g.launchDirect == true }, set: { model.setLaunchDirect($0, for: g) }))
                 }
-                OverrideRow(id: "gp-res", symbol: "display", title: "Resolution", info: "The size of the screen this game sees. Default follows Settings > Display. Applies the next time the game starts.",
+                OverrideRow(id: "gp-res", symbol: "display", title: "Resolution", info: "The size of the screen this game sees. Default follows Settings > Play. Applies the next time the game starts.",
                             value: DisplayResolution.offered(s.resolution), globalText: globalRes,
                             options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: aspect)) }) { v in setting(g) { $0.resolution = v } }
-                OverrideRow(id: "gp-power", symbol: "bolt.fill", title: "Power mode", info: "Default follows Settings > Performance. Max runs up to the screen\u{2019}s maximum (120 FPS on a ProMotion screen, otherwise 60), Saver is 30 FPS and cooler.",
+                OverrideRow(id: "gp-power", symbol: "bolt.fill", title: "Power mode", info: "Default follows Settings > Play. Max runs up to the screen\u{2019}s maximum (120 FPS on a ProMotion screen, otherwise 60), Saver is 30 FPS and cooler.",
                             value: s.powerMode, globalText: PowerManager.shared.chosen.title,
                             options: PowerMode.allCases.map { ($0.rawValue, $0.title) }) { v in setting(g) { $0.powerMode = v } }
             }
@@ -350,7 +354,13 @@ struct GamePage: View {
             }
             SettingsGroup {
                 ActionRow(id: "gp-reports", symbol: "list.bullet.rectangle", title: "See reports") { ask { browsing = true } }
-                ActionRow(id: "gp-write", symbol: "square.and.pencil", title: "Write a report") { ask { writing = true } }
+                // A game nobody has reported on this version of the engine is the one worth a report most: say so, and make the button the main one.
+                let reported = compat.hasReported(g), untested = compat.badges[g.id]?.verdict == nil
+                let earlier = compat.badges[g.id]?.earlier?.reports ?? 0
+                ActionRow(id: "gp-write", symbol: "square.and.pencil",
+                          title: reported ? "Update my report" : (untested ? (earlier > 0 ? "Report how it runs on this version" : "Be the first to report") : "Write a report"),
+                          subtitle: reported ? "You reported on this version." : (untested ? "Nobody has told us how it runs on this version yet. It takes under a minute." : nil),
+                          chevron: false, prominent: untested && !reported) { ask { writing = true } }
             }
         }
     }

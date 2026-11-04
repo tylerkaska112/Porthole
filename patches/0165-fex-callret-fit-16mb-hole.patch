@@ -1,0 +1,25 @@
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -93,7 +93,12 @@
+ 
+   // Allocate the call-ret stack with guard pages on both sides
+   /* 0.50.339: CALLRET_BASE_ALIGNMENT extra address space (only reserved, not touched) so that the base can be moved up to an 8MB boundary. */
+-  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE + CALLRET_BASE_ALIGNMENT;
++  /* Porthole 0165: exactly CALLRET_STACK_SIZE + CALLRET_BASE_ALIGNMENT (16 MB), not that plus two guard pages (16 MB + 8 KB). A freed rpmalloc span leaves a
++   * 16 MB hole in the emulator band and the old size missed it by 8 KB: a log of RDR2 through Rockstar's launcher had 1.45 GB free in 688 holes, the largest
++   * 0x1000000, and every new thread failed with "call-ret stack unavailable". Wine hands out 64 KB-aligned addresses, so the base (rounded up to 8 MB) is at most
++   * 8 MB - 64 KB above the start and the stack plus the page after it still fit. The guard pages were never enforced on iOS (see below); only the JIT's inline
++   * bounds check keeps the stack inside its window. */
++  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + CALLRET_BASE_ALIGNMENT;
+   const void* CallRetStackAlloc = nullptr;
+ #ifdef FEX_IOS_HOST
+   /* iOS-Madeira ml324: steer the call-ret stack out of the guest VA band.
+@@ -148,7 +153,7 @@
+   FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, CallRetStackAllocSize, FEXCore::Allocator::THPControl::Disable);
+ 
+   Thread->CallRetStackReservation = const_cast<void*>(CallRetStackAlloc);
+-  Thread->CallRetStackBase = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE + CALLRET_BASE_ALIGNMENT - 1) &
++  Thread->CallRetStackBase = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(CallRetStackAlloc) + CALLRET_BASE_ALIGNMENT - 1) &
+                                                     ~(uintptr_t)(CALLRET_BASE_ALIGNMENT - 1));
+   /* The COMMIT can fail on its own: the reservation only claims addresses.
+    * Hand the reservation back rather than leaking a 16MB hole in a band that

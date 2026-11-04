@@ -56,17 +56,16 @@ struct ItchGameTile: View {
             Button(action: open) {
                 Color.clear.aspectRatio(460.0 / 215.0, contentMode: .fit)
                     .overlay { EpicArtView(url: game.cover) }
-                    .overlay(alignment: .topLeading) { if let badge { BadgePill(badge: badge).padding(8) } }
+                    .overlay(alignment: .topLeading) { if let badge { TileStatus(badge: badge).padding(8) } }
                     .overlay(alignment: .bottomTrailing) { if showStore { StoreCorner(store: .itch, size: 26).padding(8) } }
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                    .storeTileStyle()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(TilePress())
             .focusTarget("ig-\(game.id)", radius: 18, scale: 1.1, action: open)
             VStack(alignment: .leading, spacing: 3) {
                 Text(game.title).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1)
                 if install?.state == .active {
-                    ProgressView(value: install?.progress.fraction ?? 0).tint(Theme.accent)
+                    TileProgress(value: install?.progress.fraction ?? 0)
                     Text(EpicText.progress(install?.progress ?? SteamDownloadProgress())).font(.caption2).foregroundStyle(Theme.textDim)
                 } else if case .failed(let why)? = install?.state {
                     Text(why).font(.caption2).foregroundStyle(Theme.bad).lineLimit(3)
@@ -96,47 +95,32 @@ struct ItchOwnedList: View {
     }
 
     var body: some View {
-        FocusScroll {
-            VStack(alignment: .leading, spacing: 18) {
-                FlowLayout(spacing: 10) {
-                    StoreSwitcher()
-                    if !network.isOnline { OfflineChip() }
-                    if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
-                    else { IconPillButton(id: "io-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
-                    searchField
-                    SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
-                    IconPillButton(id: "io-account", symbol: "person.crop.circle", label: "itch.io account") { showAccount = true }
-                }
-                if let error = network.isOnline ? (library.error ?? installer.error) : nil { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
-                if shown.isEmpty && !library.isLoading {
-                    Text(library.games.isEmpty ? "No games with a Windows download found on this account yet. Games you bought, claimed or got in a bundle show up here." : "No games match.")
-                        .foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
-                    ForEach(shown) { game in ItchGameTile(game: game) { open = game } }
-                }
-                Text("itch.io games are plain downloads: Porthole fetches the game's Windows file, unpacks it, and finds its program. Games that are made for a web browser are not listed.")
-                    .font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
+        StorePage {
+            StoreSwitcher()
+            if !network.isOnline { OfflineChip() }
+            if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
+            else { IconPillButton(id: "io-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
+            searchField
+            SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
+            IconPillButton(id: "io-account", symbol: "person.crop.circle", label: "itch.io account") { showAccount = true }
+        } content: {
+            if let error = network.isOnline ? (library.error ?? installer.error) : nil { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
+            if shown.isEmpty && !library.isLoading {
+                Text(library.games.isEmpty ? "No games with a Windows download found on this account yet. Games you bought, claimed or got in a bundle show up here." : "No games match.")
+                    .foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
             }
-            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 18)
-            .frame(maxWidth: 1400).frame(maxWidth: .infinity)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
+                ForEach(shown) { game in ItchGameTile(game: game) { open = game } }
+            }
+            Text("itch.io games are plain downloads: Porthole fetches the game's Windows file, unpacks it, and finds its program. Games that are made for a web browser are not listed.")
+                .font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
         }
         .sheet(item: $open) { game in ItchGameSheet(game: game) }
         .sheet(isPresented: $showAccount) { ItchSignInView() }
         .task { library.refreshIfStale() }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
-            TextField("Search \(library.games.count) game\(library.games.count == 1 ? "" : "s")", text: $search)
-                .textInputAutocapitalization(.never).autocorrectionDisabled().foregroundStyle(Theme.text)
-        }
-        .padding(.horizontal, 14).frame(minWidth: 200, minHeight: 40)
-        .background(Theme.panel, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
-        .focusTarget("io-search", radius: 20, scale: 1.02, action: {})
-    }
+    private var searchField: some View { SearchField(id: "io-search", prompt: "Search \(library.games.count) game\(library.games.count == 1 ? "" : "s")", text: $search) }
 }
 
 /// An itch.io game: its picture and name, which download to use, and the install actions for its state.
@@ -151,29 +135,15 @@ struct ItchGameSheet: View {
     private var state: ItchInstaller.State? { installer.installs[game.id]?.state }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Color.clear.aspectRatio(460.0 / 215.0, contentMode: .fit)
-                        .overlay { EpicArtView(url: game.cover) }
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(game.title).font(.system(size: 24, weight: .heavy, design: .rounded))
-                        if let author = game.author { Text("by \(author)").font(.subheadline).foregroundStyle(.secondary) }
-                    }
+        StoreSheetShell(store: .itch, title: game.title, subtitle: game.author.map { "by \($0)" }, close: { dismiss() }, art: { EpicArtView(url: game.cover) }) {
                     if let summary = game.summary, !summary.isEmpty { Text(summary).font(.footnote).foregroundStyle(.secondary) }
                     actions
                     if let error = installer.error { Label(error, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.red) }
                     if let page = game.page { Link(destination: page) { Label("Open on itch.io", systemImage: "safari") }.font(.subheadline) }
-                }
-                .padding(20)
-            }
-            .navigationTitle("itch.io").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
             .confirm("Uninstall \(game.title)?", message: "The game's folder is removed from this device. Your itch.io library is not touched.",
                      confirmTitle: "Uninstall and delete its files", destructive: true, isPresented: $confirmUninstall) { installer.uninstall(game.id) }
             .task { if state == nil, uploads == nil { uploads = await installer.uploads(for: game) } }
-        }
         .presentationDetents([.medium, .large])
     }
 
@@ -206,14 +176,14 @@ struct ItchGameSheet: View {
             button("Cancel", symbol: "xmark") { installer.cancel(game.id) }
         case .active?:
             let progress = installer.installs[game.id]?.progress ?? SteamDownloadProgress()
-            ProgressView(value: progress.fraction)
+            TileProgress(value: progress.fraction)
             Text(EpicText.progress(progress)).font(.footnote).foregroundStyle(.secondary)
             HStack {
                 button("Pause", symbol: "pause.fill") { installer.pause(game.id) }
                 button("Cancel", symbol: "xmark", role: .destructive) { installer.cancel(game.id) }
             }
         case .paused?:
-            ProgressView(value: installer.installs[game.id]?.progress.fraction ?? 0)
+            TileProgress(value: installer.installs[game.id]?.progress.fraction ?? 0)
             HStack {
                 button("Resume", symbol: "play.fill", prominent: true) { installer.install(game) }
                 button("Remove", symbol: "trash", role: .destructive) { installer.cancel(game.id) }
@@ -238,12 +208,9 @@ struct ItchGameSheet: View {
         }
     }
 
-    private func note(_ text: String) -> some View { Text(text).font(.footnote).foregroundStyle(.secondary) }
+    private func note(_ text: String) -> some View { Text(text).font(.footnote).foregroundStyle(Theme.textDim) }
 
     private func button(_ title: String, symbol: String, prominent: Bool = false, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            Label(title, systemImage: symbol).frame(maxWidth: .infinity).padding(.vertical, 6)
-        }
-        .buttonStyle(.borderedProminent).tint(prominent ? Theme.accent : (role == .destructive ? .red : .gray))
+        StoreSheetButton(title: title, symbol: symbol, prominent: prominent, destructive: role == .destructive, action: action)
     }
 }

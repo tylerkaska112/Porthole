@@ -68,9 +68,20 @@ final class SteamService {
     private func closeConnection() { backend?.close(); backend = nil }
 
     /// Steam no longer accepts the saved sign-in (the password changed, the session was revoked): sign out so the person signs in again.
+    /// One refusal is only noted; it is believed when Steam says it again at least 5 s later (within 10 minutes). A single answer must not delete a good sign-in.
+    private var firstLogonRefusal: Date?
     private func checkSessionOver(_ error: Error) {
         let text = (error as? SteamContentError)?.message ?? ""
-        if text.contains("Sign in for downloads again") || text.contains("sign-in for downloads has expired") { signOut() }
+        guard text.contains("Sign in for downloads again") || text.contains("sign-in for downloads has expired") else { return }
+        let now = Date()
+        if let first = firstLogonRefusal, now.timeIntervalSince(first) >= 5, now.timeIntervalSince(first) < 600 {
+            SteamLog.event("Steam: the saved sign-in was refused again on logon; signing out.")
+            firstLogonRefusal = nil
+            signOut()
+            return
+        }
+        if firstLogonRefusal == nil || now.timeIntervalSince(firstLogonRefusal!) >= 600 { firstLogonRefusal = now }
+        SteamLog.event("Steam: the saved sign-in was refused on logon; keeping it for now.")
     }
 
     /// Games and downloads leave Steam's servers alone while a Dock launch has Valve's client signed in.
@@ -82,12 +93,17 @@ final class SteamService {
 
     // MARK: Library
 
-    func ownedApps() async throws -> [SteamAppInfo] {
+    func ownedApps() async throws -> [SteamAppInfo] { try await ownedLibrary().apps }
+
+    /// The installable games and the depots the account's packages list (to tell which DLC an install can fetch).
+    func ownedLibrary() async throws -> (apps: [SteamAppInfo], depots: Set<Int>) {
         let backend = try connection()
         do {
-            return try await withCheckedThrowingContinuation { continuation in
-                backend.ownedApps { continuation.resume(with: $0.mapError { $0 as Error }) }
+            let library: (apps: [SteamAppInfo], depots: Set<Int>) = try await withCheckedThrowingContinuation { continuation in
+                backend.ownedLibrary { continuation.resume(with: $0.mapError { $0 as Error }) }
             }
+            firstLogonRefusal = nil
+            return library
         } catch { checkSessionOver(error); throw error }
     }
 

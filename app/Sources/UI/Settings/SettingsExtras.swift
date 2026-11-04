@@ -29,8 +29,8 @@ struct UpdatesPage: View {
     private static let perPage = 5
 
     var body: some View {
-        PageScaffold(title: "Updates", symbol: "arrow.triangle.2.circlepath") {
-            SettingsGroup(title: "This app") {
+        PageScaffold(title: "Updates", symbol: "arrow.triangle.2.circlepath", subtitle: "Keep Porthole up to date") {
+            SettingsGroup(title: "This app", note: "The version you are on and whether a newer one is ready.") {
                 ValueRow(id: "up-version", symbol: "app.badge.fill", title: "Installed", value: "\(updates.version) (\(updates.build))")
                 statusRow
                 ActionRow(id: "up-check", symbol: "arrow.clockwise", title: "Check for updates", chevron: false) { Task { await updates.check() } }
@@ -49,7 +49,7 @@ struct UpdatesPage: View {
                 jobRows
             }
             allVersions
-            SettingsGroup(title: "Signing") {
+            SettingsGroup(title: "Signing", note: "The certificate and profile used to install and update. A free Apple account's signature lasts seven days.") {
                 ForEach(updates.vault.certificates) { c in
                     ActionRow(id: "up-cert-\(c.id)", symbol: "person.text.rectangle.fill", title: c.label, subtitle: "Certificate", detail: "Remove", destructive: true, chevron: false) { updates.vault.removeCertificate(id: c.id) }
                 }
@@ -121,7 +121,7 @@ struct UpdatesPage: View {
             let pages = (releases.count + Self.perPage - 1) / Self.perPage
             let page = min(max(versionPage, 0), pages - 1)
             let shown = Array(releases[(page * Self.perPage)..<min((page + 1) * Self.perPage, releases.count)])
-            SettingsGroup(title: "Versions") {
+            SettingsGroup(title: "Versions", note: "Every build on the update server, so you can go back to an older one.") {
                 ForEach(shown) { release in
                     ActionRow(id: "up-v-\(release.build)", symbol: isInstalled(release) ? "checkmark.circle.fill" : "clock.arrow.circlepath", tint: isInstalled(release) ? Theme.good : Theme.accent,
                               title: release.title, subtitle: release.summary.isEmpty ? nil : release.summary,
@@ -223,56 +223,30 @@ struct UpdatesPage: View {
 // MARK: - Compatibility reports
 
 struct ReportsSettingsPage: View {
+    @Environment(AppRouter.self) private var router
     @ObservedObject private var compat = CompatStore.shared
     @AppStorage(CompatStore.showBadgesKey) private var showBadges = true
     @AppStorage(CompatStore.askKey) private var ask = true
-    @State private var mine: [CompatMyReport] = []
-    @State private var loading = false
-    @State private var error: String?
     @State private var confirmReset = false
-    @State private var deleting: CompatMyReport?
 
     var body: some View {
-        PageScaffold(title: "Compatibility reports", symbol: "checkmark.seal.fill") {
-            SettingsGroup(title: "Badges") {
+        PageScaffold(title: "Compatibility reports", symbol: "checkmark.seal.fill", subtitle: "How reports and badges work for you") {
+            SettingsGroup(title: "Reports tab", note: "How your games run on this version of the engine, what other people reported, and the reports you sent.") {
+                ActionRow(id: "rp-open", symbol: "checkmark.seal.fill", title: "Open the Reports tab", subtitle: "Your games and everything people reported") { router.openReports(.mine) }
+                ActionRow(id: "rp-mine", symbol: "paperplane.fill", title: "My reports",
+                          subtitle: compat.queuedCount > 0 ? "\(compat.queuedCount) waiting to be sent" : "The reports you sent, and how to delete one") { router.openReports(.sent) }
+            }
+            SettingsGroup(title: "Badges", note: "Small marks on games that show how they ran for other people.") {
                 ToggleRow(id: "rp-badges", symbol: "checkmark.seal.fill", title: "Show compatibility badges",
                           info: "Badges come from reports other people sent. After a game you can send one yourself; it takes under a minute.", isOn: $showBadges)
                 ToggleRow(id: "rp-ask", symbol: "questionmark.bubble.fill", title: "Ask me how a game ran", isOn: $ask)
             }
-            SettingsGroup(title: "My reports") {
-                if compat.queuedCount > 0 { Text("\(compat.queuedCount) report\(compat.queuedCount == 1 ? "" : "s") waiting to be sent.").font(.footnote).foregroundStyle(Theme.warn).padding(.horizontal, 6) }
-                if loading { ProgressView().tint(Theme.accent).frame(maxWidth: .infinity).padding() }
-                ForEach(mine) { r in
-                    ActionRow(id: "rp-\(r.id)", symbol: r.rating.symbol, tint: r.rating.color, title: r.gameTitle,
-                              subtitle: "\(r.device) \u{00B7} \(CompatDeviceInfo.date(r.date))\(r.hidden ? " \u{00B7} hidden" : "")" + (r.comment.map { $0.isEmpty ? "" : "\n\u{201C}\($0)\u{201D} \u{2014} \(r.commentStatus == "approved" ? "shown" : "waiting to be checked")" } ?? ""),
-                              detail: r.rating.title, chevron: false) { deleting = r }
-                }
-                if mine.isEmpty && !loading && error == nil { Text("You haven't sent any reports.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
-                if let error { Text(error).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
-                if !mine.isEmpty { Text("Press a report to delete it from the server.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
-            }
-            SettingsGroup(title: "Privacy") {
+            SettingsGroup(title: "Privacy", note: "Reports carry a random key kept on this device, not your name, and the game's log, which only the developer can read.") {
                 ActionRow(id: "rp-forget", symbol: "person.fill.xmark", title: "Forget my reporting identity",
                           info: "Reports are tied to a random key kept on this device, not to you. Forgetting it starts fresh: your old reports stay up but you can no longer edit or delete them.", destructive: true, chevron: false) { confirmReset = true }
             }
         }
-        .task { await load() }
-        .confirm("Forget this device's reporting identity?", confirmTitle: "Forget", destructive: true, isPresented: $confirmReset) { compat.forgetLocalData(); mine = [] }
-        .confirm("Delete this report?", message: deleting.map { "\($0.gameTitle) \u{2014} \($0.rating.title)" }, confirmTitle: "Delete", destructive: true,
-                 isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            if let r = deleting { Task { await delete(r) } }
-        }
-    }
-
-    private func load() async {
-        loading = true; error = nil
-        do { mine = try await CompatClient.standard().mine() } catch { self.error = error.localizedDescription }
-        loading = false
-    }
-
-    private func delete(_ r: CompatMyReport) async {
-        do { try await CompatClient.standard().delete(reportID: r.id); mine.removeAll { $0.id == r.id }; await compat.refreshBadges(for: AppModel.shared.games) }
-        catch { self.error = error.localizedDescription }
+        .confirm("Forget this device's reporting identity?", confirmTitle: "Forget", destructive: true, isPresented: $confirmReset) { compat.forgetLocalData() }
     }
 }
 
@@ -290,7 +264,7 @@ struct LogPage: View {
 
     var body: some View {
         PageScaffold(title: "Log", symbol: "doc.text.fill") {
-            SettingsGroup {
+            SettingsGroup(title: "Log", note: "What Porthole and the engine wrote during the last run. Report a problem sends it for you.") {
                 ValueRow(id: "lg-count", symbol: "list.bullet", title: "Entries", value: "\(store.entries.count)")
                 ActionRow(id: "lg-read", symbol: "doc.text.magnifyingglass", title: "Read the log", subtitle: "Newest first. Share it from the Files app: Porthole > madeira-log.txt") { reading = true }
             }

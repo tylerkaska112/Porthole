@@ -11,7 +11,7 @@ shasum -a 256 -c Porthole-*.ipa.sha256
 ```
 
 ## 2. Sign and install it
-The IPA contains the app and three extensions. All four need to be signed with a **development** certificate and a provisioning profile that
+The IPA contains the app and four extensions (the last one is optional, see below). All five need to be signed with a **development** certificate and a provisioning profile that
 lists your device and includes these capabilities:
 
 | Part | Bundle id in the IPA | Needs |
@@ -20,6 +20,7 @@ lists your device and includes these capabilities:
 | JIT helper (extension) | `site.portholehq.app.jithelper` | a profile for its own App ID |
 | Tunnel (extension) | `site.portholehq.app.tunnel` | a profile for its own App ID, Network Extension (packet tunnel) |
 | Download card (extension) | `site.portholehq.app.activity` | a profile for its own App ID |
+| Donor memory (extension, optional) | `site.portholehq.app.MemoryHost` | a profile for its own App ID |
 
 - Change the bundle ids to ones registered to your own team, **keeping the prefix the same**: if the app becomes `com.example.porthole`, the
   extensions must be `com.example.porthole.jithelper`, `com.example.porthole.tunnel` and `com.example.porthole.activity`. Most signing tools do this for you.
@@ -32,15 +33,16 @@ lists your device and includes these capabilities:
 
 ### Fewer App IDs (optional)
 
-A free Apple account only allows a few App IDs, and the full install uses four. You can leave the extensions out **when you sign**
+A free Apple account only allows a few App IDs, and the full install uses five. You can leave the extensions out **when you sign**
 (delete them from `Payload/Porthole.app/PlugIns/`, or use your signing tool's "remove app extensions" option). It is the same IPA either way:
 
 | Install | App IDs | What you give up |
 |---|---|---|
-| Complete | 4 | nothing |
-| Without `F4Activity.appex` | 3 | The download card with Pause and Cancel buttons on the lock screen and in the Dynamic Island. Downloads show iOS's own progress card instead. |
-| Without `F4Tunnel.appex` too | 2 | Porthole's own private link: run **LocalDevVPN** before you press Play. Your own VPN is then never paused. |
-| Without `F4Tunnel.appex`, `F4JITHelper.appex` and `F4Activity.appex` | 1 | "Porthole turns JIT on by itself": use **StikDebug** (or another tool) to switch JIT on instead. |
+| Complete | 5 | nothing |
+| Without `F4MemoryHost.appex` | 4 | Donor memory (Settings, Engine options): extra memory for a game that needs more than the app's own limit. |
+| Without `F4Activity.appex` | 4 | The download card with Pause and Cancel buttons on the lock screen and in the Dynamic Island. Downloads show iOS's own progress card instead. |
+| Without `F4Tunnel.appex` too | 3 | Porthole's own private link: run **LocalDevVPN** before you press Play. Your own VPN is then never paused. |
+| Without `F4Tunnel.appex`, `F4JITHelper.appex`, `F4Activity.appex` and `F4MemoryHost.appex` | 1 | "Porthole turns JIT on by itself": use **StikDebug** (or another tool) to switch JIT on instead. |
 
 You can mix them: each extension is independent, so leave out only the ones you do not want.
 

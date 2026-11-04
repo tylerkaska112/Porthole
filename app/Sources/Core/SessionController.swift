@@ -16,9 +16,10 @@ final class SessionController: ObservableObject {
         case failed(String)
     }
 
-    @Published private(set) var state: State = .idle {
-        didSet { if case .failed = state { CellularGuard.shared.restoreIfPaused() } }          // cellular data switched off for the tunnel comes back on
-    }
+    @Published private(set) var state: State = .idle
+    /// A launch that failed is on the screen. Cellular data and the person's VPN, switched off for the launch, come back only when the message is dismissed (dismiss()): bringing them back
+    /// runs Shortcuts, which leaves the app, and the message was gone a second after it appeared.
+    var failureOnScreen: Bool { if case .failed = state { return true }; return false }
     @Published private(set) var game: Game?
     @Published private(set) var jitEnabled = jit_check_debugged()
     /// While a Steam (Dock) launch runs: what Valve's client is doing, from the host's report.
@@ -49,6 +50,8 @@ final class SessionController: ObservableObject {
     @Published private(set) var restartNeeded = false
     /// The launch failed in a way a fresh start of the app fixes (the home screen's notice then offers Close Porthole).
     @Published private(set) var restartAdvised = false
+    /// The name of the game that was not started because it is a .NET Framework program and Wine Mono is not on the device (Home offers the download).
+    @Published private(set) var monoNeededFor: String?
     static let minimumSteamPool = 640 << 20
     private var dockPoll: Timer?
     private var dockGame: DockGame?
@@ -61,7 +64,7 @@ final class SessionController: ObservableObject {
     /// True once a window of the game has put a picture on screen.
     @Published private(set) var launchGameUp = false
     /// The person asked to look at Steam's own window instead of the launch screen.
-    @Published var launchPeeking = false
+    @Published var launchPeeking = false { didSet { if launchPeeking != oldValue { LogStore.shared.log("[launch-screen] peeking at Steam: \(launchPeeking)") } } }
     private var launchCancelled = false
     private var wineStarted = false
     private var launchWatch: Timer?
@@ -99,8 +102,16 @@ final class SessionController: ObservableObject {
     func switchLayout(to layout: ControlLayout) {
         guard layout != activeLayout else { return }
         activeLayout = layout
-        if let g = game { AppModel.shared.update(g) { $0.controls = layout == .standard ? nil : layout } }
+        updateGame { $0.controls = layout == .standard ? nil : layout }
         LogStore.shared.log("[controls] layout \(layout == .firstPerson ? "first person" : "mouse and keys")")
+    }
+
+    /// The running game's entry as the library holds it. A program started from outside the library (an installer run, which is how a game still being developed is started)
+    /// has an entry the library never stores, so edits made in the game are kept on the session's own copy instead of being dropped.
+    private func updateGame(_ change: (inout Game) -> Void) {
+        guard let g = game else { return }
+        if AppModel.shared.games.contains(where: { $0.id == g.id }) { AppModel.shared.update(g, change) }
+        else { var copy = g; change(&copy); game = copy }
     }
 
     // MARK: The controller the game is shown, while it runs
@@ -109,13 +120,13 @@ final class SessionController: ObservableObject {
     /// The DualSense exists only when the session started with it (a PlayStation controller connected, or the game's Controller choice); the menu says so otherwise.
     func setPadMode(_ mode: String?) {
         guard isActive, let g = game else { return }
-        AppModel.shared.update(g) {
+        updateGame {
             var e = $0.engine ?? GameEngine()
             e.controllerMode = mode; e.padAuto = nil
             $0.engine = e.isEmpty ? nil : e
         }
         LogStore.shared.log("[pad] controller choice from the in-game menu: \(mode ?? "automatic")")
-        if let fresh = AppModel.shared.games.first(where: { $0.id == g.id }) {
+        if let fresh = AppModel.shared.games.first(where: { $0.id == g.id }) ?? game {
             game = fresh
             PadInput.shared.updateLive(for: fresh)
         }
@@ -125,16 +136,17 @@ final class SessionController: ObservableObject {
 
     /// Reads the game's bind sets again after a change made in the game (the editor, the set picker): the touch layout and the controller binds apply at once.
     func bindSetsChanged() {
-        guard isActive, let g = game, let fresh = AppModel.shared.games.first(where: { $0.id == g.id }), fresh != g else { return }
-        game = fresh
+        guard isActive, let g = game else { return }
+        let fresh = AppModel.shared.games.first(where: { $0.id == g.id }) ?? g          // not in the library (an installer run): the session's own copy
+        if fresh != g { game = fresh }
         if activeTouchLayout != fresh.activeBindSet?.touch { activeTouchLayout = fresh.activeBindSet?.touch }
         PadInput.shared.updateLive(for: fresh)
     }
 
     /// The on-screen editor moved, added or removed a control: keep the layout in the set in use.
     func saveLiveTouchLayout(_ layout: TouchLayout) {
-        guard let g = game else { return }
-        AppModel.shared.update(g) { game in
+        guard game != nil else { return }
+        updateGame { game in
             guard let active = game.activeBindSetID, var sets = game.bindSets, let i = sets.firstIndex(where: { $0.id == active }) else { return }
             sets[i].touch = layout; sets[i].updated = Date(); game.bindSets = sets
         }
@@ -145,7 +157,7 @@ final class SessionController: ObservableObject {
         guard let g = game else { return }
         var set = BindSet(name: "On-screen controls", touch: template)
         var n = 2; while (g.bindSets ?? []).contains(where: { $0.name == set.name }) { set.name = "On-screen controls \(n)"; n += 1 }
-        AppModel.shared.update(g) { $0.bindSets = ($0.bindSets ?? []) + [set]; $0.activeBindSetID = set.id }
+        updateGame { $0.bindSets = ($0.bindSets ?? []) + [set]; $0.activeBindSetID = set.id }
         LogStore.shared.log("[binds] new set \"\(set.name)\" made in the game")
         bindSetsChanged()
     }
@@ -154,7 +166,7 @@ final class SessionController: ObservableObject {
     func adjustLook(by factor: Double) {
         let v = min(max(lookSensitivity * factor, LaunchSettings.lookRange.lowerBound), LaunchSettings.lookRange.upperBound)
         lookSensitivity = (v * 100).rounded() / 100
-        if let g = game { AppModel.shared.update(g) { var st = $0.settings ?? GameSettings(); st.lookSensitivity = lookSensitivity; $0.settings = st } }
+        updateGame { var st = $0.settings ?? GameSettings(); st.lookSensitivity = lookSensitivity; $0.settings = st }
         LogStore.shared.log("[controls] look sensitivity \(lookSensitivity)")
     }
 
@@ -197,6 +209,7 @@ final class SessionController: ObservableObject {
 
     /// Games with a known problem get their small workaround (see GameFixes) right before they start.
     private static var gluedPoolsSet = false
+    private static var scLayoutSet = false
     private func applyKnownFixes(for game: Game) {
         let known = GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)
         // The address-space layout is decided once, when the runtime starts (virtual_ios.c ios_pa32_soft_enabled).
@@ -213,7 +226,17 @@ final class SessionController: ObservableObject {
             unsetenv("MADEIRA_GLUED_MAIN")
             if Self.gluedPoolsSet { unsetenv("MADEIRA_SC_PA_POOLS"); Self.gluedPoolsSet = false }
         }
+        // Madeira's Social Club layout (read once, when the runtime starts), for the launcher's web helper only.
+        if let layout = known?.scPaPools {
+            setenv("MADEIRA_SC_PA_POOLS", "\(layout)", 1); Self.scLayoutSet = true
+            LogStore.shared.log("[game-fix] \(known!.title): Social Club's web helper gets Madeira's layout \(layout) for Chromium's pools")
+        } else if Self.scLayoutSet { unsetenv("MADEIRA_SC_PA_POOLS"); Self.scLayoutSet = false }
         guard let fix = known, let exe = AppModel.unixURL(forWindows: game.exe) else { return }
+        for path in fix.freshFolders {
+            guard let url = AppModel.unixURL(forWindows: path), FileManager.default.fileExists(atPath: url.path) else { continue }
+            do { try FileManager.default.removeItem(at: url); LogStore.shared.log("[game-fix] \(fix.title): cleared \(path) (state saved by an earlier run breaks the next start)") }
+            catch { LogStore.shared.log("[game-fix] \(fix.title): could not clear \(path): \(error.localizedDescription)", level: .error) }
+        }
         for line in GameFixes.restoreFormer(fix, in: exe.deletingLastPathComponent()) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
         for line in GameFixes.hide(fix, in: exe.deletingLastPathComponent()) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
         // Wine reads this once, when the first library is loaded in this run, so it has to be set before the game starts.
@@ -262,6 +285,7 @@ final class SessionController: ObservableObject {
             state = .failed("Porthole has to close and open again before the next game starts. Use Close Porthole on the Home screen, then open it again.")
             return
         }
+        monoNeededFor = nil
         launchCancelled = false; wineStarted = false; launchGameUp = false; launchPeeking = false; launchHold = false; restartAdvised = false; launchStep = .jit; launchBegan = Date()
         launchViaSteam = game.dockAppID != nil && game.launchDirect != true && GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)?.alwaysDirect != true
         self.game = game
@@ -279,6 +303,7 @@ final class SessionController: ObservableObject {
         applyKnownFixes(for: game)
         let fix = GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)
         if let appID = game.dockAppID, game.launchDirect != true, fix?.alwaysDirect != true {
+            if refuseWithoutMono(game, program: game.exe) { return }
             startViaSteam(game, appID: appID)
             return
         }
@@ -286,6 +311,7 @@ final class SessionController: ObservableObject {
             LogStore.shared.log("[game-fix] \(fix!.title): starting without Steam's launcher (\(fix!.why))")
         }
         let target = programForDirectLaunch(game, fix)
+        if refuseWithoutMono(game, program: target.exe) { return }
         if fix?.ownSteamIdentity == true, let id = game.dockAppID ?? game.steamAppID {
             // The runtime reads these once, for this launch only, and clears them (WineProcessBridge).
             let folder = GameFixes.windowsPath(replacingLastComponentOf: game.exe, with: "").dropLast()    // "C:\\...\\assettocorsa"
@@ -301,10 +327,42 @@ final class SessionController: ObservableObject {
         }
     }
 
+    /// A .NET Framework program cannot start without Wine Mono (Wine ends it at once): ask for the download now, while nothing has started and the next try can work.
+    /// Covers a Steam game started through Steam's client too, whose program is the one the game lists.
+    private func refuseWithoutMono(_ game: Game, program exe: String) -> Bool {
+        guard !WineMonoModel.available, let url = AppModel.unixURL(forWindows: exe), DotNetCheck.isManaged(url) else { return false }
+        LogStore.shared.log("[wine-mono] \(exe) is a .NET Framework program and Wine Mono is not installed: not starting it")
+        monoNeededFor = game.name
+        state = .failed("\(game.name) is built on Microsoft's .NET Framework, which needs Wine Mono (about 42 MB). Download it, then start the game again.")
+        return true
+    }
+
     /// An Epic game gets its short-lived exchange code only now, after JIT is on, so it is fresh when Wine starts (the code stays out of the saved game and the log).
     /// With no connection (airplane mode, or Epic's servers out of reach) the game starts without Epic's sign-in, like Epic's own launcher's offline mode: a single-player
     /// game just runs, and one that needs Epic's online services will say it cannot reach them.
     private func launchResolved(_ target: Game) {
+        // A GOG game whose build has a Galaxy client gets GOG's game services answered on 127.0.0.1:9977 for this play (Gog/GogGalaxy.swift); any other game stops an earlier one.
+        GogGalaxy.shared.prepare(target)
+        // An EA game needs its licence, the EA app's registry keys and environment, and the local service the EA app would provide (EA/EAInstaller.swift); any other game
+        // starts with the EA app's environment cleared.
+        if target.eaOfferID != nil {
+            state = .starting
+            Task { @MainActor in
+                do {
+                    try await EAInstaller.shared.prepareLaunch(target)
+                } catch {
+                    guard !launchCancelled else { return }
+                    EAInstaller.shared.sessionEnded()
+                    state = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                    LogStore.shared.log("[ea-launch] failed: \((error as? EAAPIError)?.reason ?? String(describing: type(of: error)))", level: .error)
+                    return
+                }
+                guard !launchCancelled else { EAInstaller.shared.sessionEnded(); return }
+                launch(target)
+            }
+            return
+        }
+        EAInstaller.clearEnvironment()
         guard let appName = target.epicAppName else { launch(target); return }
         state = .starting
         Task { await EpicAuth.shared.probeCloudSaves(appName: appName) }      // read-only: only counts reach the log
@@ -543,7 +601,40 @@ final class SessionController: ObservableObject {
                 setenv("MADEIRA_X64_IMAGE_DATA", "1", 1)
                 LogStore.shared.log("[engine] plain x64 programs stay out of the code pool (a launcher with its own service is running)")
             } else if (MadeiraConfig.get("env.MADEIRA_X64_IMAGE_DATA") ?? "").isEmpty { unsetenv("MADEIRA_X64_IMAGE_DATA") }
-            if DockInstallers.serverSync { setenv("MADEIRA_MADSYNC_SESSION", "0", 1) } else { unsetenv("MADEIRA_MADSYNC_SESSION") }
+            // A launcher's own automatic-start service needs a service manager in the game session, which the Dock host starts when asked (DockGameSession, from Madeira:
+            // the game's MADEIRA_DOCK_GAME_SCM, else the prefix's system.reg decides). Such a session also gives madsync up and runs fastsync in its place.
+            var ownLines = (GameFixes.fix(forSteamAppID: dockGame.id)?.configLines ?? []).joined(separator: "\n")
+            if let lines = game.engine?.config, !lines.isEmpty { ownLines += (ownLines.isEmpty ? "" : "\n") + lines }
+            let scm = DockGameSession.decide(prefix: AppModel.prefix, gameConfig: ownLines.isEmpty ? nil : ownLines, thirdPartyInstalls: DockInstallers.thirdPartyInstalls)
+            setenv("MADEIRA_DOCK_GAME_SCM", scm.exported, 1)
+            LogStore.shared.log(scm.logLine)
+            let scmServerSync = DockGameSession.serverSyncOff(scm, madsyncConfigured: DockInstallers.madsyncConfigured)
+            // A 32-bit program behind a 64-bit launcher chain needs its 4 GB guest window late in the session, when the launcher's browser helper has taken most of the map;
+            // ntdll holds one placeholder from the session start, and it goes only to the game's own 32-bit programs (Valve's 32-bit client service took it once).
+            let installFolder = gameFolder ?? SteamInstallPaths.common(drive: AppModel.driveC).appendingPathComponent(dockGame.installDir, isDirectory: true)
+            if DockGameSession.has32BitProgram(in: installFolder, machine: DockInstallers.machine) {
+                setenv("MADEIRA_WOW_HOLD_WINDOWS", "1", 1)
+                LogStore.shared.log("[dock-wow] the game's folder holds a 32-bit program: one guest-window placeholder is held from session start (MADEIRA_WOW_HOLD_WINDOWS=1)")
+                if MadeiraConfig.flag("MADEIRA_WOW_HOLD_FOR_GAME") { setenv("MADEIRA_WOW_HOLD_FOR", dockGame.windowsInstallPath + "\\", 1) } else { unsetenv("MADEIRA_WOW_HOLD_FOR") }
+            } else {
+                unsetenv("MADEIRA_WOW_HOLD_WINDOWS"); unsetenv("MADEIRA_WOW_HOLD_FOR")
+            }
+            // A 64-bit title beside its 32-bit helpers: its memory takes donor RAM first even while a 32-bit program is in the session (env.MADEIRA_DOCK_X64_TITLE = 0 keeps the file first).
+            if MadeiraConfig.flag("MADEIRA_DOCK_X64_TITLE"), DockGameSession.largestProgramMachine(in: installFolder, machine: DockInstallers.machine) == 0x8664 {
+                setenv("MADEIRA_SWAP_X64_TITLE", "1", 1)
+                LogStore.shared.log("[dock-wow] the game's largest program is 64-bit: its memory takes donor RAM first, then the swap file (MADEIRA_SWAP_X64_TITLE=1)")
+            } else { unsetenv("MADEIRA_SWAP_X64_TITLE") }
+            if DockInstallers.serverSync || scmServerSync {
+                setenv("MADEIRA_MADSYNC_SESSION", "0", 1)
+                LogStore.shared.log(DockInstallers.serverSync
+                    ? "[dock-installers] this session runs one-time installs: madsync off for this session only (MADEIRA_MADSYNC_SESSION=0)"
+                    : "[dock-game-scm] this session starts the service manager: madsync off for this session only (MADEIRA_MADSYNC_SESSION=0; env.MADEIRA_DOCK_GAME_SCM_SERVER_SYNC = 0 keeps madsync)")
+                // The session runs fastsync, which leaves every object's state with the server, instead of Wine's standard sync (a job-system game sent ~33,000 waits and wakes a second).
+                if scmServerSync, !DockInstallers.serverSync, getenv("MADEIRA_FASTSYNC") == nil, MadeiraConfig.flag("MADEIRA_DOCK_GAME_SCM_FASTSYNC") {
+                    setenv("MADEIRA_FASTSYNC", "auto", 1)
+                    LogStore.shared.log("[dock-game-scm] fastsync for this session in madsync's place (MADEIRA_FASTSYNC=auto; env.MADEIRA_DOCK_GAME_SCM_FASTSYNC = 0 keeps Wine's standard sync)")
+                }
+            } else { unsetenv("MADEIRA_MADSYNC_SESSION") }
             // The programs Valve's client starts are often 32-bit: they need the shared GDI handle table (Madeira's Dock setup).
             setenv("MADEIRA_GDI_SHARED_SECTION", "1", 1)
             launch(game, dock: dockGame)
@@ -710,7 +801,11 @@ final class SessionController: ObservableObject {
     }
 
     func dismiss() {
-        if !isActive { state = .idle; game = nil }
+        LogStore.shared.log("[session] dismiss() while \(state) (active: \(isActive))")
+        let wasFailure = failureOnScreen
+        if !isActive { state = .idle; game = nil; monoNeededFor = nil }
+        // The VPN and cellular data a failed launch left switched off (held while the message was up).
+        if wasFailure, !isActive { VPNGuard.shared.restoreIfPaused(); CellularGuard.shared.restoreIfPaused() }
     }
 
     /// Saves "last played" at the start and the play time once a minute, so a game that closes the whole app still counts.
@@ -821,6 +916,7 @@ final class SessionController: ObservableObject {
         SchedHints.begin()
         GameLogTail.begin()
         SteamOverlayBlock.apply(drive: AppModel.prefix.appendingPathComponent("drive_c")) { LogStore.shared.log($0) }
+        HardwareInput.shared.beginSession()                                 // a hardware keyboard and mouse belong to the game from here
         PadInput.shared.beginSession(for: game, viaSteam: launchViaSteam)   // physical controllers for this game (before the wineserver reads MADEIRA_HIDPAD)
         // Exact shader math (patches/0004). Read once by the shader translator, so it only applies to the next launch.
         let precise = activeSettings.preciseMath
@@ -853,12 +949,37 @@ final class SessionController: ObservableObject {
             // Windows system programs (installers run from C:\windows) and anything unreadable keep it, as before.
             if let exe = AppModel.unixURL(forWindows: game.exe), !game.exe.lowercased().hasPrefix("c:\\windows\\") {
                 let verdict = ExecutableWindow.releaseReason(forProgram: exe)
-                log.log("[exe-window] \(verdict.release ? "can be given back" : "kept"): \(verdict.text)")
-                StikJITHelper.releaseExeWindowReason = verdict.release ? verdict.text : nil
+                if GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)?.keepExeWindow == true {
+                    log.log("[exe-window] kept: this game's own list needs the window held (pool-low, pool-split; GameFixes keepExeWindow) — \(verdict.text)")
+                    StikJITHelper.releaseExeWindowReason = nil
+                } else {
+                    log.log("[exe-window] \(verdict.release ? "can be given back" : "kept"): \(verdict.text)")
+                    StikJITHelper.releaseExeWindowReason = verdict.release ? verdict.text : nil
+                }
             } else {
                 StikJITHelper.releaseExeWindowReason = nil
                 log.log("[exe-window] kept: a Windows system program")
             }
+            // A fixed-base program larger than the 128 MB window (an Unreal game's 487 MB shipping exe, loading at 0x140000000 with no relocations) cannot be mapped at all unless the window is
+            // widened over it: "failed to create main module ... c0000018". The engine widens it when told how far the program reaches (exe-window-mb, Madeira PR 407; Madeira's own
+            // Dock launches measure the install folder the same way) and places the pool above it. A game file's own `exe-window-mb` line wins.
+            var widenedWindowMB = 0
+            if StikJITHelper.releaseExeWindowReason == nil {
+                let folder = dock.flatMap { AppModel.unixURL(forWindows: $0.windowsInstallPath) } ?? AppModel.unixURL(forWindows: game.exe)?.deletingLastPathComponent()
+                // A batch file (Steam Big Picture's big-picture.bat) names no program of its own, and a program at the top of drive C has every game on the drive in its "folder": measuring
+                // that folder widened the window for another game's program (Final Fantasy Resonance's, for Big Picture). Neither is measured.
+                let lower = game.exe.lowercased()
+                let batch = lower.hasSuffix(".bat") || lower.hasSuffix(".cmd")
+                let atDriveRoot = folder.map { $0.standardizedFileURL.path == AppModel.driveC.standardizedFileURL.path } ?? false
+                if dock == nil, batch || atDriveRoot {
+                    StikJITHelper.exeWindowAutoMB = 0
+                    log.log("[exe-window] not measured: \(batch ? "a batch file names no program" : "the program sits at the top of drive C, so its folder holds every game")")
+                } else if let folder, let need = StikJITHelper.fixedBaseWindowMB(in: folder) {
+                    StikJITHelper.exeWindowAutoMB = need.mb
+                    widenedWindowMB = need.mb
+                    log.log("[exe-window] \(need.exe) is a fixed-base program that reaches \(need.mb) MB above 0x140000000: the executable window is widened to \(need.mb) MB for this start and the pool is placed above it")
+                } else { StikJITHelper.exeWindowAutoMB = 0 }
+            } else { StikJITHelper.exeWindowAutoMB = 0 }
             let poolBytes = EngineLaunch.poolBytes()
             log.log("Allocating \(poolBytes >> 20)MB JIT pool (the debugger services a BRK)...")
             guard let pool = StikJITHelper.allocatePool(poolSize: poolBytes) else {
@@ -874,19 +995,41 @@ final class SessionController: ObservableObject {
             let dockLaunch = MadeiraDock.takeLaunchRequest()
             // Valve's client and the game together need about 600 MB of the JIT pool and more as the game loads. When iOS has put something in the spot the pool normally takes (it is a
             // matter of where the system placed memory in this one start of the app), the pool shrinks, and a Steam game runs out of memory a minute later. Say so now, before it starts.
-            if dockLaunch.dock, pool.size < Self.minimumSteamPool {
-                log.log("[launch] the JIT pool is only \(pool.size >> 20) MB on this start of the app (a Steam game needs about \(EngineLaunch.poolBytes() >> 20)); not starting the game", level: .error)
+            // A split pool (pool-split) is one span with a stretch in the middle that is never handed out (the main thread's stack): only the rest is room for the game.
+            let usablePool = pool.size - [StikJITHelper.poolHole, StikJITHelper.poolHole2].compactMap { $0 }.reduce(0) { $0 + ($1.end - $1.off) }
+            // A widened window (above) takes room from the pool for good, so what is left is all there can be: the program that needed it is not copied into the pool (x64 images
+            // stay out of it), which is what the usual 640 MB covers.
+            let minimumPool = widenedWindowMB > 128 ? min(Self.minimumSteamPool, 448 << 20) : Self.minimumSteamPool
+            if dockLaunch.dock, usablePool < minimumPool {
+                log.log("[launch] the JIT pool is only \(usablePool >> 20) MB on this start of the app (a Steam game needs about \(EngineLaunch.poolBytes() >> 20)); not starting the game", level: .error)
                 StikJITHelper.detachDebugger()
-                CellularGuard.restoreBlocking()
-                VPNGuard.restoreBlocking()
+                // Cellular data and the VPN come back when the message is dismissed (dismiss()): doing it now runs Shortcuts and leaves the app before the message can be read.
                 DispatchQueue.main.async {
                     ws_log_quiet = 0
                     LogStore.shared.uiPaused = false
                     PowerManager.shared.stop()
                     self?.restartAdvised = true
-                    self?.state = .failed("iOS left too little room for this game on this start of Porthole (\(pool.size >> 20) MB of the \(poolBytes >> 20) MB it needs). Close Porthole and open it again, then start the game: it is different each time.")
+                    self?.state = .failed("iOS left too little room for this game on this start of Porthole (\(usablePool >> 20) MB of the \(minimumPool >> 20) MB it needs). Close Porthole and open it again, then start the game: it is different each time.")
                 }
                 return
+            }
+            // The widening above can fail on a start: iOS had already put something (the heap, say) inside the range the window has to cover, and it stays 128 MB. The game's program then
+            // cannot load (c0000018) whatever else happens, so say so now instead of after Valve's client has started. The placement is different on every start of the app.
+            if widenedWindowMB > 128 {
+                var windowMB = 128
+                if let raw = getenv("WINE_IOS_EXE_WINDOW"), let size = String(cString: raw).split(separator: ":").last, let bytes = UInt64(size, radix: 16) { windowMB = Int(bytes >> 20) }
+                if windowMB < widenedWindowMB {
+                    log.log("[launch] the executable window could not be widened to \(widenedWindowMB) MB on this start of the app (it is \(windowMB) MB): the game's program cannot load; not starting the game", level: .error)
+                    StikJITHelper.detachDebugger()
+                    DispatchQueue.main.async {
+                        ws_log_quiet = 0
+                        LogStore.shared.uiPaused = false
+                        PowerManager.shared.stop()
+                        self?.restartAdvised = true
+                        self?.state = .failed("iOS put something in the part of memory this game's program has to load at (it needs \(widenedWindowMB) MB there) on this start of Porthole. Close Porthole and open it again, then start the game: it is different each time.")
+                    }
+                    return
+                }
             }
             if dockLaunch.dock { setenv("MADEIRA_DOCK_SESSION", "1", 1) } else { unsetenv("MADEIRA_DOCK_SESSION") }
             // A Dock session runs Valve's client headless, with no Chromium, so nothing claims the 8 GB address-space holdback reserved for Chromium's V8 cage.
@@ -896,6 +1039,16 @@ final class SessionController: ObservableObject {
             setenv("WINE_IOS_JIT_RX", String(format: "%lx", Int(bitPattern: pool.rx)), 1)
             setenv("WINE_IOS_JIT_RW", String(format: "%lx", Int(bitPattern: pool.rw)), 1)
             setenv("WINE_IOS_JIT_SIZE", String(format: "%lx", pool.size), 1)
+            // The split / mid / low pool layouts (pool-split, pool-mid, pool-low): Madeira's own app tells the engine about them here (ContentView.swift) and Porthole never did.
+            // Without WINE_IOS_JIT_HOLE the engine does not know the main thread's stack sits inside a split pool and hands that range out as image copies (the app ended
+            // seconds after launch: 1.2.8, 1.2.20); without WINE_IOS_JIT_TAIL_REGION it cannot see region C, so Social Club's layout 2 (which needs the RW alias at 0x7900000000)
+            // fell back to layout 1 and the web helper's Chromium pools failed (1.2.26 log 08:17).
+            if let hole = StikJITHelper.poolHole { setenv("WINE_IOS_JIT_HOLE", String(format: "%lx:%lx", hole.off, hole.end), 1) } else { unsetenv("WINE_IOS_JIT_HOLE") }
+            if let hole2 = StikJITHelper.poolHole2 { setenv("WINE_IOS_JIT_HOLE2", String(format: "%lx:%lx", hole2.off, hole2.end), 1) } else { unsetenv("WINE_IOS_JIT_HOLE2") }
+            if let low = StikJITHelper.poolLow {
+                setenv("WINE_IOS_JIT_TAIL_REGION", String(format: "%lx:%lx", low.rx, low.size), 1)
+                LogStore.shared.log(String(format: "[pool-low] WINE_IOS_JIT_TAIL_REGION=%lx:%lx (%ldMB for FEX code buffers)", low.rx, low.size, low.size >> 20))
+            } else { unsetenv("WINE_IOS_JIT_TAIL_REGION") }
             StikJITHelper.detachDebugger()
             // JIT is set up and the debugger has gone: if cellular data was switched off for the tunnel, switch it back on now, before the game starts
             // (leaves the app for a moment; does nothing otherwise).
@@ -956,12 +1109,18 @@ final class SessionController: ObservableObject {
                 }
                 Thread.sleep(forTimeInterval: 0.5)
             }
+            if wine_process_is_running() == 0 {
+                let code = wine_process_exit_code()
+                DispatchQueue.main.async { LogStore.shared.log("[session] the program ended with exit code \(code) (0x\(String(UInt32(bitPattern: code), radix: 16, uppercase: true)))") }
+            }
             DispatchQueue.main.async {
                 ws_log_quiet = 0
                 LogStore.shared.uiPaused = false
                 PowerManager.shared.stop()
-                PadInput.shared.endSession(); ProMotionHold.shared.end(); SchedHints.end(); GameLogTail.end()
+                HardwareInput.shared.endSession(); PadInput.shared.endSession(); ProMotionHold.shared.end(); SchedHints.end(); GameLogTail.end()
                 AutoBackup.afterSession()
+                EAInstaller.shared.sessionEnded()
+                GogGalaxy.shared.stop()
                 self?.endPlayCheckpoints()
                 if let g = self?.game, self?.runningSince != nil {
                     self?.runningSince = nil
@@ -1032,7 +1191,7 @@ extension SessionController {
         if activeSettings.swapMB > 0 { chips.append(LaunchSettingChip(symbol: "internaldrive", text: "Swap \(activeSettings.swapMB / 1024) GB")) }
         var failure: String?
         if case .failed(let message) = state { failure = message }
-        return LaunchData(gameID: g.id, name: g.name, steps: steps, headline: headline, detail: detail, chips: chips, failure: failure, cleanCancel: !wineStarted)
+        return LaunchData(gameID: g.id, name: g.name, steps: steps, headline: headline, detail: detail, chips: chips, failure: failure, cleanCancel: !wineStarted, began: launchBegan)
     }
 
     var canPeekAtSteam: Bool { launchViaSteam && wineStarted && state == .running && !launchGameUp }
@@ -1040,6 +1199,7 @@ extension SessionController {
     /// The Cancel button. Before the game's program starts this really takes the launch back; after that there is nothing clean to undo (the runtime cannot
     /// be restarted in this process), so it stops the game by closing the app, which opens fresh next time.
     func cancelLaunch() {
+        LogStore.shared.log("[launch] cancelLaunch() while \(state), wineStarted=\(wineStarted)")
         if case .failed = state { dismiss(); return }
         if wineStarted {
             LogStore.shared.log("[launch] stop requested while the game was starting: closing the app")

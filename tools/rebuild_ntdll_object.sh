@@ -26,6 +26,10 @@ for NAME in "$@"; do
     file) SRCFILE=../../wine/dlls/ntdll/unix/file.c ;;
     sync) SRCFILE=../../wine/dlls/ntdll/unix/sync.c ;;   # fastsync (patch 0140)
     env) SRCFILE=env_ios.c ;;
+    audio_null) SRCFILE=audio_null_ios.c; OBJ=audio_null_ios ;;          # silent audio clock (patch 0163, PR 349)
+    crypt32) SRCFILE=../crypto-unix/crypt32_unixlib_ios.c; OBJ=crypt32_unixlib      # root store (patch 0163, PR 356)
+             EXTRA=(-D__wine_unix_call_funcs=crypt32_unix_call_funcs -D__wine_unix_call_wow64_funcs=crypt32_unix_call_wow64_funcs
+                    -I"$WINE_SRC/dlls/crypt32" -I"$M/toolchains/gnutls-ios/include" -include "$M/build/crypto-unix/ios_gnutls_shim.h") ;;
     winegstreamer) SRCFILE=winegstreamer_unixlib_ios.c; OBJ=winegstreamer_unixlib   # libavcodec/libavformat WMA decoder and wg_parser (patch 0119, PR 241)
                    EXTRA=(-D__wine_unix_call_funcs=winegstreamer_unix_call_funcs -D__wine_unix_call_wow64_funcs=winegstreamer_unix_call_wow64_funcs
                           -I"$WINE_SRC/dlls/winegstreamer" -I"$M/toolchains/ffmpeg-ios/include")

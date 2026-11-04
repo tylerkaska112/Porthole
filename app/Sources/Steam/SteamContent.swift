@@ -269,15 +269,25 @@ enum SteamDepotPlanner {
         return chosen
     }
 
-    /// What installing the app's Windows depots takes to download, and on disk. Depots shared from another app have no size here and are left out.
-    static func sizes(app: SteamAppInfo, selection: SteamInstallSelection = SteamInstallSelection()) -> (download: UInt64, disk: UInt64) {
-        let depots = windowsDepots(app: app, selection: selection).filter { $0.manifest != nil && $0.fromApp == nil }
+    /// What installing the app's Windows depots takes to download (compressed, what crosses the network), and on disk (what the files take). Depots shared from another app have
+    /// no size here and are left out.
+    /// `ownedDepots`: the depots the account's packages list. A DLC depot the account has no right to is skipped by the install (Steam refuses its key), so it is left out of the
+    /// sum too; without the list every depot the selection asks for is counted. A depot whose entry gives no download size is counted at the size on disk (never less than it takes).
+    static func sizes(app: SteamAppInfo, selection: SteamInstallSelection = SteamInstallSelection(), ownedDepots: Set<Int>? = nil) -> (download: UInt64, disk: UInt64) {
+        let depots = windowsDepots(app: app, selection: selection).filter { depot in
+            guard depot.manifest != nil, depot.fromApp == nil else { return false }
+            if let ownedDepots, depot.dlcApp != nil { return ownedDepots.contains(depot.id) }
+            return true
+        }
         return (depots.reduce(0) { $0 + ($1.download ?? $1.size ?? 0) }, depots.reduce(0) { $0 + ($1.size ?? 0) })
     }
 
+    /// The kinds of Steam app the library lists: games, their demos, beta and playtest apps, and software. Tools (runtimes, SDKs), DLC, soundtracks and videos are not.
+    static let libraryTypes: Set<String> = ["game", "demo", "beta", "application"]
+
     /// Whether this is something to show in a library of games to install on Windows.
     static func isInstallableGame(_ app: SteamAppInfo) -> Bool {
-        guard app.type == "game" else { return false }
+        guard libraryTypes.contains(app.type) else { return false }
         return !windowsDepots(app: app).isEmpty
     }
 

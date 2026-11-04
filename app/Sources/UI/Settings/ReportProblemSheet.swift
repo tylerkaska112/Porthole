@@ -25,7 +25,7 @@ struct ReportProblemPage: View {
     private static let discord = URL(string: "https://discord.gg/N7PkdptTFn")!
 
     var body: some View {
-        PageScaffold(title: "Report a problem", symbol: "exclamationmark.bubble.fill") {
+        PageScaffold(title: "Report a problem", symbol: "exclamationmark.bubble.fill", subtitle: "Send the developer what went wrong") {
             if ProblemClient.available, !tracker.entries.isEmpty || tracker.loading || tracker.error != nil {
                 SettingsGroup(title: "My reports") {
                     ForEach(tracker.entries) { entry in

@@ -33,6 +33,8 @@ struct Game: Codable, Identifiable, Equatable {
     var activeBindSetID: UUID?
     /// How this game's own settings were before "Use what works for others" was applied, to undo it (see RecommendedSettings.swift).
     var settingsUndo: RecommendedSettings.Undo?
+    /// How this game's engine lines and settings were before Madeira's tested setup was applied, to undo it (see GameTestedSetup.swift).
+    var testedSetupUndo: GameTestedSetup.Undo?
     /// Set for a game installed from the Epic Games store (Epic/): its app name, the launch arguments its manifest lists, and its public art. A launch adds a
     /// fresh exchange code to the arguments (SessionController); the saved game never holds it.
     var epicAppName: String?
@@ -48,6 +50,9 @@ struct Game: Codable, Identifiable, Equatable {
     /// Set for a game installed from Amazon Games (Amazon/): its product id and its picture.
     var amazonID: String?
     var amazonArtURL: URL?
+    /// Set for a game installed from the EA app (EA/): its offer id and its picture. A launch prepares EA's licence, environment and local service first (SessionController).
+    var eaOfferID: String?
+    var eaArtURL: URL?
 }
 
 /// Settings a game can override. Every field is optional: nil means "use the global setting".
@@ -186,6 +191,23 @@ final class AppModel: ObservableObject {
             if let workDir { var e = GameEngine(); e.workDir = workDir; game.engine = e }
             games.append(game)
         }
+        save()
+    }
+
+    /// Adds an installed EA game to the library, or brings the one with this offer id up to date.
+    func upsertEA(offerID: String, title: String, exe: String, args: String, art: URL?) {
+        if let i = games.firstIndex(where: { $0.eaOfferID == offerID }) {
+            games[i].exe = exe; games[i].args = args; games[i].eaArtURL = art
+        } else {
+            var game = Game(name: title, exe: exe)
+            game.args = args; game.eaOfferID = offerID; game.eaArtURL = art
+            games.append(game)
+        }
+        save()
+    }
+
+    func removeEA(offerID: String) {
+        games.removeAll { $0.eaOfferID == offerID }
         save()
     }
 

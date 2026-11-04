@@ -43,8 +43,13 @@ enum ExecutableWindow {
         image.relocationsStripped && image.imageBase >= windowBase && image.imageBase < windowBase + windowSize
     }
 
-    /// The reason the stretch can be given back for the game whose main program is `exe`, or nil when it must be kept: every .exe in that folder is read; one that needs the
-    /// stretch, or any that cannot be read at all, keeps it.
+    /// Folders that hold installers and runtimes, not the game: their programs never run the game's code.
+    private static let redistFolders: Set<String> = ["_commonredist", "redist", "redistributables", "__installer", "directx", "vcredist", "dotnetfx", "support"]
+
+    /// The reason the stretch can be given back for the game whose main program is `exe`, or nil when it must be kept: every .exe in that folder is read, and every one in the folders
+    /// below it (an Unreal game starts from a small program in its main folder and runs `<Game>/Binaries/Win64/<Game>-Win64-Shipping.exe`, which is the one that cannot move: FINAL FANTASY
+    /// RESONANCE loads its 487 MB program at 0x140000000 with its relocations stripped, and failed with status c0000018 when the stretch was given back because only the launcher had been read).
+    /// One that needs the stretch, or any that cannot be read at all, keeps it.
     static func releaseReason(forProgram exe: URL, fileManager fm: FileManager = .default) -> (release: Bool, text: String) {
         guard enabled else { return (false, "turned off in Settings") }
         guard let main = read(exe), let mainImage = parse(header: main) else { return (false, "\(exe.lastPathComponent) could not be read") }
@@ -57,7 +62,40 @@ enum ExecutableWindow {
             if needsWindow(image) { return (false, "\(name) in the same folder cannot be moved (no relocations, loads at 0x\(String(image.imageBase, radix: 16)))") }
             checked += 1
         }
+        for url in programs(below: folder, fileManager: fm) {
+            guard let data = read(url), let image = parse(header: data) else { continue }
+            let base = folder.resolvingSymlinksInPath().path, full = url.resolvingSymlinksInPath().path
+            let shown = full.hasPrefix(base + "/") ? String(full.dropFirst(base.count + 1)) : url.lastPathComponent
+            if needsWindow(image) { return (false, "\(shown) cannot be moved (no relocations, loads at 0x\(String(image.imageBase, radix: 16)))") }
+            checked += 1
+        }
         return (true, "\(checked) program\(checked == 1 ? "" : "s") in the game's folder can be moved in memory")
+    }
+
+    /// The .exe files in the folders below `folder`, down to four folders deep (`depth` counts the main folder too), nearest first, without installer and runtime folders. At most 80 programs are returned and 4000 entries looked at,
+    /// so a big game folder is not walked for long.
+    static func programs(below folder: URL, fileManager fm: FileManager = .default, depth: Int = 5, limit: Int = 80) -> [URL] {
+        var found: [URL] = []
+        var level = [folder]
+        var visited = 0
+        for _ in 0..<depth {
+            var next: [URL] = []
+            for dir in level {
+                let entries = ((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []).sorted { $0.lastPathComponent < $1.lastPathComponent }
+                for entry in entries {
+                    visited += 1
+                    if visited > 4000 || found.count >= limit { return found }
+                    let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                    if isDirectory {
+                        if !redistFolders.contains(entry.lastPathComponent.lowercased()) { next.append(entry) }
+                    } else if dir != folder, entry.pathExtension.lowercased() == "exe" {
+                        found.append(entry)
+                    }
+                }
+            }
+            level = next
+        }
+        return found
     }
 
     private static func read(_ url: URL) -> Data? {

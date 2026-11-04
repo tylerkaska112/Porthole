@@ -61,6 +61,8 @@ struct GogBuildMeta {
     let installDirectory: String
     let depots: [GogMetaDepot]
     let dependencies: [String]
+    /// The game's own Galaxy client identity (clientId and clientSecret in the build's manifest), for the Galaxy service; nil when the build has none.
+    let galaxy: GOGGalaxyClient?
 }
 
 enum GogContent {
@@ -109,7 +111,15 @@ enum GogContent {
                                 size: (d["size"] as? NSNumber)?.uint64Value ?? 0, compressedSize: (d["compressedSize"] as? NSNumber)?.uint64Value ?? 0)
         }
         return GogBuildMeta(buildID: buildID, baseProductId: "\(json["baseProductId"] ?? "")", installDirectory: (json["installDirectory"] as? String) ?? "",
-                            depots: depots, dependencies: (json["dependencies"] as? [String]) ?? [])
+                            depots: depots, dependencies: (json["dependencies"] as? [String]) ?? [],
+                            galaxy: GOGGalaxyClient(id: Self.idString(json["clientId"]), secret: json["clientSecret"] as? String))
+    }
+
+    /// GOG writes a client id as a string or as a number.
+    private static func idString(_ value: Any?) -> String? {
+        if let text = value as? String { return text }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
     }
 
     static func depot(_ md5: String) async throws -> GogDepotManifest {

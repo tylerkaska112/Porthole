@@ -95,9 +95,7 @@ struct SteamOwnedList: View {
     @State private var clientInstalled = MadeiraDock.clientInstalled
     @State private var clientBusy = false
     @State private var clientStatus: String?
-    @State private var controllerLayer = SteamSDL3.installed
-    @State private var controllerBusy = false
-    @State private var controllerStatus: String?
+    @ObservedObject private var controllerLayer = SteamControllerLayer.shared
     @State private var removing: SteamStore.Owned?
     @State private var open: SteamStore.Owned?
     @Environment(AppRouter.self) private var router
@@ -178,7 +176,7 @@ struct SteamOwnedList: View {
         free = free == Int64.max ? free : free - 500_000_000
         var used: Int64 = 0, queued = 0, skipped = 0
         for g in games {
-            let need = Int64(Double(g.sizeBytes) * 1.15)
+            let need = Int64(g.spaceNeeded)
             if used + need <= free { store.install(g.id); used += need; queued += 1 } else { skipped += 1 }
         }
         notice = skipped > 0 ? "Queued \(queued) of \(games.count). The other \(skipped) need more free space than the device has left." : nil
@@ -189,10 +187,11 @@ struct SteamOwnedList: View {
     private var selectionBar: some View {
         let games = selectedGames
         let total = games.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+        let needed = games.reduce(UInt64(0)) { $0 + $1.spaceNeeded }
         return VStack(spacing: 8) {
             if let free = SteamGameTile.freeSpace(), total > 0 {
                 Text("\(games.count) selected \u{00B7} \(SteamGameTile.size(total)) to download \u{00B7} \(SteamGameTile.size(UInt64(max(free, 0)))) free")
-                    .font(.footnote.weight(.semibold)).foregroundStyle(Int64(Double(total) * 1.15) + 500_000_000 > free ? Theme.warn : Theme.textDim)
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Int64(needed) + 500_000_000 > free ? Theme.warn : Theme.textDim)
             }
             HStack(spacing: 10) {
                 PillButton(id: "sel-all", title: "Select all", symbol: "checkmark.circle") { selected = Set(shown.filter(needsDownload).map(\.id)) }
@@ -215,47 +214,40 @@ struct SteamOwnedList: View {
 
     private var listScroll: some View {
         let shown = self.shown          // once per redraw
-        return FocusScroll {
-            VStack(alignment: .leading, spacing: 18) {
-                if !clientInstalled {
-                    ActionRow(id: "so-client", symbol: "shield.lefthalf.filled", tint: Theme.warn, title: "Steam client", subtitle: clientBusy ? (clientStatus ?? "Working\u{2026}") : "Needed to start Steam games",
-                              detail: clientBusy ? nil : "Download", info: "Valve's own client files start your Steam games and check your licence. About 73 MB from Valve; nothing else is installed.", chevron: false) {
-                        if !clientBusy { downloadClient() }
-                    }
-                } else if SteamSDL3.steamPresent {
-                    ActionRow(id: "so-controller", symbol: "gamecontroller.fill", tint: controllerLayer ? Theme.good : Theme.warn, title: "Steam controller support",
-                              subtitle: controllerBusy ? (controllerStatus ?? "Working\u{2026}") : (controllerStatus ?? (controllerLayer ? "Installed" : "Needed by games that take their controller from Steam, like Portal")),
-                              detail: controllerBusy ? nil : (controllerLayer ? "Remove" : "Download"),
-                              info: "Steam's own controller layer (Steam Input) needs a 64-bit library the Steam client files do not include. This downloads that one file, about 1.3 MB, from Valve's server and checks it against its known fingerprint before using it; nothing else is installed. Games such as Portal and Portal 2 read their controller through Steam Input. Remove puts the original file back.",
-                              chevron: false) {
-                        if !controllerBusy { toggleControllerLayer() }
-                    }
+        return StorePage {
+            StoreSwitcher()
+            if !network.isOnline { OfflineChip() }
+            if store.refreshing { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
+            else { IconPillButton(id: "so-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { Task { await store.refresh() } } }
+            searchField
+            SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed"), .init(id: "controller", title: "Controller")], selection: filter) { filter = $0 }
+            IconPillButton(id: "so-friends", symbol: "person.2.fill", label: "Friends") { showFriends = true }
+            IconPillButton(id: "so-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
+            IconPillButton(id: "so-f-select", symbol: "checkmark.circle", label: selecting ? "Stop selecting" : "Select several to download", on: selecting) { selecting.toggle(); if !selecting { selected = [] } }
+        } content: {
+            if !clientInstalled {
+                ActionRow(id: "so-client", symbol: "shield.lefthalf.filled", tint: Theme.warn, title: "Steam client", subtitle: clientBusy ? (clientStatus ?? "Working\u{2026}") : "Needed to start Steam games",
+                          detail: clientBusy ? nil : "Download", info: "Valve's own client files start your Steam games and check your licence. About 73 MB from Valve; nothing else is installed.", chevron: false) {
+                    if !clientBusy { downloadClient() }
                 }
-                FlowLayout(spacing: 10) {
-                    StoreSwitcher()
-                    if !network.isOnline { OfflineChip() }
-                    if store.refreshing { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
-                    else { IconPillButton(id: "so-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { Task { await store.refresh() } } }
-                    searchField
-                    SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed"), .init(id: "controller", title: "Controller")], selection: filter) { filter = $0 }
-                    IconPillButton(id: "so-friends", symbol: "person.2.fill", label: "Friends") { showFriends = true }
-                    IconPillButton(id: "so-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
-                    IconPillButton(id: "so-f-select", symbol: "checkmark.circle", label: selecting ? "Stop selecting" : "Select several to download", on: selecting) { selecting.toggle(); if !selecting { selected = [] } }
-                }
-                if let error = store.error, network.isOnline { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
-                if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.warn) }
-                if shown.isEmpty && !store.refreshing {
-                    Text(store.owned.isEmpty ? "No installable Windows games found on this account yet."
-                         : filter == "controller" && !store.owned.allSatisfy({ controllers.isKnown($0.id) }) ? "Asking Steam which games work with a controller\u{2026}" : "No games match.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
-                }
-                // Lazy: only the tiles on (and just off) the screen exist, so a library of hundreds scrolls and updates without the rest being redrawn.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
-                    ForEach(shown) { game in SteamGameTile(store: store, game: game, notice: $notice, selecting: selecting, selected: selected.contains(game.id), selectable: needsDownload(game),
-                                                  open: { if selecting { toggle(game) } else { open = game } }) { removing = game } }
+            } else if controllerLayer.available && !controllerLayer.installed {
+                // Until it is on the device; after that it is under Settings > Stores > Steam, like the Steam client.
+                ActionRow(id: "so-controller", symbol: "gamecontroller.fill", tint: Theme.warn, title: "Steam controller support", subtitle: controllerLayer.subtitle,
+                          detail: controllerLayer.busy ? nil : "Download", info: SteamControllerLayer.info, chevron: false) {
+                    controllerLayer.toggle()
                 }
             }
-            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 18)
-            .frame(maxWidth: 1400).frame(maxWidth: .infinity)
+            if let error = store.error, network.isOnline { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
+            if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.warn) }
+            if shown.isEmpty && !store.refreshing {
+                Text(store.owned.isEmpty ? "No installable Windows games found on this account yet."
+                     : filter == "controller" && !store.owned.allSatisfy({ controllers.isKnown($0.id) }) ? "Asking Steam which games work with a controller\u{2026}" : "No games match.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
+            }
+            // Lazy: only the tiles on (and just off) the screen exist, so a library of hundreds scrolls and updates without the rest being redrawn.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
+                ForEach(shown) { game in SteamGameTile(store: store, game: game, notice: $notice, selecting: selecting, selected: selected.contains(game.id), selectable: needsDownload(game),
+                                              open: { if selecting { toggle(game) } else { open = game } }) { removing = game } }
+            }
         }
         .sheet(isPresented: $showFriends) {
             GameSubSheet(title: "Friends", scope: friendsScope, close: { showFriends = false }) { SteamFriendsList() }.preferredColorScheme(Theme.scheme)
@@ -276,28 +268,7 @@ struct SteamOwnedList: View {
         }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
-            TextField("Search \(store.owned.count) games", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled().foregroundStyle(Theme.text)
-        }
-        .padding(.horizontal, 14).frame(minWidth: 200, minHeight: 40)
-        .background(Theme.panel, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
-        .focusTarget("so-search", radius: 20, scale: 1.02, action: {})
-    }
-
-    private func toggleControllerLayer() {
-        controllerBusy = true; controllerStatus = "Starting\u{2026}"
-        Task {
-            do {
-                if controllerLayer { try SteamSDL3.remove() } else { try await SteamSDL3.install { text in await MainActor.run { controllerStatus = text } } }
-                controllerLayer = SteamSDL3.installed
-                controllerStatus = nil
-            } catch { controllerStatus = error.localizedDescription }
-            controllerBusy = false
-        }
-    }
+    private var searchField: some View { SearchField(id: "so-search", prompt: "Search \(store.owned.count) games", text: $search) }
 
     private func downloadClient() {
         clientBusy = true; clientStatus = "Starting\u{2026}"
@@ -346,18 +317,18 @@ struct SteamGameTile: View {
                     }
                     .overlay(alignment: .topLeading) {
                         VStack(alignment: .leading, spacing: 4) {
-                            if let badge { BadgePill(badge: badge) }
+                            if let badge { TileStatus(badge: badge) }
+                            if let kind = game.kindLabel { BadgePill(badge: BadgeData(symbol: "sparkles", text: kind, tint: Theme.warn)) }
                             if compat.showBadges { CompatTileBadge(badge: compat.steamBadges[game.id], untested: compat.steamUntested.contains(game.id)) }
                         }
                         .padding(8)
                     }
-                    .overlay(alignment: .bottomLeading) { if let level = controllers.level(for: game.id) { ControllerPill(level: level, compact: true).padding(8) } }
+                    .overlay(alignment: .bottomLeading) { if let level = controllers.level(for: game.id) { ControllerPill(level: level, compact: true, iconOnly: true).padding(8) } }
                     .overlay(alignment: .bottomTrailing) { if showStore { StoreCorner(store: .steam, size: 26).padding(8) } }
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                    .storeTileStyle()
             }
-            .buttonStyle(.plain)
-            .focusTarget("sg-\(game.id)", radius: 18, scale: 1.1, secondary: selecting ? nil : primary, action: open)
+            .buttonStyle(TilePress())
+            .focusTarget("sg-\(game.id)", radius: 18, scale: 1.1, secondary: selecting ? nil : primary, label: selecting ? "Select" : "Details", secondaryLabel: primaryLabel, action: open)
             VStack(alignment: .leading, spacing: 3) {
                 Text(game.name).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1)
                 detail
@@ -386,16 +357,23 @@ struct SteamGameTile: View {
     @ViewBuilder private var detail: some View {
         if let d = download {
             switch d.state {
-            case .active: ProgressView(value: d.progress.fraction).tint(Theme.accent); Text(progressText(d.progress)).font(.caption2).foregroundStyle(Theme.textDim)
+            case .active: TileProgress(value: d.progress.fraction); Text(progressText(d.progress)).font(.caption2).foregroundStyle(Theme.textDim)
             case .queued: Text("Waiting\u{2026}").font(.caption).foregroundStyle(Theme.textDim)
-            case .paused: ProgressView(value: d.progress.fraction).tint(Theme.textDim); Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
+            case .paused: TileProgress(value: d.progress.fraction, paused: true); Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
             case .failed(let why): Text(why).font(.caption2).foregroundStyle(Theme.bad).lineLimit(3)
             }
         } else if installed {
             EmptyView()          // the badge on the picture already says Installed or Update
         } else {
-            Text(game.sizeBytes > 0 ? "\(Self.size(game.sizeBytes)) download" : "Size unknown").font(.caption).foregroundStyle(Theme.textDim)
+            Text(game.sizeBytes > 0 ? "\(Self.size(game.sizeBytes)) download" + (game.diskBytes.map { $0 > game.sizeBytes ? " \u{00B7} \(Self.size($0)) on disk" : "" } ?? "") : "Size unknown").font(.caption).foregroundStyle(Theme.textDim)
         }
+    }
+
+    /// What X does on this tile, for the hints bar (the same cases as `primary`).
+    private var primaryLabel: String {
+        if let d = download { return d.state == .active || d.state == .queued ? "Pause" : "Resume" }
+        if installed { return store.updateAvailable(game) ? "Update" : (!inLibrary ? "Add" : "Open") }
+        return "Download"
     }
 
     private func primary() {
@@ -411,8 +389,8 @@ struct SteamGameTile: View {
 
     private func start() {
         notice = nil
-        if game.sizeBytes > 0, let free = Self.freeSpace(), free < Int64(Double(game.sizeBytes) * 1.15) + 500_000_000 {
-            notice = "Not enough free space for \(game.name): it needs about \(Self.size(game.sizeBytes)) and the device has \(Self.size(UInt64(free)))."
+        if game.sizeBytes > 0, let free = Self.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
+            notice = "Not enough free space for \(game.name): it needs about \(Self.size(game.diskBytes ?? game.sizeBytes)) on the device and it has \(Self.size(UInt64(free)))."
             return
         }
         store.install(game.id)

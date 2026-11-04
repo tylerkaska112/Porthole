@@ -7,6 +7,7 @@ missing here, add it.
 The Windows-on-iPhone backend is **[Madeira](https://github.com/willfaust/Madeira)**, pinned as the submodule `vendor/Madeira` (see `docs/SOURCE.md`).
 - Its forks of [Wine](https://github.com/willfaust/wine) (ARM64EC, the LGPL branch), [FEX-Emu](https://github.com/willfaust/FEX) and [DXMT](https://github.com/willfaust/dxmt) (D3D11 → Metal, with DXMT's Direct3D 9 frontend).
 - **[Madeira Dock](https://github.com/willfaust/madeira-dock)** (Steam licence-checked launching).
+- **Madeira's hardware keyboard and mouse layer** (`app/Madeira/HardwareInput.swift`, `docs/KEYBOARD_MOUSE.md`): `app/Sources/Core/HardwareInput.swift` is a port of it (raw key and mouse events, focus rules, the pointer lock, the drawn cursor); the pointer-capture rules in it are adapted from BCD 0.1.614 by thebcd69, as Madeira says.
 - The Madeira Steam client (`SwiftSteam`) is **not** used here: Porthole's own Steam sign-in, library and downloads (`app/Sources/Steam`) were written for this project from Steam's public protocol (see `docs/STEAM_CLIENT.md`).
   (Madeira Discord, 2026-09-22).
 - The JIT script `madeira-jit.js` (Madeira, GPL-3.0).

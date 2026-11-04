@@ -11,6 +11,7 @@ struct AddGameFlow: View {
     var onGog: () -> Void = {}
     var onItch: () -> Void = {}
     var onAmazon: () -> Void = {}
+    var onEA: () -> Void = {}
     var onInstaller: () -> Void = {}
 
     @State private var discovered: [DiscoveredGame] = []
@@ -81,6 +82,8 @@ struct AddGameFlow: View {
                           info: "Games you bought, claimed or collected on itch.io, installed straight into the app. You sign in with your own API key.") { dismiss(); onItch() }
                 ActionRow(id: "add-amazon", symbol: "arrow.down.circle.fill", tint: .orange, title: "Download from Amazon Games", subtitle: "Games you own or claimed",
                           info: "Games you bought on Amazon or claimed with Prime Gaming, installed straight into the app. You sign in on Amazon's own page.") { dismiss(); onAmazon() }
+                ActionRow(id: "add-ea", symbol: "arrow.down.circle.fill", tint: .red, title: "Download from the EA app", subtitle: "Games you own",
+                          info: "PC games on your EA account, installed straight into the app and started without the EA app. You sign in on EA's own page. Games with EA's kernel anti-cheat cannot run.") { dismiss(); onEA() }
                 ActionRow(id: "add-installer", symbol: "shippingbox.fill", tint: .orange, title: "Run a Windows installer", subtitle: "A disc or a setup file",
                           info: "For games from a disc or a setup file you already have. Pick the setup file, run it, then add what it installed.") { dismiss(); onInstaller() }
             }

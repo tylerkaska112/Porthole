@@ -99,8 +99,8 @@ struct WorkshopTab: View {
                 MenuDivider()
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
-                    TextField("Search items", text: $search).textFieldStyle(.plain).foregroundStyle(Theme.text).submitLabel(.search)
-                        .onSubmit { Task { await startBrowse() } }
+                    PadTextField(title: "Search items", prompt: "Search items", onDone: { Task { await startBrowse() } }, text: $search)
+                        .textFieldStyle(.plain).foregroundStyle(Theme.text).submitLabel(.search)
                 }
                 .padding(.horizontal, 12).frame(minHeight: 46)
             }

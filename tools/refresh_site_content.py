@@ -17,6 +17,7 @@ import argparse, datetime, html, json, os, re, sys
 ap = argparse.ArgumentParser()
 ap.add_argument("--site", default=os.path.expanduser("~/Desktop/porthole-site"))
 ap.add_argument("--builds", type=int, default=25)
+ap.add_argument("--max-build", type=int, help="list only builds up to this number, newest first by build number: the public release and what came before it (later private test builds stay off the site)")
 ap.add_argument("--release", nargs=2, metavar=("VERSION", "BUILD"), help="the newest PUBLIC release, for the download page's line (leave out to leave that line alone)")
 args = ap.parse_args()
 site = os.path.expanduser(args.site)
@@ -25,6 +26,10 @@ root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 entries = json.load(open(os.path.join(root, "CHANGELOG.json"), encoding="utf-8"))
 if not entries:
     sys.exit("CHANGELOG.json is empty")
+if args.max_build:
+    entries = sorted((x for x in entries if int(x["build"]) <= args.max_build), key=lambda x: int(x["build"]), reverse=True)
+    if not entries:
+        sys.exit(f"no build up to {args.max_build} in CHANGELOG.json")
 newest = entries[0]
 e = html.escape
 

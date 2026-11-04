@@ -1,17 +1,19 @@
-diff --git a/app/Runtime/WineProcessBridge.m b/app/Runtime/WineProcessBridge.m
-index 31d4da5..9b5985c 100644
 --- a/app/Runtime/WineProcessBridge.m
 +++ b/app/Runtime/WineProcessBridge.m
-@@ -1298,6 +1298,12 @@ static void madeira_publish_host_probe(void)
-             // <filesystem>, etc.) don't trip __wine_unimplemented stubs.
-             if (use_arm64ec) {
-                 NSString *vcrtSource = [bundlePath stringByAppendingPathComponent:@"x86_64-vcruntime"];
-+                /* Porthole: the runtime the person downloaded from Microsoft (VCRuntimeInstaller) is used when it is there; it is only ever put in
-+                 * place whole, so the presence of vcruntime140.dll means all 12 files. Otherwise whatever the app itself carries. */
+@@ -2190,9 +2190,15 @@
+                 NSString *vcrtDocsSource = [NSSearchPathForDirectoriesInDomains(
+                     NSDocumentDirectory, NSUserDomainMask, YES).firstObject
+                     stringByAppendingPathComponent:@"vcruntime"];
++                /* Porthole: the runtime the person downloaded from Microsoft (VCRuntimeInstaller) is used first when it is there; it is only ever put in
++                 * place whole, so the presence of vcruntime140.dll means all 12 files. */
 +                NSString *vcrtDownloaded = [[[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject]
 +                    stringByAppendingPathComponent:@"Porthole"] stringByAppendingPathComponent:@"x86_64-vcruntime"];
-+                if ([fm fileExistsAtPath:[vcrtDownloaded stringByAppendingPathComponent:@"vcruntime140.dll"]])
-+                    vcrtSource = vcrtDownloaded;
-                 NSArray *vcrtDlls = [fm contentsOfDirectoryAtPath:vcrtSource error:nil];
-                 int vcrtLinked = 0, vcrtSkipped = 0;
-                 for (NSString *dll in vcrtDlls) {
++                NSArray *vcrtDirs = [fm fileExistsAtPath:[vcrtDownloaded stringByAppendingPathComponent:@"vcruntime140.dll"]]
++                    ? @[vcrtDownloaded, vcrtDocsSource, vcrtBundleSource] : @[vcrtDocsSource, vcrtBundleSource];
+                 NSMutableArray *vcrtNames = [NSMutableArray array];
+                 NSMutableDictionary *vcrtHome = [NSMutableDictionary dictionary];
+-                for (NSString *dir in @[vcrtDocsSource, vcrtBundleSource]) {
++                for (NSString *dir in vcrtDirs) {
+                     for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+                         /* Skip anything that is not a DLL. Without this the
+                          * placeholder README.txt that has to exist for Xcode's

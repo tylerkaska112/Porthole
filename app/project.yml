@@ -12,8 +12,8 @@ packages:
     path: "../Packages/LauncherCore"
 settings:
   base:
-    MARKETING_VERSION: 1.1.0          # one version for the app and its extension
-    CURRENT_PROJECT_VERSION: 551
+    MARKETING_VERSION: 1.2.0          # one version for the app and its extension
+    CURRENT_PROJECT_VERSION: 681
     SWIFT_VERSION: "5.0"
     SWIFT_OPTIMIZATION_LEVEL: "-O"      # also in Debug builds (the release scripts build Release; Debug is still available): the pairing maths is ~15x slower unoptimised, and the iPhone will not wait for it
     CLANG_CXX_LANGUAGE_STANDARD: gnu++20
@@ -64,6 +64,8 @@ targets:
         embed: true
       - target: F4Activity
         embed: true
+      - target: F4MemoryHost
+        embed: true
       # Also linked here (not only in the helper): the on-device installer calls idevice's C functions from the main app.
       - framework: Vendor/StikJIT.xcframework
         embed: true
@@ -88,6 +90,8 @@ targets:
         # Game Mode (iOS 18+): iOS gives a full-screen game the highest priority on the processor and graphics chip and trims background work. Needs both keys.
         LSApplicationCategoryType: public.app-category.games
         GCSupportsGameMode: true
+        # A mouse or trackpad on iPad: its clicks and motion reach the game view as indirect-pointer events (Hardware keyboard and mouse, HardwareInput.swift).
+        UIApplicationSupportsIndirectInputEvents: true
         UIRequiredDeviceCapabilities: [arm64]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
@@ -244,6 +248,46 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(PORTHOLE_BUNDLE_ID).activity
         SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: NO
+        ENABLE_DEBUG_DYLIB: NO
+        LD_RUNPATH_SEARCH_PATHS: ["$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"]
+
+  # Donor RAM (from Madeira's MadeiraMemoryHost): an extension on the AR-viewer extension point, which iOS gives no memory limit. The app starts it, it makes memory
+  # objects for the game (512 MB regions, untouched), hands them over and exits; memory owned by an exited task is billed to no process, so the game's pool is not
+  # counted against the app's limit. Optional like the others: take it out while signing to spend one App ID less; then `donor-pool-mb` finds no extension and does nothing.
+  F4MemoryHost:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MemoryHost
+        excludes: ["Info.plist", "MemoryHost.entitlements"]
+      - path: Runtime/MemoryHostProtocol.h
+        buildPhase: none
+    info:
+      path: MemoryHost/Info.plist
+      properties:
+        CFBundleDisplayName: Memory Host
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ar.viewer   # only a vehicle, as for the JIT helper: lets the app start the extension as its own process on demand
+          NSExtensionPrincipalClass: MadeiraMemoryHostHandler
+          NSExtensionContextClass: NSExtensionContext
+          NSExtensionContextHostClass: NSExtensionContext
+          NSExtensionAttributes:
+            NSExtensionActivationRule: FALSEPREDICATE
+        UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: false }
+        XPCService: { ServiceType: Application, _MultipleInstances: true, _ProcessType: App }
+    entitlements:
+      path: MemoryHost/MemoryHost.entitlements
+      properties:
+        get-task-allow: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PORTHOLE_BUNDLE_ID).MemoryHost      # DonorPool.m asks for "<the app's bundle id>.MemoryHost"
+        CLANG_ENABLE_OBJC_WEAK: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Manual
         CODE_SIGNING_ALLOWED: NO

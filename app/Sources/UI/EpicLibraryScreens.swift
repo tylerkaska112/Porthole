@@ -104,17 +104,16 @@ struct EpicGameTile: View {
                     .overlay { EpicArtView(url: game.heroURL ?? game.artworkURL) }
                     .overlay(alignment: .topLeading) {
                         VStack(alignment: .leading, spacing: 4) {
-                            if let badge { BadgePill(badge: badge) }
+                            if let badge { TileStatus(badge: badge) }
                             if let entry, compat.showBadges { CompatTileBadge(badge: compat.badges[entry.id], untested: compat.isUntested(entry)) }
                         }
                         .padding(8)
                     }
                     .overlay(alignment: .bottomTrailing) { if showStore { StoreCorner(store: .epic, size: 26).padding(8) } }
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                    .storeTileStyle()
             }
-            .buttonStyle(.plain)
-            .focusTarget("eg-\(game.appName)", radius: 18, scale: 1.1, secondary: primary, action: open)
+            .buttonStyle(TilePress())
+            .focusTarget("eg-\(game.appName)", radius: 18, scale: 1.1, secondary: primary, label: "Details", secondaryLabel: primaryLabel, action: open)
             VStack(alignment: .leading, spacing: 3) {
                 Text(game.title).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1)
                 detail
@@ -139,15 +138,25 @@ struct EpicGameTile: View {
     @ViewBuilder private var detail: some View {
         switch install?.state {
         case .active?:
-            ProgressView(value: install?.progress.fraction ?? 0).tint(Theme.accent)
+            TileProgress(value: install?.progress.fraction ?? 0)
             Text(EpicText.progress(install?.progress ?? SteamDownloadProgress())).font(.caption2).foregroundStyle(Theme.textDim)
         case .queued?: Text("Waiting\u{2026}").font(.caption).foregroundStyle(Theme.textDim)
         case .paused?:
-            ProgressView(value: install?.progress.fraction ?? 0).tint(Theme.textDim)
+            TileProgress(value: install?.progress.fraction ?? 0, paused: true)
             Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
         case .failed(let why)?: Text(why).font(.caption2).foregroundStyle(Theme.bad).lineLimit(3)
         case .installed?: EmptyView()
         case nil: Text(game.developer ?? "Not installed").font(.caption).foregroundStyle(Theme.textDim).lineLimit(1)
+        }
+    }
+
+    /// What X does on this tile, for the hints bar (the same cases as `primary`).
+    private var primaryLabel: String {
+        switch install?.state {
+        case .active?, .queued?: return "Pause"
+        case .paused?, .failed?: return "Resume"
+        case nil: return "Install"
+        case .installed?: return installer.updateAvailable(game.appName) ? "Update" : "Open"
         }
     }
 
@@ -228,43 +237,29 @@ struct EpicOwnedList: View {
 
     private var grid: some View {
         let games = shown
-        return FocusScroll {
-            VStack(alignment: .leading, spacing: 18) {
-                FlowLayout(spacing: 10) {
-                    StoreSwitcher()
-                    if !network.isOnline { OfflineChip() }
-                    if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
-                    else { IconPillButton(id: "eo-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
-                    searchField
-                    SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
-                    IconPillButton(id: "eo-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
-                }
-                if let error = installer.error ?? (network.isOnline ? library.error : nil) { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
-                if games.isEmpty && !library.isLoading {
-                    Text(library.games.isEmpty ? "No games with a Windows version found on this account yet." : "No games match.")
-                        .foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
-                    ForEach(games) { game in EpicGameTile(game: game) { open = game } }
-                }
-                Text("Epic's overlay, anti-cheat and third-party launchers are not supported, so some games will not run.")
-                    .font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
+        return StorePage {
+            StoreSwitcher()
+            if !network.isOnline { OfflineChip() }
+            if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
+            else { IconPillButton(id: "eo-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
+            searchField
+            SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
+            IconPillButton(id: "eo-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
+        } content: {
+            if let error = installer.error ?? (network.isOnline ? library.error : nil) { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
+            if games.isEmpty && !library.isLoading {
+                Text(library.games.isEmpty ? "No games with a Windows version found on this account yet." : "No games match.")
+                    .foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
             }
-            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 18)
-            .frame(maxWidth: 1400).frame(maxWidth: .infinity)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
+                ForEach(games) { game in EpicGameTile(game: game) { open = game } }
+            }
+            Text("Epic's overlay, anti-cheat and third-party launchers are not supported, so some games will not run.")
+                .font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
         }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
-            TextField("Search \(library.games.count) games", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled().foregroundStyle(Theme.text)
-        }
-        .padding(.horizontal, 14).frame(minWidth: 200, minHeight: 40)
-        .background(Theme.panel, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
-        .focusTarget("eo-search", radius: 20, scale: 1.02, action: {})
-    }
+    private var searchField: some View { SearchField(id: "eo-search", prompt: "Search \(library.games.count) games", text: $search) }
 }
 
 // MARK: A game's page
@@ -278,6 +273,7 @@ struct EpicGamePage: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
     @Environment(AppRouter.self) private var router
+    @Environment(\.verticalSizeClass) private var vSize
     @ObservedObject private var compat = CompatStore.shared
 
     @State private var viewing: Int?
@@ -307,19 +303,31 @@ struct EpicGamePage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            hero
-            VStack(alignment: .leading, spacing: 0) {
-                HStack { PillButton(id: "ep-back", title: backTitle, symbol: "chevron.left", action: back); Spacer() }.padding(.horizontal, 24).padding(.top, 8)
-                FocusScroll {
-                    VStack(alignment: .leading, spacing: 22) {
-                        titleBlock.padding(.top, 70)
-                        actions
-                        if !media.isEmpty { mediaStrip }
-                        about
-                        doors
+            backdrop
+            GeometryReader { geo in
+                let wide = geo.size.width > geo.size.height * 1.05
+                if wide {
+                    HStack(alignment: .top, spacing: 0) {
+                        FocusScroll { hero(back: true).padding(.horizontal, 20).padding(.vertical, vSize == .compact ? 8 : 14) }
+                            .frame(width: min(vSize == .compact ? 340 : 420, geo.size.width * 0.42))
+                        FocusScroll {
+                            VStack(alignment: .leading, spacing: 20) { pageContent }
+                                .padding(.horizontal, 20).padding(.vertical, vSize == .compact ? 8 : 14)
+                                .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+                        }
                     }
-                    .padding(.horizontal, 24).padding(.bottom, 30)
-                    .frame(maxWidth: 900).frame(maxWidth: .infinity)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack { PillButton(id: "ep-back", title: backTitle, symbol: "chevron.left", action: back); Spacer() }.padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 6)
+                        FocusScroll {
+                            VStack(alignment: .leading, spacing: 20) {
+                                hero(back: false)
+                                pageContent
+                            }
+                            .padding(.horizontal, 24).padding(.bottom, 30)
+                            .frame(maxWidth: 900).frame(maxWidth: .infinity)
+                        }
+                    }
                 }
             }
         }
@@ -345,29 +353,50 @@ struct EpicGamePage: View {
 
     // MARK: Pieces
 
-    private var hero: some View {
-        Color.clear.frame(height: 320)
-            .overlay { EpicArtView(url: game.heroURL ?? game.artworkURL).blur(radius: 3) }
-            .clipped()
-            .overlay { LinearGradient(colors: [Theme.backgroundTop.opacity(0.1), Theme.backgroundTop.opacity(0.75), Theme.backgroundTop], startPoint: .top, endPoint: .bottom) }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .ignoresSafeArea()
-            .background(Theme.background.ignoresSafeArea())
+    /// The game's picture softened and darkened behind the whole page. A picture only: it reaches up under the top bar, so it must not take the taps meant for the sections there.
+    private var backdrop: some View {
+        ZStack {
+            AmbientBackdrop(animated: false)
+            Color.clear
+                .overlay { EpicArtView(url: game.heroURL ?? game.artworkURL) }
+                .blur(radius: 8).scaleEffect(1.08).clipped()
+                .overlay { Color.black.opacity(0.4) }
+                .overlay { LinearGradient(colors: [.clear, Theme.backgroundBottom.opacity(0.55), Theme.backgroundBottom.opacity(0.92)], startPoint: .top, endPoint: .bottom) }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(game.title).font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(Theme.text).shadow(color: .black.opacity(0.5), radius: 8)
-            if let developer = game.developer { Text(developer).font(.subheadline).foregroundStyle(Theme.text.opacity(0.8)) }
-            FlowLayout(spacing: 8) {
+    private func hero(back showBack: Bool) -> some View {
+        StoreHero(name: game.title, subtitle: game.developer, stats: statTiles, back: showBack ? back : nil, backTitle: backTitle, compact: vSize == .compact) {
+            EpicArtView(url: game.heroURL ?? game.artworkURL)
+        } chips: { chipsContent } actions: { actions }
+    }
+
+    /// What Epic says about the game: the screenshots, the description and the rows that open the rest.
+    @ViewBuilder private var pageContent: some View {
+        if !media.isEmpty { mediaStrip }
+        about
+        doors
+    }
+
+    /// What Epic tells us before Install: where the game stands on this device, who made it, and which build is current.
+    private var statTiles: [GameHeroStat] {
+        var out: [GameHeroStat] = []
+        let status = !isInstalled ? "Not installed" : (installer.updateAvailable(game.appName) ? "Update ready" : "Installed")
+        out.append(GameHeroStat(symbol: isInstalled ? "checkmark.circle.fill" : "arrow.down.circle", title: "On this device", value: status))
+        if let developer = game.developer, !developer.isEmpty { out.append(GameHeroStat(symbol: "person.fill", title: "Developer", value: developer)) }
+        if let build = game.latestBuild, !build.isEmpty, build.count <= 14 { out.append(GameHeroStat(symbol: "number", title: "Build", value: build)) }
+        return out
+    }
+
+    @ViewBuilder private var chipsContent: some View {
                 StoreChip(store: .epic)
                 compatPill
                 if isInstalled {
                     if installer.updateAvailable(game.appName) { chip("arrow.triangle.2.circlepath.circle.fill", "Update available", Theme.accent) }
                     else { chip("checkmark.circle.fill", "Installed", Theme.good) }
                 }
-            }
-        }
     }
 
     @ViewBuilder private var compatPill: some View {
@@ -407,11 +436,11 @@ struct EpicGamePage: View {
             }
             switch install?.state {
             case .active?:
-                ProgressView(value: install?.progress.fraction ?? 0).tint(Theme.accent)
+                TileProgress(value: install?.progress.fraction ?? 0)
                 Text(EpicText.progress(install?.progress ?? SteamDownloadProgress())).font(.caption).foregroundStyle(Theme.textDim)
             case .queued?: Text("Waiting\u{2026}").font(.caption).foregroundStyle(Theme.textDim)
             case .paused?:
-                ProgressView(value: install?.progress.fraction ?? 0).tint(Theme.textDim)
+                TileProgress(value: install?.progress.fraction ?? 0, paused: true)
                 Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
             case .failed(let why)?: Text(why).font(.caption).foregroundStyle(Theme.bad)
             default: EmptyView()
@@ -429,10 +458,11 @@ struct EpicGamePage: View {
                         Button { viewing = i } label: {
                             Color.clear.frame(width: 260, height: 146)
                                 .overlay { EpicArtView(url: item.thumb) }
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.16), lineWidth: 1))
+                                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(TilePress())
                         .focusTarget("ep-media-\(i)", radius: 14, scale: 1.06) { viewing = i }
                         .padding(.vertical, 8)
                     }

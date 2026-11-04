@@ -49,14 +49,45 @@ struct PreviewRoot: View {
             case "launch": LaunchView(data: Self.launch(step: 2), scope: launchScope, cancel: {}, showSteam: nil)
             case "launch-late": LaunchView(data: Self.launch(step: 4), scope: launchScope, cancel: {}, showSteam: {})
             case "launch-fail": LaunchView(data: Self.launchFailed, scope: launchScope, cancel: {})
+            case "props": PropsDemo()
+            case "pad": PadKeyboardDemo()
             case "info": InfoDemo()
+            case "reports", "reports-game":
+                AppShell(tabs: tabs, selection: .constant("reports"), showHints: false) { ReportsDemo(game: screen == "reports-game") }.navScope(scope)
+            case "report-detail": ReportDetailDemo().navScope(scope)
+            case "stores": AppShell(tabs: tabs, selection: .constant("steam"), showHints: false) { StoresHubDemo() }.navScope(scope).onAppear { scope.defaultFocus = "store-steam" }
+            case "game": GameDemo().navScope(scope).onAppear { scope.defaultFocus = "gp-play" }
+            case "setup", "setup-games": SetupDemo(games: screen == "setup-games").navScope(scope)
+            case "perf": PerfDemo()
+            case "store-tiles": StoreTilesDemo()
+            case "store-sheet": StoreSheetDemo()
+            case "store-game": StoreGameDemo().navScope(scope)
+            case "store-dock": AppShell(tabs: tabs, selection: .constant("steam"), showHints: false) { StoreDockDemo() }.navScope(scope)
             case "settings": SettingsDemo().navScope(scope).onAppear { scope.defaultFocus = "set-display" }
             default:
-                AppShell(tabs: tabs, selection: $tab, statusChips: [("JIT ready", Theme.good), ("Tunnel on", Theme.accent)], showHints: CommandLine.arguments.contains("--hints")) {
-                    HomeView(notices: Mock.notices, games: Mock.cards, act: { _ in }, dismiss: { _ in }, open: { _ in }, play: { _ in }, add: {}, forceControllerLayout: CommandLine.arguments.contains("--pad"))
+                AppShell(tabs: tabs, selection: $tab, showHints: CommandLine.arguments.contains("--hints")) {
+                    // --friends: the real Home screen's Friends row above the page. --bar-notices: the notice chips sit in that row (a phone held sideways) instead of inside the page.
+                    // --one-notice: a single chip, like "Factorio closed unexpectedly".
+                    let friends = CommandLine.arguments.contains("--friends"), inBar = CommandLine.arguments.contains("--bar-notices")
+                    let notices = CommandLine.arguments.contains("--no-notices") ? [] : (CommandLine.arguments.contains("--one-notice") ? Array(Mock.notices.prefix(1)) : Mock.notices)
+                    HomeView(notices: friends && inBar ? [] : notices, games: Mock.cards, act: { _ in }, dismiss: { _ in }, open: { _ in }, play: { _ in }, add: {}, forceControllerLayout: CommandLine.arguments.contains("--pad"))
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            if friends {
+                                HStack(spacing: 12) {
+                                    if inBar, !notices.isEmpty { NoticeStrip(notices: notices, act: { _ in }, dismiss: { _ in }, compact: true) } else { Spacer(minLength: 0) }
+                                    PillButton(id: "home-friends", title: "Friends \u{00B7} 2 online", symbol: "person.2.fill", style: .glass) {}.fixedSize()
+                                }
+                                .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 4)
+                            }
+                        }
                 }
                 .navScope(scope)
-                .onAppear { scope.defaultFocus = "hero-play" }
+                .onAppear {
+                    scope.defaultFocus = "hero-play"
+                    // --tile: the glow starts on the third game's tile; --sections: the screen switches sections (as the real one does), so the hints name LB and RB's targets.
+                    if CommandLine.arguments.contains("--tile"), let id = UUID(uuidString: "11111111-0000-0000-0000-000000000003") { scope.defaultFocus = id; scope.focused = id }
+                    if CommandLine.arguments.contains("--sections") { scope.onSection = { _ in } }
+                }
             }
         }
         .environment(\.artLoader, Mock.loader)
@@ -69,7 +100,8 @@ struct PreviewRoot: View {
         let steps = titles.enumerated().map { LaunchStepData(id: "\($0.offset)", title: $0.element, state: $0.offset < step ? .done : ($0.offset == step ? .active : .pending)) }
         let g = Mock.games[3]
         return LaunchData(gameID: g.id, name: g.name, steps: steps, headline: titles[min(step, 4)] + "\u{2026}", detail: "Steam checks your licence before the game opens. This can take a minute the first time.",
-                          chips: [LaunchSettingChip(symbol: "shield.checkered", text: "Through Steam"), LaunchSettingChip(symbol: "display", text: "1280 \u{00D7} 720"), LaunchSettingChip(symbol: "bolt.fill", text: "Balanced"), LaunchSettingChip(symbol: "memorychip", text: "896 MB pool")])
+                          chips: [LaunchSettingChip(symbol: "shield.checkered", text: "Through Steam"), LaunchSettingChip(symbol: "display", text: "1280 \u{00D7} 720"), LaunchSettingChip(symbol: "bolt.fill", text: "Balanced"), LaunchSettingChip(symbol: "memorychip", text: "896 MB pool")],
+                          began: Date().addingTimeInterval(CommandLine.arguments.contains("--slow") ? -73 : -23))
     }
     static var launchFailed: LaunchData {
         var d = launch(step: 2); d.failure = "Steam needs to download a shared component (Steamworks Common Redistributables) and could not. Check your connection and try again."; return d
@@ -92,7 +124,12 @@ struct PreviewRoot: View {
 }
 
 @main struct PreviewApp: App {
-    init() { if let i = CommandLine.arguments.firstIndex(of: "--theme"), i + 1 < CommandLine.arguments.count { ThemeStore.shared.presetID = CommandLine.arguments[i + 1] } }
+    init() {
+        if let i = CommandLine.arguments.firstIndex(of: "--theme"), i + 1 < CommandLine.arguments.count { ThemeStore.shared.presetID = CommandLine.arguments[i + 1] }
+        if CommandLine.arguments.contains("--night") { HalloweenNight.forceTonight = true }
+        // --season thanksgiving (or halloween): show that holiday's look whatever the date is.
+        if let i = CommandLine.arguments.firstIndex(of: "--season"), i + 1 < CommandLine.arguments.count { ThemeStore.shared.previewSeason = Season(rawValue: CommandLine.arguments[i + 1]) }
+    }
     var body: some Scene {
         WindowGroup {
             PreviewRoot(screen: CommandLine.arguments.firstIndex(of: "--screen").flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil } ?? "home")
@@ -131,7 +168,7 @@ struct SettingsDemo: View {
                 }.frame(width: 300)
                 Rectangle().fill(Theme.line).frame(width: 1)
                 FocusScroll {
-                    PageScaffold(title: "Display", symbol: "display") {
+                    PageScaffold(title: "Appearance", symbol: "paintpalette.fill", subtitle: "Theme, colours and motion") {
                         SettingsGroup(title: "Picture") {
                             ChoiceRow(id: "res", symbol: "rectangle.expand.vertical", title: "Resolution", info: "The size of the screen games see.",
                                       options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: 2.16)) }, selection: $res)
@@ -156,7 +193,7 @@ struct InfoDemo: View {
     var body: some View {
         ZStack {
             AmbientBackdrop(animated: false)
-            PageScaffold(title: "Display", symbol: "display") {
+            PageScaffold(title: "Appearance", symbol: "paintpalette.fill", subtitle: "Theme, colours and motion") {
                 ValueRow(id: "r", symbol: "arrow.up.left.and.arrow.down.right", title: "Resolution", value: "1280 \u{00D7} 720")
             }
         }
@@ -164,4 +201,9 @@ struct InfoDemo: View {
             InfoPopover(title: "Resolution", text: "The size of the screen games see. Higher is sharper but needs more memory and a faster device; lower is faster. Games that pick their own resolution can choose any size up to this one, and the picture is scaled to your screen. Each game can have its own on its page. Applies the next time a game starts.", scope: scope) { shown = false }
         }
     }
+}
+
+private struct PadKeyboardDemo: View {
+    @State private var text = "C:\\Games\\Foo"
+    var body: some View { PadKeyboardSheet(title: "Program", monospaced: true, text: $text) }
 }

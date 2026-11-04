@@ -69,7 +69,7 @@ final class VPNGuard {
         let ask = UserDefaults.standard.object(forKey: Self.askKey) as? Bool ?? true
         if ask {
             let back = hasShortcut ? "Porthole then runs your \u{201C}\(shortcutName)\u{201D} shortcut to turn it back on."
-                                   : "Porthole then reminds you to turn it back on."
+                                   : "Porthole cannot turn it back on by itself: iOS only allows that through a Shortcut you make once (Settings \u{203A} JIT and connection \u{203A} Your own VPN). Until then it stays off after the game starts."
             let early = hasShortcut && (UserDefaults.standard.object(forKey: Self.earlyKey) as? Bool ?? true)
             let text = "Porthole needs its own connection for a moment to \(what). Your VPN switches off now and stays off until \(early ? "JIT is on" : until). \(back)"
             guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState != .unattached }) else { return markPaused() }

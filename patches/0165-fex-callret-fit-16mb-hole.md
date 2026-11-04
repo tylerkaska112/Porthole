@@ -1,0 +1,7 @@
+# 0165 FEX: the call-ret stack reservation fits a 16 MB hole (it missed by 8 KB)
+
+`FEX/Source/Windows/Common/CallRetStack.h` (`git -C vendor/Madeira/FEX apply patches/0165-fex-callret-fit-16mb-hole.patch`, after 0143): the per-thread call-ret stack reserved `CALLRET_STACK_SIZE + 2 pages + CALLRET_BASE_ALIGNMENT` = 0x1002000 bytes (8 MB stack, 8 MB of slack so the base can be rounded up to an 8 MB boundary, and two guard pages). It now reserves `CALLRET_STACK_SIZE + CALLRET_BASE_ALIGNMENT` = 0x1000000 and rounds the base up from the start of the reservation (no lower page). Wine returns 64 KB-aligned addresses, so the base is at most 8 MB - 64 KB above the start and the stack still fits. The guard pages were never enforced on iOS (the JIT's inline bounds check keeps the stack in its window), so nothing is lost.
+
+Evidence (RDR2 through Rockstar's launcher, 1.2.16, 2026-10-19 05:53): the emulator band [0x7c40000000, 0x8000000000) had `free=0x5ac62000` (1.45 GB) in 688 holes, the largest `maxgap=0x1000000` - a freed 16 MB rpmalloc span - and every new thread died with `[callret] RESERVE FAILED: 0x1002000 bytes in band` / `call-ret stack unavailable ... STATUS_NO_MEMORY`. The request was 8 KB bigger than the largest hole. The launcher then wrote through a null stack, took 2000 identical redeliveries and the process was ended.
+
+Rebuild: the cmake recipe of 0143, output `Bin/libarm64ecfex.dll` shipped as `ec-out/xtajit64.dll`. Unverified on a device.

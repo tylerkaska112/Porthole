@@ -1,0 +1,31 @@
+**Porthole 1.2.0 "Autumn Tide" - what to expect**
+
+🎮 **Controller everywhere**: an on-screen keyboard you drive with the D-pad, the same starting spot on every screen, and live button hints.
+
+⌨️ **Keyboard and mouse**: a Bluetooth/USB keyboard and a mouse or trackpad (iPad) work in games, with the game's own cursor, mouse look with a locked pointer, your own key for Porthole's menu (F10 by default), and the mouse wheel and drag everywhere in the app.
+
+🛒 **EA app store**, plus Steam demos, betas and playtests in your library.
+
+⚡ **Steam**: no more random sign-outs, much faster downloads (160-170 MB/s in testing), and download sizes that finally add up.
+
+🎨 **A new look** for Home, Stores, game pages, the launch screen, setup, Reports, Settings (now with search) and the performance overlay.
+
+🧩 **More games run**: Final Fantasy Resonance, Celeste and other .NET games (one-time Wine Mono download), and Red Dead Redemption 2 now gets through the Rockstar launcher into the game's first screens (it does not reach the main menu yet).
+
+📝 **Reports** now include the game's log and are checked before they show up, so a game isn't marked broken without a reason.
+
+🔧 **Also**: optional Donor memory for big games, gyro aim and turbo, sharing a game's setup, .7z and .rar installs for itch.io.
+
+━━━━━━━━━━━━━━━━
+
+📝 **Game reports: what's changing and why**
+
+When you report how a game runs, Porthole now sends that game's log along with it.
+
+**Why:** "doesn't work" on its own doesn't tell me what went wrong, and a game shouldn't be listed as broken without a reason. With the log I can see what actually crashed, fix it, and tell a real game problem from a setup problem.
+
+**How it works**
+• The log is private. It is never shown in Reports and only I can read it.
+• It's cleaned first: personal paths, account names, e-mail addresses and public IPs are taken out. The report screen shows you the log's size before you send.
+• Your name and accounts are never sent.
+• Every report is looked at before it appears in Reports or counts toward a game's badge, so give it a little time. My reports tells you when one is waiting.

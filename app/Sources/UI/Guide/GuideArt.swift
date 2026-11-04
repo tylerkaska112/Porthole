@@ -163,10 +163,10 @@ struct GuideArtView: View {
             VStack(alignment: .leading, spacing: 8) {
                 bar(3)
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 7) {
-                    row("gamecontroller.fill", .blue, "Play"); row("bolt.horizontal.fill", .orange, "Stores and JIT")
-                    row("externaldrive.fill", .teal, "Saves"); row("internaldrive.fill", .gray, "Storage")
-                    row("arrow.down.circle.fill", .green, "Updates"); row("paintpalette.fill", .pink, "App")
-                    row("wrench.and.screwdriver.fill", .indigo, "Advanced"); row("exclamationmark.bubble.fill", .red, "Report a problem")
+                    row("gamecontroller.fill", .blue, "Play"); row("storefront.fill", .indigo, "Stores")
+                    row("bolt.horizontal.fill", .green, "JIT and connection"); row("externaldrive.fill", .teal, "Saves")
+                    row("internaldrive.fill", .orange, "Storage"); row("arrow.down.circle.fill", .mint, "Updates")
+                    row("wrench.and.screwdriver.fill", .gray, "Advanced"); row("exclamationmark.bubble.fill", .red, "Report a problem")
                 }
                 .padding(.horizontal, 14)
                 Spacer(minLength: 0)

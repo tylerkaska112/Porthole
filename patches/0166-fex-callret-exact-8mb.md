@@ -1,0 +1,7 @@
+# 0166 FEX: the call-ret stack reserves 8 MB, 8 MB aligned (not 16 MB with padding)
+
+`FEX/Source/Windows/Common/CallRetStack.h` (`git -C vendor/Madeira/FEX apply patches/0166-fex-callret-exact-8mb.patch`, after 0165): on iOS the per-thread call-ret reservation is exactly `CALLRET_STACK_SIZE` (8 MB) and `MEM_ADDRESS_REQUIREMENTS.Alignment = CALLRET_BASE_ALIGNMENT` (8 MB) makes the emulator band hand it out aligned, so the base is the allocation itself. Before (and after 0165) half of every thread's reservation was padding. If the alignment is ever not honoured the code logs `[callret] 0166: reservation ... is not aligned` and takes the old padded size. Other hosts are unchanged.
+
+Evidence (RDR2 through Rockstar's launcher, 1.2.17, 2026-10-19 06:02): with 0165 `RDR2.exe` was started by the launcher for the first time (`Launching game...`), but the band was 96 % full at that moment (`[fex-headroom] used=14876MB free=483MB`, ~250 threads: the launcher, its browser helper, three services, 32 download threads at game launch) and the game died within 15 s with `exit code 0xc0000005` / `Game exited before creating a window` - the null write at 0x800000 of a failed 16 MB aligned span (`[va-scan] FAILED ... size=0x1000000 align=0x1000000`). 8 MB less per thread frees about 1.6 GB.
+
+Rebuild: the cmake recipe of 0143, output `Bin/libarm64ecfex.dll` shipped as `ec-out/xtajit64.dll`. Unverified on a device.

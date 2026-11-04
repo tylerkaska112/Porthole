@@ -1,0 +1,307 @@
+--- a/app/Runtime/WineProcessBridge.m
++++ b/app/Runtime/WineProcessBridge.m
+@@ -33,6 +33,7 @@
+ #include <mach-o/loader.h>
+ 
+ #include "WineProcessBridge.h"
++#include "SteamStorageNative.h"
+ #include "WineServerBridge.h"
+ #include "PrefixExtractor.h"
+ #include "FEXBridge.h"  // fex_get_jit_write_offset()
+@@ -635,6 +636,10 @@
+         if (snprintf(probe, sizeof(probe), "%s/drive_c/%s", prefix, exe + 3) >= (int)sizeof(probe))
+             return 0;
+         for (char *p = probe + skip; *p; p++) if (*p == '\\') *p = '/';
++    }
++    else if ((exe[0] == 'E' || exe[0] == 'e') && exe[1] == ':' && exe[2] == '\\')
++    {
++        if (madeira_storage_native(prefix, exe, probe, sizeof(probe))) return 0;
+     }
+     else if (strchr(exe, '\\') || (exe[0] && exe[1] == ':'))
+         return 0;
+@@ -1634,6 +1639,7 @@
+         const char *dock_session = getenv("MADEIRA_DOCK_SESSION");
+         const char *direct_app = getenv("MADEIRA_STEAM_APPID");    /* set by the library for one direct Steam start (Start with: The game); not a setting */
+         const char *direct_path = getenv("MADEIRA_STEAM_APPPATH"); /* that game's install folder, with MADEIRA_STEAM_APPID; not a setting */
++        char direct_native[PATH_MAX];
+         const char *no_steam_id = getenv("MADEIRA_NO_STEAM_IDENTITY"); /* set by the library for one launch of a game from another store; not a setting */
+         if (dock_session && dock_session[0] == '1') {
+             unsetenv("SteamAppPath");
+@@ -1647,7 +1653,8 @@
+             dprintf(STDERR_FILENO, "[steam-env] a game from another store: no Steam game identity published\n");
+         } else if (direct_app && direct_app[0] && strlen(direct_app) <= 10 &&
+             strspn(direct_app, "0123456789") == strlen(direct_app) &&
+-            direct_path && (direct_path[0] == 'C' || direct_path[0] == 'c') && direct_path[1] == ':' &&
++            direct_path && ((direct_path[0] == 'C' || direct_path[0] == 'c') ||
++                ((direct_path[0] == 'E' || direct_path[0] == 'e') && !madeira_storage_native(g_prefix_path, direct_path, direct_native, sizeof(direct_native)))) && direct_path[1] == ':' &&
+             direct_path[2] == '\\' && strlen(direct_path) < 1024 && !strstr(direct_path, "..")) {
+             setenv("SteamAppPath", direct_path, 1);
+             setenv("SteamGameId", direct_app, 1);
+@@ -2527,14 +2534,33 @@
+          * services batch) is what starts). */
+         const char *launch_workdir = getenv("MADEIRA_WORKDIR");   /* set by the library for one launch: the working folder (Steam's, or the entry's); not a setting */
+         char workdir[512] = "";
+-        if (launch_workdir && (launch_workdir[0] == 'C' || launch_workdir[0] == 'c') && launch_workdir[1] == ':' &&
++        if (launch_workdir && (launch_workdir[0] == 'C' || launch_workdir[0] == 'c' || launch_workdir[0] == 'E' || launch_workdir[0] == 'e') && launch_workdir[1] == ':' &&
+             launch_workdir[2] == '\\' && launch_workdir[3] && !strstr(launch_workdir, "..") &&
+             strlen(launch_workdir) < sizeof(workdir) - 2)
+             snprintf(workdir, sizeof(workdir), "%s", launch_workdir);
+         unsetenv("MADEIRA_WORKDIR");
++        if (!workdir[0] && (madeira_exe[0] == 'E' || madeira_exe[0] == 'e') && madeira_exe[1] == ':') {
++            const char *last = strrchr(madeira_exe, '\\');
++            if (last && last >= madeira_exe + 2 && (size_t)(last - madeira_exe) < sizeof(workdir) - 2) {
++                size_t n = (size_t)(last - madeira_exe);
++                memcpy(workdir, madeira_exe, n); workdir[n++] = '\\'; workdir[n] = 0;
++            }
++        }
+         /* ml1163: a typed folder may end in '\\'; MADEIRA_INITIAL_CWD gets exactly one. */
+         for (size_t n = strlen(workdir); n > 3 && workdir[n - 1] == '\\'; n--) workdir[n - 1] = 0;
+-        if (workdir[0]) {
++        if (workdir[0] == 'E' || workdir[0] == 'e') {
++            char native[PATH_MAX], wine_cwd[520];
++            if (madeira_storage_native(g_prefix_path, workdir, native, sizeof(native)) || chdir(native)) {
++                dprintf(STDERR_FILENO, "[WineProc] external working folder unavailable; launch stopped\n");
++                wine_launched_process_did_exit((int)0xC000003A);
++                g_wine_running = 0;
++                wineserver_stop();
++                return NULL;
++            }
++            setenv("PWD", native, 1);
++            snprintf(wine_cwd, sizeof(wine_cwd), "%s%s", workdir, workdir[strlen(workdir) - 1] == '\\' ? "" : "\\");
++            setenv("MADEIRA_INITIAL_CWD", wine_cwd, 1);
++        } else if (workdir[0]) {
+             char unix_dir[1024], windir[512], wine_cwd[520];
+             snprintf(windir, sizeof(windir), "%s", workdir + 3);
+             for (char *p = windir; *p; p++) if (*p == '\\') *p = '/';
+--- a/app/Runtime/MadeiraDock.swift
++++ b/app/Runtime/MadeiraDock.swift
+@@ -34,11 +34,20 @@
+     let library: String         // drive-relative steamapps folder
+     let installed: Bool         // StateFlags has "fully installed"
+     let customExecutables: Bool // the install record lists per-user executables (CheckGuid)
++    var storageID: String = "internal"
++    var storageAvailable = true
+ 
+-    /// Windows path of the game's folder, which Dock requires Valve's client to resolve to.
++    /// Canonical Wine path of the game folder, used for direct starts and installers.
+     var windowsInstallPath: String {
+-        "C:\\" + (library + "/common/" + installDir).replacingOccurrences(of: "/", with: "\\")
++        (storageID == "internal" ? "C:\\" : "E:\\") + (library + "/common/" + installDir).replacingOccurrences(of: "/", with: "\\")
+     }
++
++    var clientInstallPath: String {
++        if storageID != "internal" {
++            return SteamStoragePath.externalWindowsRoot + "\\" + windowsInstallPath.dropFirst(3)
++        }
++        return windowsInstallPath
++    }
+ }
+ 
+ /// Madeira Dock: a small headless host (madeira-dock, built by
+@@ -82,14 +91,14 @@
+     }
+ 
+     /// The game an app manifest describes, or nil when it is not one Dock can start.
+-    static func game(manifest data: Data, library: String) -> DockGame? {
++    static func game(manifest data: Data, library: String, storageID: String = "internal") -> DockGame? {
+         guard data.count <= 1 << 20, var parser = try? SteamKeyValues(data), let root = try? parser.read(),
+               let state = root["AppState"], let appID = state["appid"]?.string.flatMap({ Int($0) }), validAppID(appID),
+               let folder = state["installdir"]?.string, validFolderName(folder) else { return nil }
+         let flags = state["StateFlags"]?.string.flatMap { UInt32($0) } ?? 0
+         let name = state["name"]?.string.map { String($0.prefix(200)) } ?? ""
+         return DockGame(id: appID, name: name.isEmpty ? "App \(appID)" : name, installDir: folder, library: library,
+-                        installed: flags & 4 != 0, customExecutables: !(state["CheckGuid"]?.fields.isEmpty ?? true))
++                        installed: flags & 4 != 0, customExecutables: !(state["CheckGuid"]?.fields.isEmpty ?? true), storageID: storageID)
+     }
+ 
+     /// A record's depots: the ones it lends from each owner app (`SharedDepots`, depot -> owner)
+@@ -133,6 +142,28 @@
+             }
+         }
+         result.removeAll { game in lent[game.id].map { installed[game.id, default: []].isSubset(of: $0) } ?? false }
++        return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
++    }
++
++    /// The sole registered external library. Missing storage is an error, not
++    /// an empty discovery result; callers retain their remembered identities.
++    static func games(library: SteamStorageLibrary, root: URL) throws -> [DockGame] {
++        guard library.id != SteamStorageLibrary.internalID else { return games(drive: root) }
++        try SteamStorageIdentity.verify(library.id, root: root)
++        let apps = try SteamStoragePath.native("steamapps", root: root)
++        let names: [String]
++        do { names = try FileManager.default.contentsOfDirectory(atPath: apps.path) }
++        catch let error as NSError where error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { return [] }
++        var result: [DockGame] = []
++        for name in names.sorted().prefix(2000) where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
++            let record = try SteamStoragePath.native("steamapps/" + name, root: root)
++            let values = try record.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
++            guard values.isRegularFile == true, (values.fileSize ?? Int.max) <= 1 << 20,
++                  let game = game(manifest: try Data(contentsOf: record), library: "steamapps", storageID: library.id),
++                  !result.contains(where: { $0.id == game.id }) else { continue }
++            _ = try SteamStoragePath.native("steamapps/common/" + game.installDir, root: root)
++            result.append(game)
++        }
+         return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+     }
+ 
+@@ -168,7 +199,7 @@
+     }
+ 
+     /// Everything a launch needs, checked before any sign-in is handed over.
+-    static func validate(_ game: DockGame, drive: URL, bundled: Bool = MadeiraDock.bundled) throws {
++    static func validate(_ game: DockGame, drive: URL, bundled: Bool = MadeiraDock.bundled, libraryRoot: URL? = nil) throws {
+         guard bundled else { throw DockError.message("Madeira Dock is not built into this app. Run build/madeira-dock/build.sh.") }
+         guard validAppID(game.id), validFolderName(game.installDir) else {
+             throw DockError.message("This game's Steam install record is invalid.")
+@@ -176,9 +207,11 @@
+         guard FileManager.default.fileExists(atPath: drive.appendingPathComponent(SteamRuntimeFiles.relativeRoot + "/steamclient64.dll").path) else {
+             throw DockError.message("Steam's client files are missing. Download Valve's client components first.")
+         }
++        guard game.storageID == "internal" || libraryRoot != nil else { throw SteamStorageError.unavailable(.disconnected) }
++        let folder = try SteamStoragePath.native(game.library + "/common/" + game.installDir, root: libraryRoot ?? drive)
+         var isFolder: ObjCBool = false
+         guard game.installed,
+-              FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/common/" + game.installDir).path, isDirectory: &isFolder),
++              FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder),
+               isFolder.boolValue else {
+             throw DockError.message("Steam does not list this game as fully installed.")
+         }
+@@ -296,6 +329,9 @@
+                let reason = Self.launchRefusal(error, waited: result == 48) {
+                 return reason
+             }
++            if result == 41 {
++                return "Steam did not resolve this game's registered install folder. Reconnect its storage and retry; if this repeats, export the log."
++            }
+             return "Madeira Dock could not complete the Steam launch (code \(result)). Export the log before trying again."
+         }
+ 
+@@ -457,7 +493,7 @@
+         setenv("MADEIRA_STEAM_HOST_APPID", String(game.id), 1)
+         setenv("MADEIRA_STEAM_HOST_LAUNCH_OPTION", String(launchOption), 1)
+         setenv("MADEIRA_STEAM_HOST_CLIENT_DIR", SteamRuntimeFiles.windowsRoot, 1)
+-        setenv("MADEIRA_STEAM_HOST_EXPECTED_INSTALL", game.windowsInstallPath, 1)
++        setenv("MADEIRA_STEAM_HOST_EXPECTED_INSTALL", game.clientInstallPath, 1)
+         setenv("MADEIRA_STEAM_HOST_LOG", "C:\\madeira-dock.txt", 1)
+         // The client receives only this game's extra arguments, separately from the host's
+         // explorer/cmd command. An empty profile clears any previous game's choice.
+--- a/app/Runtime/DockInstallers.swift
++++ b/app/Runtime/DockInstallers.swift
+@@ -22,7 +22,7 @@
+ /// One program of a "Run Process" entry, resolved to a Windows path.
+ struct SteamInstallProcess: Equatable, Sendable {
+     var run: SteamInstallRun
+-    var executable: String      // C:\...
++    var executable: String      // C:\... or E:\...
+     var arguments: String
+ }
+ 
+@@ -459,7 +459,7 @@
+                 guard let raw = fields["process \(number)"], !raw.isEmpty, raw.utf8.count <= 1024 else { continue }
+                 let exe = expand(raw, installDir: installDir)
+                 let lower = exe.lowercased()
+-                guard exe.count > 3, exe.hasPrefix("C:\\"), !exe.contains("%"), !exe.contains("\""),
++                guard exe.count > 3, (exe.hasPrefix("C:\\") || exe.hasPrefix("E:\\")), !exe.contains("%"), !exe.contains("\""),
+                       !exe.contains(".."), lower.hasSuffix(".exe") || lower.hasSuffix(".msi") else { continue }
+                 let args = expand(fields["command \(number)"] ?? "", installDir: installDir, path: false)
+                     .trimmingCharacters(in: .whitespaces)
+@@ -837,11 +837,13 @@
+ 
+     /// The install scripts' programs of a game: its own folder (one level down) and the
+     /// shared redistributables Steam keeps next to it, and how many scripts were read.
+-    nonisolated static func found(_ game: DockGame, drive: URL,
++    nonisolated static func found(_ game: DockGame, drive: URL, externalRoot: URL? = nil,
+                                   defaultKey: Bool = DockInstallers.flag("MADEIRA_INSTALL_DEFAULT_KEY")) -> (processes: [SteamInstallProcess], scripts: Int) {
++        guard game.storageID == "internal" || externalRoot != nil else { return ([], 0) }
++        let drive = game.storageID == "internal" ? drive : externalRoot!
+         let common = game.library + "/common"
+         let shared = common + "/Steamworks Shared"
+-        func windows(_ relative: String) -> String { "C:\\" + relative.replacingOccurrences(of: "/", with: "\\") }
++        func windows(_ relative: String) -> String { (game.storageID == "internal" ? "C:\\" : "E:\\") + relative.replacingOccurrences(of: "/", with: "\\") }
+         let roots: [(URL, Int, String, Int?)] = [
+             (drive.appendingPathComponent(common + "/" + game.installDir, isDirectory: true), 1, game.windowsInstallPath,
+              defaultKey ? game.id : nil),
+@@ -886,29 +888,27 @@
+     }
+ 
+     /// The number of install-script programs a game has (the Dock sheet's list).
+-    nonisolated static func programCount(_ game: DockGame, drive: URL) -> Int {
+-        enabled ? found(game, drive: drive).processes.count : 0
++    nonisolated static func programCount(_ game: DockGame, drive: URL, externalRoot: URL? = nil) -> Int {
++        enabled ? found(game, drive: drive, externalRoot: externalRoot).processes.count : 0
+     }
+ 
+     nonisolated static func inside(_ url: URL, drive: URL) -> Bool {
+         url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(drive.resolvingSymlinksInPath().standardizedFileURL.path + "/")
+     }
+ 
+-    /// A C:\ path resolved on disk the way Wine resolves it (case-insensitive), staying
+-    /// inside drive_c; nil when it does not exist.
+-    nonisolated static func resolve(_ windowsPath: String, drive: URL) -> URL? {
+-        guard windowsPath.uppercased().hasPrefix("C:\\"), windowsPath.utf8.count < 1024 else { return nil }
++    /// A C:\ or E:\ path resolved case-insensitively within its selected root;
++    /// nil when the root or file is unavailable.
++    nonisolated static func resolve(_ windowsPath: String, drive: URL, externalRoot: URL? = nil) -> URL? {
++        let external = windowsPath.uppercased().hasPrefix("E:\\")
++        guard (windowsPath.uppercased().hasPrefix("C:\\") || (external && externalRoot != nil)), windowsPath.utf8.count < 1024 else { return nil }
++        let drive = external ? externalRoot! : drive
+         let parts = windowsPath.dropFirst(3).split(separator: "\\", omittingEmptySubsequences: false).map(String.init)
+         guard !parts.isEmpty, !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("/") }) else { return nil }
+         var current = drive
+         for part in parts {
+-            let exact = current.appendingPathComponent(part)
+-            if FileManager.default.fileExists(atPath: exact.path) { current = exact }
+-            else {
+-                guard let names = try? FileManager.default.contentsOfDirectory(atPath: current.path),
+-                      let match = names.first(where: { $0.caseInsensitiveCompare(part) == .orderedSame }) else { return nil }
+-                current.appendPathComponent(match)
+-            }
++            guard let names = try? FileManager.default.contentsOfDirectory(atPath: current.path),
++                  let match = names.first(where: { $0 == part }) ?? names.first(where: { $0.caseInsensitiveCompare(part) == .orderedSame }) else { return nil }
++            current.appendPathComponent(match)
+             guard inside(current, drive: drive) else { return nil }
+         }
+         return current
+@@ -935,10 +935,10 @@
+     /// "Extracting Files" and held the game's start (log 2026-10-31 23:22). They are left out,
+     /// as GameNative (Wine on Android) does. Newer .NET (Core, 5+) setups still run.
+     nonisolated static func runnable(_ process: SteamInstallProcess, drive: URL, has32Bit: Bool, hasMsiexec: Bool,
+-                                     skipDotNet: Bool = false) -> String? {
++                                     skipDotNet: Bool = false, externalRoot: URL? = nil) -> String? {
+         if skipDotNet && isDotNetFramework(process) { return "Wine's own .NET is used" }
+         if process.executable.lowercased().hasSuffix(".msi") { return hasMsiexec ? nil : "Windows Installer package" }
+-        guard let file = resolve(process.executable, drive: drive), let machine = machine(file) else { return nil }
++        guard let file = resolve(process.executable, drive: drive, externalRoot: externalRoot), let machine = machine(file) else { return nil }
+         return machine == 0x14c && !has32Bit ? "32-bit installer" : nil
+     }
+ 
+@@ -1125,7 +1125,7 @@
+     /// Called right before a Dock start, while no session runs (the registry is on disk).
+     /// Records the previous batch's results, plans the game's programs and writes the batch.
+     /// `others`: the prefix's other Dock games (a reset's shared installs, applyRequest).
+-    static func prepare(_ game: DockGame, drive: URL, prefix: URL, others: [DockGame] = [],
++    static func prepare(_ game: DockGame, drive: URL, prefix: URL, externalRoot: URL? = nil, others: [DockGame] = [],
+                         has32Bit: Bool = DockInstallers.bundleHas32Bit, hasMsiexec: Bool = DockInstallers.bundleHasMsiexec,
+                         fusionSource: URL? = Bundle.main.resourceURL?.appendingPathComponent("i386-windows/fusion.dll")) {
+         script = nil; serverSync = false; note = nil; finishedAt = nil; logged = []; runningSince = nil; installsOnly = false
+@@ -1148,7 +1148,7 @@
+         }
+         let defaultKey = flag("MADEIRA_INSTALL_DEFAULT_KEY")
+         let skipDotNet = flag("MADEIRA_INSTALL_SKIP_DOTNET")   // 0: .NET Framework setups run too
+-        let (found, scripts) = Self.found(game, drive: drive, defaultKey: defaultKey)
++        let (found, scripts) = Self.found(game, drive: drive, externalRoot: externalRoot, defaultKey: defaultKey)
+         // A Record as done / Reset request saved since the last start, before the plan reads
+         // the registry.
+         applyRequest(game, found: found, prefix: prefix, drive: drive, others: others)
+@@ -1174,9 +1174,9 @@
+         }
+         let items = DockInstallScripts.plan(found,
+                                             done: { DockInstallScripts.marked($0, in: registry[$0.hive] ?? "") },
+-                                            exists: { resolve($0, drive: drive) != nil },
++                                            exists: { resolve($0, drive: drive, externalRoot: externalRoot) != nil },
+                                             runnable: { runnable($0, drive: drive, has32Bit: has32Bit, hasMsiexec: hasMsiexec,
+-                                                                 skipDotNet: skipDotNet) })
++                                                                 skipDotNet: skipDotNet, externalRoot: externalRoot) })
+         // ml2020: a publisher's program the script installed (or installs now), by its record's
+         // key: the game session's service-manager decision (DockGameSession) reads the count.
+         thirdPartyInstalls = items.filter { [.done, .pending, .limit].contains($0.status)

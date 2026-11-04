@@ -40,7 +40,7 @@ struct AmbientBackdrop: View {
     var animated = true
 
     var body: some View {
-        let moving = animated && ThemeStore.shared.animatedBackground && !reduceMotion && !ThemeStore.shared.scrolling
+        let moving = animated && ThemeStore.shared.animatedBackground && !reduceMotion
         ZStack {
             Theme.background
             if colorScheme == .dark {
@@ -50,7 +50,13 @@ struct AmbientBackdrop: View {
                         let w = geo.size.width, h = geo.size.height
                         orb(Theme.accent, 0.17, size: max(w, h) * 0.8).position(x: w * (0.15 + 0.06 * sin(t / 9)), y: h * (0.10 + 0.05 * cos(t / 11)))
                         orb(Theme.accent2, 0.09, size: max(w, h) * 0.8).position(x: w * (0.88 + 0.05 * cos(t / 10)), y: h * (0.95 + 0.04 * sin(t / 8)))
+                        SeasonalDecor(decor: ThemeStore.shared.palette.decor, time: context.date.timeIntervalSinceReferenceDate, moving: moving)
                     }
+                }
+                if ThemeStore.shared.palette.decor != .none {
+                    // Behind every screen's text and panels, above the moon and the embers. (Home draws its own sky above its picture.)
+                    if animated, !BatsPlacement.shared.homeDrawsThem { FestiveSky() }
+                    FestiveCorners()
                 }
             }
         }

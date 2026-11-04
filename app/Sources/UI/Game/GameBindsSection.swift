@@ -405,7 +405,7 @@ struct TouchLayoutEditor: View {
             VStack(spacing: 8) {
                 HStack(spacing: 12) {
                     if !c.isStick {
-                        TextField("Label", text: Binding(get: { c.label }, set: { v in update(id) { $0.label = v } }))
+                        PadTextField(title: "Label", prompt: "Label", text: Binding(get: { c.label }, set: { v in update(id) { $0.label = v } }))
                             .textFieldStyle(.roundedBorder).frame(maxWidth: 110)
                         Picker("Does", selection: Binding(get: { c.action }, set: { v in update(id) { $0.action = v; if ["lmb", "rmb", "mmb"].contains(v) { $0.mode = "hold" } } })) {
                             ForEach((PadActions.list + PadActions.touchOnly).filter { $0.id != "none" }, id: \.id) { Text($0.label).tag($0.id) }

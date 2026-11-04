@@ -27,6 +27,23 @@ enum PerfMetric: String, CaseIterable, Identifiable {
         }
     }
 
+    var symbol: String {
+        switch self {
+        case .fps: "speedometer"
+        case .lowFPS: "arrow.down.right"
+        case .frameTime: "timer"
+        case .cpu: "cpu"
+        case .busiestThread: "chart.bar.fill"
+        case .gpuBusy, .gpuFrame: "square.stack.3d.up.fill"
+        case .memory, .freeMemory: "memorychip"
+        case .gpuMemory: "display"
+        case .thermal: "thermometer.medium"
+        case .battery: "battery.75percent"
+        case .powerMode: "bolt.fill"
+        case .swap: "internaldrive"
+        }
+    }
+
     /// These need the engine's slower measurements, which Porthole only takes while something is asking for them.
     var needsDetail: Bool { [.busiestThread, .gpuBusy, .gpuFrame, .swap].contains(self) }
 }
@@ -54,10 +71,10 @@ extension OverlayCorner {
 }
 
 enum OverlaySize: String, CaseIterable, Identifiable {
-    case small, medium, large
+    case tiny, small, medium, large
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
-    var font: CGFloat { switch self { case .small: 11; case .medium: 13; case .large: 16 } }
+    var font: CGFloat { switch self { case .tiny: 9; case .small: 11; case .medium: 13; case .large: 16 } }
 }
 
 /// What the performance overlay shows and where. Off until the player turns it on in the in-game menu; kept between games.
@@ -130,7 +147,15 @@ final class PerfOverlayModel: ObservableObject {
         if fpsHistory.count > Self.historyLength { fpsHistory.removeFirst(fpsHistory.count - Self.historyLength) }
     }
 
-    func reset() { sample = TelemetrySample(); fpsHistory = [] }
+    func reset() { sample = TelemetrySample(); fpsHistory = []; lastRows = [:] }
+
+    /// The last row each number showed. A number the engine only measures now and then (the busiest thread, the GPU's time, the swap file, the battery) has no value in some
+    /// samples; its row then keeps the last value it had, or a dash before the first one, so a number that is turned on never leaves the overlay.
+    private var lastRows: [PerfMetric: Row] = [:]
+    private func kept(_ metric: PerfMetric, _ label: String, _ fresh: Row?) -> Row {
+        if let fresh { lastRows[metric] = fresh; return fresh }
+        return lastRows[metric] ?? Row(metric: metric, label: label, value: "-", tint: nil)
+    }
 
     struct Row: Identifiable {
         let metric: PerfMetric
@@ -155,11 +180,11 @@ final class PerfOverlayModel: ObservableObject {
             case .cpu:
                 out.append(Row(metric: metric, label: "CPU", value: String(format: "%.0f%%", s.cpuPercent), tint: nil))
             case .busiestThread:
-                if let t = s.topThreadPercent { out.append(Row(metric: metric, label: "Top thread", value: String(format: "%.0f%%", t), tint: t > 90 ? Theme.warn : nil)) }
+                out.append(kept(metric, "Top thread", s.topThreadPercent.map { Row(metric: metric, label: "Top thread", value: String(format: "%.0f%%", $0), tint: $0 > 90 ? Theme.warn : nil) }))
             case .gpuBusy:
-                if let g = s.gpuBusyPercent { out.append(Row(metric: metric, label: "GPU", value: String(format: "%.0f%%", g), tint: g > 95 ? Theme.warn : nil)) }
+                out.append(kept(metric, "GPU", s.gpuBusyPercent.map { Row(metric: metric, label: "GPU", value: String(format: "%.0f%%", $0), tint: $0 > 95 ? Theme.warn : nil) }))
             case .gpuFrame:
-                if let g = s.gpuFrameMs { out.append(Row(metric: metric, label: "GPU frame", value: String(format: "%.1f ms", g), tint: nil)) }
+                out.append(kept(metric, "GPU frame", s.gpuFrameMs.map { Row(metric: metric, label: "GPU frame", value: String(format: "%.1f ms", $0), tint: nil) }))
             case .memory:
                 out.append(Row(metric: metric, label: "Mem", value: String(format: "%.2f GB", s.footprintMB / 1024), tint: s.availableMB > 0 && s.availableMB < 500 ? Theme.bad : nil))
             case .freeMemory:
@@ -169,86 +194,27 @@ final class PerfOverlayModel: ObservableObject {
             case .thermal:
                 out.append(Row(metric: metric, label: "Heat", value: s.thermal, tint: ["serious", "critical"].contains(s.thermal) ? Theme.bad : (s.thermal == "fair" ? Theme.warn : nil)))
             case .battery:
+                var fresh: Row?
                 if let b = s.battery {
                     var v = String(format: "%.0f%%", b * 100)
                     if let d = s.drainPerHour { v += String(format: " (%@%.0f/h)", d > 0 ? "-" : "+", abs(d)) }
-                    out.append(Row(metric: metric, label: "Battery", value: v, tint: b < 0.15 ? Theme.bad : nil))
+                    fresh = Row(metric: metric, label: "Battery", value: v, tint: b < 0.15 ? Theme.bad : nil)
                 }
+                out.append(kept(metric, "Battery", fresh))
             case .powerMode:
-                out.append(Row(metric: metric, label: "Mode", value: s.mode.isEmpty ? "-" : s.mode, tint: nil))
+                // "Performance, up to 120 FPS" is too long for a cell: the name alone, and amber when the heat has forced it.
+                let name = s.mode.split(separator: ",").first.map(String.init) ?? ""
+                out.append(Row(metric: metric, label: "Mode", value: name.isEmpty ? "-" : name, tint: s.mode.contains("(forced") ? Theme.warn : nil))
             case .swap:
+                var fresh: Row?
                 if let used = s.engine.swapFileUsedMB, let cap = s.engine.swapFileCapMB, cap > 0 {
                     let pct = Double(used) / Double(cap) * 100
-                    out.append(Row(metric: metric, label: "Swap", value: String(format: "%.1f / %.1f GB", Double(used) / 1024, Double(cap) / 1024), tint: pct >= 90 ? Theme.bad : nil))
+                    fresh = Row(metric: metric, label: "Swap", value: String(format: "%.1f / %.1f GB", Double(used) / 1024, Double(cap) / 1024), tint: pct >= 90 ? Theme.bad : nil)
                 }
+                out.append(kept(metric, "Swap", fresh))
             }
         }
         return out
-    }
-}
-
-struct FPSGraph: View {
-    let values: [Double]
-    var body: some View {
-        GeometryReader { geo in
-            let top = max(60, (values.max() ?? 60).rounded(.up))
-            Path { path in
-                guard values.count > 1 else { return }
-                let step = geo.size.width / CGFloat(PerfOverlayModel.historyLength - 1)
-                let offset = geo.size.width - CGFloat(values.count - 1) * step
-                for (i, v) in values.enumerated() {
-                    let x = offset + CGFloat(i) * step
-                    let y = geo.size.height * (1 - CGFloat(min(v, top) / top))
-                    if i == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
-                }
-            }
-            .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-        }
-    }
-}
-
-/// Puts its children in columns: a new column starts when the next one would not fit in `maxHeight`.
-struct OverlayColumns: SwiftUI.Layout {
-    var maxHeight: CGFloat
-    var spacing: CGFloat = 2
-    var columnSpacing: CGFloat = 16
-
-    private struct Arrangement { var columns: [[Int]] = [[]]; var widths: [CGFloat] = [0]; var heights: [CGFloat] = [0] }
-
-    private func arrange(_ subviews: LayoutSubviews) -> Arrangement {
-        var a = Arrangement()
-        for (i, view) in subviews.enumerated() {
-            let s = view.sizeThatFits(.unspecified)
-            let last = a.columns.count - 1
-            let gap = a.columns[last].isEmpty ? 0 : spacing
-            if !a.columns[last].isEmpty, a.heights[last] + gap + s.height > maxHeight {
-                a.columns.append([]); a.widths.append(0); a.heights.append(0)
-            }
-            let c = a.columns.count - 1
-            a.heights[c] += (a.columns[c].isEmpty ? 0 : spacing) + s.height
-            a.widths[c] = max(a.widths[c], s.width)
-            a.columns[c].append(i)
-        }
-        return a
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: LayoutSubviews, cache: inout ()) -> CGSize {
-        let a = arrange(subviews)
-        return CGSize(width: a.widths.reduce(0, +) + columnSpacing * CGFloat(max(0, a.widths.count - 1)), height: a.heights.max() ?? 0)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: LayoutSubviews, cache: inout ()) {
-        let a = arrange(subviews)
-        var x = bounds.minX
-        for (c, column) in a.columns.enumerated() {
-            var y = bounds.minY
-            for i in column {
-                let h = subviews[i].sizeThatFits(.unspecified).height
-                subviews[i].place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(width: a.widths[c], height: h))
-                y += h + spacing
-            }
-            x += a.widths[c] + columnSpacing
-        }
     }
 }
 
@@ -291,42 +257,14 @@ struct PerfOverlayView: View {
 
     private func overlay(room: CGSize) -> some View {
         let rows = model.rows(for: settings)
-        let font = Font.system(size: settings.size.font, weight: .semibold, design: .monospaced)
+        let head = rows.first { $0.metric == .fps }
+        let others = rows.filter { $0.metric != .fps }.map { PerfCardRow(id: $0.id, label: $0.label, value: $0.value, symbol: $0.metric.symbol, tint: $0.tint) }
         let empty = rows.isEmpty && !settings.showGraph && !settings.developerDetails
         return OverlayFit(available: CGSize(width: max(60, room.width), height: max(60, room.height)), corner: settings.corner) {
-            HStack(alignment: .top, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if settings.asLine {
-                        HStack(spacing: 8) { ForEach(rows) { row in Text(row.value).foregroundStyle(row.tint ?? .white) } }
-                            .font(font)
-                    } else {
-                        // Rows in as many columns as the height allows (the graph counts as a row).
-                        OverlayColumns(maxHeight: max(40, min(room.height, model.tallest) - padding * 2 - 4)) {
-                            ForEach(rows) { row in
-                                HStack(spacing: 8) {
-                                    Text(row.label).foregroundStyle(.white.opacity(0.6))
-                                    Spacer(minLength: 6)
-                                    Text(row.value).foregroundStyle(row.tint ?? .white)
-                                }
-                                .font(font)
-                            }
-                        }
-                    }
-                    if settings.showGraph {
-                        FPSGraph(values: model.fpsHistory)
-                            .frame(width: max(110, settings.size.font * 11), height: settings.size.font * 3)
-                    }
-                }
-                if settings.developerDetails {
-                    Text(model.sample.full + (model.extra.isEmpty ? "" : "\n" + model.extra))
-                        .font(.system(size: max(9, settings.size.font - 3), design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .fixedSize(horizontal: true, vertical: true)
-                }
-            }
-            .padding(.horizontal, 9).padding(.vertical, padding - 2)
-            .background(Color.black.opacity(settings.opacity * 0.8), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .opacity(empty ? 0 : 1)
+            PerfCardView(fps: head == nil ? nil : model.sample.fps, fpsTint: head?.tint, rows: others, history: model.fpsHistory, showGraph: settings.showGraph, asLine: settings.asLine,
+                         fontSize: settings.size.font, opacity: settings.opacity, tallest: max(40, min(room.height, model.tallest) - padding * 2 - 4),
+                         extraText: settings.developerDetails ? model.sample.full + (model.extra.isEmpty ? "" : "\n" + model.extra) : nil)
+                .opacity(empty ? 0 : 1)
         }
     }
 }

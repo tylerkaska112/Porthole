@@ -23,12 +23,13 @@ struct StoresScreen: View {
                 case .gog: GogStoreScreen()
                 case .itch: ItchStoreScreen()
                 case .amazon: AmazonStoreScreen()
+                case .ea: EAStoreScreen()
                 }
             }
         }
         // Over everything in the Stores tab (the libraries and the games' pages), except the Downloads page it opens.
         .overlay(alignment: .bottomTrailing) {
-            if router.storesSelection != .downloads {
+            if router.storesSelection != .downloads, router.storesSelection != nil {   // not on the list of stores: its Downloads row is there, and the button sat on that row's arrow
                 DownloadsButton().padding(.trailing, 20).padding(.bottom, 18).transition(.opacity)
             }
         }
@@ -82,64 +83,29 @@ struct StoresHome: View {
     @ObservedObject private var gogInstaller = GogInstaller.shared
     @ObservedObject private var itchInstaller = ItchInstaller.shared
     @ObservedObject private var amazonInstaller = AmazonInstaller.shared
+    @ObservedObject private var eaInstaller = EAInstaller.shared
+    @Environment(\.focusScope) private var scope
 
     var body: some View {
-        FocusScroll {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    Image(systemName: "square.grid.2x2.fill").font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.accentGradient)
-                    Text("Stores").font(.system(size: 30, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
-                }
-                Text("Where your games come from. Open a store to see its library, or all of them together.")
-                    .font(.footnote).foregroundStyle(Theme.textDim)
-                ForEach(GameStore.allCases) { store in
-                    card(id: "store-\(store.rawValue)", title: store.title, subtitle: StoreCatalog.summary(store), badge: { StoreBadgeBacked(store: store, size: 46) }) {
-                        router.storesSelection = .store(store)
-                    }
-                }
-                card(id: "store-all", title: "All games", subtitle: allSummary, badge: {
-                    ZStack {
-                        ForEach(Array(GameStore.allCases.enumerated()), id: \.element) { index, store in
-                            StoreBadgeBacked(store: store, size: 30).offset(x: CGFloat(index) * 14 - CGFloat(GameStore.allCases.count - 1) * 7)
-                        }
-                    }
-                    .frame(width: 46, height: 46)
-                }) { router.storesSelection = .all }
-                card(id: "store-downloads", title: "Downloads", subtitle: Downloads.summary(of: Downloads.items()), badge: {
-                    Image(systemName: "arrow.down.circle.fill").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.accentGradient).frame(width: 46, height: 46)
-                }) { router.openDownloads() }
-                Text("More stores will show up here as Porthole learns them.").font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 4)
-            }
-            .padding(.horizontal, 24).padding(.vertical, 16)
-            .frame(maxWidth: 760).frame(maxWidth: .infinity)
+        let cards = GameStore.allCases.map { store -> StoreCardData in
+            let list = StoreCatalog.entries(store)
+            var fraction: Double?
+            for entry in list { if case .downloading(let f) = entry.status { fraction = f; break } }
+            return StoreCardData(store: store, signedIn: StoreCatalog.signedIn(store), account: StoreCatalog.account(store), games: list.count,
+                                 installed: list.filter { $0.status == .installed }.count, downloading: fraction)
         }
-    }
-
-    private var allSummary: String {
-        let all = GameStore.allCases.flatMap { StoreCatalog.entries($0) }
-        if all.isEmpty { return "No games yet" }
-        return "\(all.count) games from \(GameStore.allCases.filter { StoreCatalog.signedIn($0) }.count) stores \u{00B7} \(all.filter { $0.status == .installed }.count) installed"
-    }
-
-    private func card<Badge: View>(id: String, title: String, subtitle: String, @ViewBuilder badge: () -> Badge, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 14) {
-            badge()
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 19, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
-                Text(subtitle).font(.footnote).foregroundStyle(Theme.textDim).lineLimit(2)
-            }
-            Spacer(minLength: 8)
-            Image(systemName: "chevron.right").font(.subheadline.weight(.bold)).foregroundStyle(Theme.textDim)
+        let signedIn = cards.filter(\.signedIn).map(\.store)
+        let items = Downloads.items()
+        return FocusScroll {
+            StoresHubView(cards: cards, allBadges: signedIn.isEmpty ? GameStore.allCases : signedIn, totalGames: cards.reduce(0) { $0 + $1.games }, totalInstalled: cards.reduce(0) { $0 + $1.installed },
+                          downloadsSummary: Downloads.summary(of: items), downloadsFraction: items.first { $0.kind == .running }.map { $0.progress.fraction },
+                          open: { router.storesSelection = .store($0) }, openAll: { router.storesSelection = .all }, openDownloads: { router.openDownloads() })
+                .padding(.horizontal, 24).padding(.vertical, 16)
+                .frame(maxWidth: 1000).frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 16).padding(.vertical, 14)
-        .frame(minHeight: 76)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
-        .focusTarget(id, radius: 18, scale: 1.012, action: action)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
+        .scrollBounceBehavior(.basedOnSize)      // a list that fits does not bounce: a half-dragged page left the "Stores" title cut off under the bar
+        // Always starts on Steam, the first store in the list.
+        .onAppear { scope?.start(at: "store-\(GameStore.steam.rawValue)", force: true) }
     }
 }
 
@@ -188,6 +154,8 @@ struct AllStoreGamesScreen: View {
     @State private var openGog: GogGame?
     @State private var openItch: ItchGame?
     @State private var openAmazon: AmazonGame?
+    @State private var openEA: EAOwnedGame?
+    @ObservedObject private var eaLibrary = EALibrary.shared
     @ObservedObject private var amazonLibrary = AmazonLibrary.shared
     @ObservedObject private var itchLibrary = ItchLibrary.shared
     @State private var search = ""
@@ -222,6 +190,7 @@ struct AllStoreGamesScreen: View {
                 if let id = g.gogID { played["gog:\(id)"] = at }
                 if let id = g.itchID { played["itch:\(id)"] = at }
                 if let id = g.amazonID { played["amazon:\(id)"] = at }
+                if let id = g.eaOfferID { played["ea:\(id)"] = at }
             }
             return list.sorted { a, b in
                 let x = played["\(a.store.rawValue):\(a.key)"], y = played["\(b.store.rawValue):\(b.key)"]
@@ -257,12 +226,13 @@ struct AllStoreGamesScreen: View {
                 .sheet(item: $openGog) { GogGameSheet(game: $0) }
                 .sheet(item: $openItch) { ItchGameSheet(game: $0) }
                 .sheet(item: $openAmazon) { AmazonGameSheet(game: $0) }
+                .sheet(item: $openEA) { EAGameSheet(game: $0) }
             if let game = openSteam {
                 SteamGamePage(game: steam.owned.first { $0.id == game.id } ?? game, store: steam, backTitle: "All games") {
                     openSteam = nil
                     scope?.focused = "sg-\(game.id)"
                 }
-                .background(Theme.backgroundTop.ignoresSafeArea())
+                .background { Theme.backgroundTop.ignoresSafeArea().allowsHitTesting(false) }
                 .transition(.opacity)
             }
             if let game = openEpic {
@@ -270,7 +240,7 @@ struct AllStoreGamesScreen: View {
                     openEpic = nil
                     scope?.focused = "eg-\(game.appName)"
                 }
-                .background(Theme.backgroundTop.ignoresSafeArea())
+                .background { Theme.backgroundTop.ignoresSafeArea().allowsHitTesting(false) }
                 .transition(.opacity)
             }
         }
@@ -278,28 +248,23 @@ struct AllStoreGamesScreen: View {
 
     private var grid: some View {
         let list = entries            // once per redraw: building and sorting every store's list is not free
-        return FocusScroll {
-            VStack(alignment: .leading, spacing: 18) {
-                FlowLayout(spacing: 10) {
-                    StoreSwitcher()
-                    if !network.isOnline { OfflineChip() }
-                    searchField
-                    SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
-                    IconPillButton(id: "all-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
-                    Text("\(list.count) game\(list.count == 1 ? "" : "s")").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
-                }
-                if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.warn) }
-                if GameStore.allCases.allSatisfy({ !StoreCatalog.signedIn($0) }) {
-                    Text("Sign in to a store to see its games here.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
-                } else if list.isEmpty {
-                    Text("No games match.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
-                    ForEach(list) { entry in tile(entry) }
-                }
+        return StorePage {
+            StoreSwitcher()
+            if !network.isOnline { OfflineChip() }
+            searchField
+            SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
+            IconPillButton(id: "all-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
+            Text("\(list.count) game\(list.count == 1 ? "" : "s")").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
+        } content: {
+            if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.warn) }
+            if GameStore.allCases.allSatisfy({ !StoreCatalog.signedIn($0) }) {
+                Text("Sign in to a store to see its games here.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
+            } else if list.isEmpty {
+                Text("No games match.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
             }
-            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 18)
-            .frame(maxWidth: 1400).frame(maxWidth: .infinity)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 18)], alignment: .leading, spacing: 18) {
+                ForEach(list) { entry in tile(entry) }
+            }
         }
     }
 
@@ -321,6 +286,10 @@ struct AllStoreGamesScreen: View {
             if let game = amazonLibrary.games.first(where: { $0.key == entry.key }) {
                 AmazonGameTile(game: game, showStore: true) { openAmazon = game }
             }
+        case .ea:
+            if let game = eaLibrary.games.first(where: { $0.id == entry.key }) {
+                EAGameTile(game: game, showStore: true) { openEA = game }
+            }
         case .steam:
             if let owned = steam.owned.first(where: { String($0.id) == entry.key }) {
                 SteamGameTile(store: steam, game: owned, notice: $notice, showStore: true, open: { openSteam = owned }, remove: {})
@@ -328,14 +297,5 @@ struct AllStoreGamesScreen: View {
         }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textDim)
-            TextField("Search every store", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled().foregroundStyle(Theme.text)
-        }
-        .padding(.horizontal, 14).frame(minWidth: 200, minHeight: 40)
-        .background(Theme.panel, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
-        .focusTarget("all-search", radius: 20, scale: 1.02, action: {})
-    }
+    private var searchField: some View { SearchField(id: "all-search", prompt: "Search every store", text: $search) }
 }

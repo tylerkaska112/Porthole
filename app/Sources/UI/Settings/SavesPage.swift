@@ -15,7 +15,7 @@ struct SavesPage: View {
     @State private var confirmDeleteAuto = false
 
     var body: some View {
-        PageScaffold(title: "Saves", symbol: "externaldrive.badge.icloud") {
+        PageScaffold(title: "Saves", symbol: "externaldrive.badge.icloud", subtitle: "Backups of your games' saves") {
             automaticGroup
             SettingsGroup(title: "Backup") {
                 ActionRow(id: "sv-backup", symbol: "square.and.arrow.up", title: "Back up saves", subtitle: busy ? "Working\u{2026}" : "Every game's saves and settings in one zip",

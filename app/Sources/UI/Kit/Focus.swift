@@ -9,7 +9,7 @@ import Observation
 // as before; a tap just also moves the glow to what was tapped.
 
 /// Who receives controller input right now: the top-most layer.
-@MainActor
+@MainActor @Observable
 final class NavHub {
     static let shared = NavHub()
     private var stack: [FocusScope] = []
@@ -18,10 +18,17 @@ final class NavHub {
     /// The in-game menu is open: the controller drives it even though a game is running.
     var gameMenuOpen = false
     private(set) var lastWasController = false
+    /// True while a command from a controller or a hardware keyboard is being carried out, so an action can tell a press of A from a tap on the same thing.
+    private(set) var isControllerCommand = false
     /// When a controller or keyboard last drove the interface. A pointer resting over a view that scrolls underneath it reports a new "hover" every time the content moves,
     /// which used to pull focus away from where the D-pad had just put it; the pointer is ignored for a moment after any controller input.
     private(set) var lastCommandAt: TimeInterval = 0
+    /// The view a resting pointer just gave the glow to: its `onFocus` (open a Settings page, show a game in the hero) is for a controller or a click, not for hovering.
+    var pointerFocusID: AnyHashable?
     var pointerMayMoveFocus: Bool { ProcessInfo.processInfo.systemUptime - lastCommandAt > 1.2 }
+
+    /// The layer controller input goes to now.
+    var top: FocusScope? { stack.last }
 
     func push(_ scope: FocusScope) { stack.removeAll { $0 === scope }; stack.append(scope) }
     func pop(_ scope: FocusScope) { stack.removeAll { $0 === scope } }
@@ -33,7 +40,11 @@ final class NavHub {
     func dispatch(_ command: NavCommand) {
         guard enabled || gameMenuOpen, let top = stack.last else { return }
         lastWasController = true
+        // iOS's keyboard is for touch and a hardware keyboard: if one is up when a controller button is pressed (a field was tapped, an alert's text field), it goes away.
+        if TextEntry.padMode { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         lastCommandAt = ProcessInfo.processInfo.systemUptime
+        isControllerCommand = true
+        defer { isControllerCommand = false }
         top.handle(command)
     }
 }
@@ -54,9 +65,11 @@ extension View {
     func navScope(_ scope: FocusScope) -> some View { modifier(NavScopeModifier(scope: scope)) }
 
     /// A thing the D-pad can land on. `action` runs on A / Return (and should do what a tap does).
+    /// `label` and `secondaryLabel` are what the bar of controller hints says A and X do while this target has the glow (default "Select"; X only shows when `secondary` is set).
     func focusTarget(_ id: AnyHashable, radius: CGFloat = 18, scale: CGFloat = 1.04, glow: Bool = true, secondary: (() -> Void)? = nil, adjust: ((Int) -> Void)? = nil,
+                     label: String? = nil, secondaryLabel: String? = nil, engageToAdjust: Bool = false,
                      onFocus: (() -> Void)? = nil, action: @escaping () -> Void) -> some View {
-        modifier(FocusTargetModifier(id: id, radius: radius, scale: scale, glow: glow, secondary: secondary, adjust: adjust, onFocus: onFocus, action: action))
+        modifier(FocusTargetModifier(id: id, radius: radius, scale: scale, glow: glow, secondary: secondary, adjust: adjust, label: label, secondaryLabel: secondaryLabel, engageToAdjust: engageToAdjust, onFocus: onFocus, action: action))
     }
 
     /// A swipe from the left edge goes back, as in any iOS app: it does what B does, so every screen that handles B is covered.
@@ -83,6 +96,9 @@ private struct FocusTargetModifier: ViewModifier {
     let glow: Bool
     let secondary: (() -> Void)?
     let adjust: ((Int) -> Void)?
+    let label: String?
+    let secondaryLabel: String?
+    let engageToAdjust: Bool
     let onFocus: (() -> Void)?
     let action: () -> Void
     @Environment(\.focusScope) private var scope
@@ -94,17 +110,28 @@ private struct FocusTargetModifier: ViewModifier {
         content
             .id(id)
             .focusGlow(active && glow, radius: radius, scale: scale)
-            .onChange(of: active) { _, now in if now { onFocus?() } }
+            .onChange(of: active) { _, now in
+                guard now else { return }
+                if NavHub.shared.pointerFocusID == id { NavHub.shared.pointerFocusID = nil; return }     // hovered, not chosen: the glow only
+                onFocus?()
+            }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                 lastFrame = frame
-                if enabled { scope?.register(id, frame: frame, action: action, secondary: secondary, adjust: adjust) }
+                if enabled { scope?.register(id, frame: frame, action: action, secondary: secondary, adjust: adjust, label: label, secondaryLabel: secondaryLabel, engageToAdjust: engageToAdjust) }
             }
+            .onChange(of: secondaryLabel) { _, _ in if enabled, let lastFrame { scope?.register(id, frame: lastFrame, action: action, secondary: secondary, adjust: adjust, label: label, secondaryLabel: secondaryLabel, engageToAdjust: engageToAdjust) } }
             .onChange(of: enabled) { _, now in
-                if now, let lastFrame { scope?.register(id, frame: lastFrame, action: action, secondary: secondary, adjust: adjust) } else { scope?.unregister(id) }
+                if now, let lastFrame { scope?.register(id, frame: lastFrame, action: action, secondary: secondary, adjust: adjust, label: label, secondaryLabel: secondaryLabel, engageToAdjust: engageToAdjust) } else { scope?.unregister(id) }
             }
             .onDisappear { scope?.unregister(id) }
-            .simultaneousGesture(TapGesture().onEnded { scope?.focus(id) })
-            .onHover { inside in if inside, NavHub.shared.pointerMayMoveFocus { scope?.focus(id) } }
+            .simultaneousGesture(TapGesture().onEnded { NavHub.shared.pointerFocusID = nil; scope?.focus(id); onFocus?() })     // a click chooses
+            .onHover { inside in
+                guard inside, NavHub.shared.pointerMayMoveFocus, scope?.focused != id else { return }
+                NavHub.shared.pointerFocusID = id
+                scope?.focus(id)
+                // If the glow was already there nothing changes and the mark would wait for a later controller move: drop it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { if NavHub.shared.pointerFocusID == id { NavHub.shared.pointerFocusID = nil } }
+            }
     }
 }
 
@@ -144,11 +171,7 @@ struct FocusScroll<Content: View>: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(axes, showsIndicators: false) { content }
-                .onScrollPhaseChange { _, phase in
-                    let moving = phase.isScrolling
-                    if ThemeStore.shared.scrolling != moving { ThemeStore.shared.scrolling = moving }
-                }
+            ScrollView(axes, showsIndicators: false) { content.background(PointerScroll()) }
                 .onChange(of: scope?.scrollTick) { _, _ in
                     if let id = scope?.scrollRequest { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) } }
                 }
@@ -193,11 +216,9 @@ final class ControllerInput {
         }
         for c in GCController.controllers() { attach(c) }
         updateKind()
-        center.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] note in
-            guard let keyboard = note.object as? GCKeyboard else { return }
-            MainActor.assumeIsolated { self?.attach(keyboard) }
-        }
-        if let k = GCKeyboard.coalesced { attach(k) }
+        // The keyboard's one key handler belongs to HardwareInput: while a game runs its keys go to the game, otherwise they come back here (navigate).
+        HardwareInput.shared.navKey = { [weak self] code in MainActor.assumeIsolated { self?.navigate(code) } }
+        HardwareInput.shared.start()
         // The app going to the background (or a game starting) must not leave a direction held.
         for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.releaseAll() } }
@@ -258,22 +279,20 @@ final class ControllerInput {
         }
     }
 
-    private func attach(_ keyboard: GCKeyboard) {
-        keyboard.keyboardInput?.keyChangedHandler = { [weak self] _, _, code, pressed in
-            guard pressed else { return }
-            let command: NavCommand?
-            switch code {
-            case .upArrow: command = .move(.up)
-            case .downArrow: command = .move(.down)
-            case .leftArrow: command = .move(.left)
-            case .rightArrow: command = .move(.right)
-            case .returnOrEnter, .spacebar: command = .select
-            case .escape, .deleteOrBackspace: command = .back
-            case .openBracket: command = .previousSection
-            case .closeBracket: command = .nextSection
-            default: command = nil
-            }
-            if let command { Task { @MainActor in self?.send(command) } }
+    /// A key press from a keyboard, outside a game (or while the in-game menu is open): the app's own screens move with it.
+    private func navigate(_ code: GCKeyCode) {
+        let command: NavCommand?
+        switch code {
+        case .upArrow: command = .move(.up)
+        case .downArrow: command = .move(.down)
+        case .leftArrow: command = .move(.left)
+        case .rightArrow: command = .move(.right)
+        case .returnOrEnter, .spacebar: command = .select
+        case .escape, .deleteOrBackspace: command = .back
+        case .openBracket: command = .previousSection
+        case .closeBracket: command = .nextSection
+        default: command = nil
         }
+        if let command { send(command) }
     }
 }

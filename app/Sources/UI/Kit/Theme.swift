@@ -9,6 +9,8 @@ struct Palette: Identifiable, Equatable {
     let name: String
     let bgTop: UInt32, bgBottom: UInt32
     let accent: UInt32, accent2: UInt32
+    /// What drifts behind the screens (holiday schemes only).
+    var decor: Decor = .none
 
     /// The built-in schemes. The first is the default.
     static let presets: [Palette] = [
@@ -58,11 +60,16 @@ final class ThemeStore {
     /// True while any list is being scrolled: the moving background rests meanwhile (not saved, and it does not restyle anything).
     var scrolling = false
     var animatedBackground: Bool { didSet { defaults.set(animatedBackground, forKey: "f4.animatedBackground"); revision += 1 } }
+    /// Dress up for holidays by the date (see `Season`); the person's own scheme is back when the holiday ends.
+    var festive: Bool { didSet { defaults.set(festive, forKey: "f4.festive"); revision += 1 } }
+    /// Shows a holiday's look out of season, to see it (not saved).
+    var previewSeason: Season? { didSet { revision += 1 } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         glow = GlowLevel(rawValue: defaults.string(forKey: "f4.glow") ?? "") ?? .strong
         animatedBackground = defaults.object(forKey: "f4.animatedBackground") as? Bool ?? true
+        festive = defaults.object(forKey: "f4.festive") as? Bool ?? true
         customAccent = UInt32(defaults.object(forKey: "f4.themeCustom") as? Int ?? 0x4CC9F0)
         if let preset = defaults.string(forKey: "f4.themePreset") {
             presetID = preset
@@ -76,7 +83,14 @@ final class ThemeStore {
 
     private static let legacyAccents: [String: UInt32] = ["blue": 0x3B82F6, "indigo": 0x6366F1, "teal": 0x14B8A6, "green": 0x22C55E, "orange": 0xF97316, "pink": 0xEC4899]
 
-    var palette: Palette { presetID == "custom" ? Palette.custom(accent: customAccent) : (Palette.presets.first { $0.id == presetID } ?? Palette.presets[0]) }
+    /// The holiday the app is dressed for right now: the one being previewed, else today's when Festive themes is on.
+    var activeSeason: Season? { previewSeason ?? (festive ? Season.active() : nil) }
+
+    var palette: Palette {
+        if let season = activeSeason { return season.palette }
+        if presetID == "custom" { return Palette.custom(accent: customAccent) }
+        return Palette.presets.first { $0.id == presetID } ?? Season.allCases.map(\.palette).first { $0.id == presetID } ?? Palette.presets[0]
+    }
 }
 
 enum Theme {

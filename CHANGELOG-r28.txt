@@ -1,0 +1,133 @@
+PORTHOLE - changes on branch merge-r28 (after 1.2.0; running notes, keep updated in the same commit as each change)
+=====================================================================================================================
+Ported from upstream Madeira (willfaust/Madeira, GPL-3.0-or-later) where theirs was better than ours and nothing of ours breaks.
+
+ADDED
+* itch.io: games shipped as .7z install (Madeira's streaming .7z reader, itch_7z.c: LZMA, LZMA2, BCJ and the other branch filters, Delta, Deflate, Copy; encrypted, PPMd and BZip2 archives are refused with a reason). A zip or .7z inside a download is unpacked where it lies. Zip files keep using Porthole's own reader (same ZIP64, CRC and path checks). A .rar is reported as unsupported. Tested on a Mac with LZMA2 and BCJ+LZMA archives (identical bytes).
+
+* Gyro aim and turbo (Madeira's PadAssist): per game in Game details, off until turned on. Gyro aim adds the controller's rotation (DualSense, DualShock 4, Switch Pro) or the device's own gyro to the right stick, or moves the mouse when the game gets no controller from the pad (always, or only while holding LT / LB / RB; twist or tilt to turn; sensitivity, anti-dead zone, inversion). Turbo repeats chosen buttons (A B X Y LB RB LT RT) 5 to 30 times a second while held. Applied once to player 1 before the Xbox pad, the DualSense report or keyboard-and-mouse mode sees the sample. Unverified on a device.
+* JIT messages (Madeira PR 532): when the built-in helper does not start or times out, the message now points to StikDebug as another JIT method in Settings.
+* Share this game's setup (the idea is Madeira's Share Setup): Game details can write a game's launch options, per-game settings, engine choices and lines, and saved controls into one ".portholesetup" file or one line of text, and apply one from a file or the clipboard. The apply sheet lists everything first (engine lines in full) and warns when the setup was made for a different game. Nothing personal is in it (no program path, account or play time).
+* Graphics card the game sees (Madeira's GPUCards): per game in Game details > Compatibility. One choice (NVIDIA RTX 3060 or GTX 1060, an older GeForce 7900 GS for Direct3D 9 games, AMD RX 6700 XT or 580, Intel UHD 630, or this device's own GPU) names the same card in Direct3D 9/10/11/12, Windows' adapter list and NVAPI. Off by default.
+
+* EA app as a sixth store (Madeira's SwiftEA protocol code, written into Porthole's Stores tab): sign in on EA's own page, the account's PC games with covers, install straight from EA's servers (range requests into the game's folder, CRC-checked, with pause/resume, update, repair and uninstall; the same Downloads page, background keep-alive and Live Activity as the other stores), and start games without the EA app: Porthole asks EA for the game's licence for this machine, writes the EA app's registry keys and environment, and answers the game on 127.0.0.1:3216 the way the EA app's service would. The graphics card chosen under "Graphics card the game sees" is also the one the licence is made for. Games with EA's kernel anti-cheat (Battlefield 2042 and later, EA SPORTS FC, Madden) cannot run; cloud saves, friends and the overlay are not supported. Installs go to the C: drive (not the SSD library) for now. The EA logo is not shipped: the store shows a plain "EA" mark. Upstream never ran this Swift on a device and neither have we: sign-in, install, Play, pause/resume, update, repair and uninstall all need a device test, and the first Play of a game with a Core folder tests the machine hash.
+
+* Donor memory (Madeira's MadeiraMemoryHost): a new small extension, F4MemoryHost (bundle id <app>.MemoryHost, so a full install uses five App IDs; it can be left out when signing like the others, see docs/INSTALL.md). Settings > Engine options > Donor memory (2, 4 or 6 GB) lets a game's memory live in RAM that is billed to no app, which is how the memory-hungry games (Sons of the Forest at 6.1 GB, Red Dead Redemption 2) get past the app's limit. Off by default. The engine side was already in the libraries; only the extension was missing. Unverified on a device: iOS decides whether the memory is really free.
+
+* Madeira's tested setups (GameRecommendations: 77 lists, 51 of them for single Steam titles; RDR2, GTA V, Ghost of Tsushima, God of War, Horizon, Dark Souls, Fallout, Crysis ...): a game page Madeira has a list for shows "Madeira's tested setup" under Performance, with what it contains and a button. Nothing is applied by itself (Madeira applies them on first install; Porthole asks). Applying replaces the game's engine lines (the previous ones are kept for Undo) and sets AVX, the NVIDIA card choice, Wine's C++ runtime, fast sync, the screen size and the Wine desktop where Porthole has a place for them; the FPS limit, aspect/scaling and "services first" are listed as not applied. The lists were tuned on Madeira's builds and are untested on Porthole's engine.
+
+ENGINE
+* Engine merged with Madeira up to 1608a25 (192 commits after c2c1b03): FEX (16 KB SMC traps, rpmalloc spans), wine (per-process directory cache, SetThreadIdealProcessorEx, iOS directory reads), DXMT, Dock (Steam client service before the CEG request, CEG retry). Engine id 31477ff-r0, so every compatibility badge starts again. Built and linked; not run on a device. See patches/MERGE-2026-11-03.md.
+
+* Dock sessions (Madeira's DockGameSession): Wine's service manager starts in a Steam game's session when its launcher registered an automatic-start service (or the game's env.MADEIRA_DOCK_GAME_SCM says so), and that session runs fastsync instead of madsync; a game folder with a 32-bit program holds one guest-window placeholder for the game's own 32-bit programs only; a 64-bit title beside 32-bit helpers takes donor RAM first. All logged as [dock-game-scm] / [dock-wow]; env.MADEIRA_DOCK_GAME_SCM = 0, MADEIRA_WOW_HOLD_FOR_GAME = 0, MADEIRA_DOCK_X64_TITLE = 0 and MADEIRA_DOCK_GAME_SCM_FASTSYNC = 0 switch the parts off. Unverified on a device.
+
+FIXED
+* Steam downloads: when two depots list the same file, only the later depot writes it, as Valve's client does (Madeira PR 524). A repair used to flip such a file between the two copies every time (Borderlands 2 refetched 552 MB on each Repair and Steam's CEG step failed). Logged as [steam-depot] overlap.
+
+NOT NEEDED (checked): Madeira PR 486 (stop retrying when the disk write fails): Porthole already stops the download at once with the out-of-space message.
+
+ADDED (after 1.2.78): the Donor memory row in Settings > Engine options says whether the Memory Host extension is inside, signed and matches the bundle id (InstallCheck.donorMemory); Settings > Install check gets a matching finding; a game launch with Donor memory on but the extension unusable logs it.
+
+ADDED (1.2.80): Wine Mono download (vendored WineMono.swift, settings section cut by vendor_glue); DotNetCheck refuses to start a .NET Framework program without it and Home offers the download; Settings > Advanced > Windows components row. Prompted by a user log of Celeste on 1.1.0 ("Wine Mono is not installed").
+
+FIXED (1.2.81): the .NET Framework check (Wine Mono) also covers Steam games started through Steam (Celeste, app 504230, user log 12-44-44).
+
+CHANGED (1.2.82): Settings reorganised (sections, Stores hub + per-store pages, JIT page, Advanced hub with Engine options groups, search). Not seen on a device or simulator (the simulator cannot build the app: StikJIT.xcframework has no simulator slice).
+
+CHANGED (1.2.83): Reports tab rebuilt (My games / All games / My reports, summary bar, filters, game page with breakdown, offline list cache). Layout parts checked in the UI preview app (app/Tests/UIPreview, shot reports / reports-game); list logic tested by app/Tests/Reports/run.sh. The real screens were not run on a device.
+
+FIXED (1.2.84): a report opens in full (ReportDetailSheet) instead of only asking to flag it. Page layout checked in the UI preview app (shot report-detail); not run on a device.
+
+FIXED/ADDED (1.2.85): FFRS (3259780) game fix env.MADEIRA_VCRT_ARM64_KEY=1 + Engine option; Steam library lists demo/beta/application apps (Owned.kind, cache format 2). Engine test harness (app/Tests/Engine/run.sh) does not build since the merge (EngineOptions imports UIKit): not fixed here.
+
+CHANGED (1.2.86): StorePage docks the store controls (Kit/StorePage.swift, checked in the UI preview app: shot store-dock); Steam controller support row only until downloaded, then Settings (SteamControllerLayer); setup guide WineMonoPanel. Not run on a device.
+
+FIXED (1.2.87): ExecutableWindow reads programs below the main folder (Unreal Binaries/Win64); FFRS demo + full game share fix lines. From the user log 7cbc38c6 (demo on 1.2.86: marker worked, then c0000018 on FFRS-Win64-Shipping.exe). Tests: app/Tests/ExeWindow, app/Tests/GameFixes.
+
+FIXED (1.2.88): failure message no longer disappears (VPN/cellular restore deferred to dismiss(), RootView, SessionController.failureOnScreen); FFRS pool-split; Steam pool gate counts usable pool (split hole subtracted). Cause of the disappearing message is inferred from the code, not from a log.
+
+FIXED (1.2.89): SessionController sets StikJITHelper.exeWindowAutoMB from fixedBaseWindowMB(in: game folder) before allocatePool (upstream PR 407, as Madeira Dock launches do); Steam pool gate 448 MB when the window was widened. From user log d0e21e73 (1.2.88: window kept + split pool 864 MB, then c0000018 again because the 487 MB image reaches 0x15da1c000 over the pool at 0x148000000).
+
+CHANGED (1.2.90): fail fast when the widened exe window did not take (WINE_IOS_EXE_WINDOW smaller than wanted). From user log 7d8e63ca (1.2.89: widen failed, kr=3, a malloc mapping at 0x155d00000 inside [0x148000000,0x15e000000) at image load).
+
+CHANGED (1.2.91): CellularGuard.autoBlocked (no automatic retries after a failed restore shortcut); VPN wording + Home notice opens Settings > JIT when no shortcut. From user complaints 2026-11-03 and logs 7d8e63ca/7e01fa93 (Steam TLS errors while the VPN was paused, no VPN shortcut set).
+
+CHANGED (1.2.92): compat reports carry the game log (CompatLog, logGz) and wait for approval on the Hub (hub/compat.js status + report_logs; Launcher Reviews > Reports). Needs a launcher-hub restart to take effect.
+
+CHANGED (1.2.93): launch screen redesigned (UI/Kit/LaunchView.swift; LaunchData.began; checked in the UI preview app: shot launch / launch-late / launch-fail, portrait and landscape). Not run on a device.
+
+CHANGED (1.2.94): launch screen redesigned again (UI/Kit/LaunchView.swift: metal-rimmed porthole with progress ring, segmented step bar, steps list on demand). Checked in the UI preview app, portrait and landscape. Not run on a device.
+
+CHANGED (1.2.95): Home library polish (UI/Kit/HomeViews.swift: icon badges on tiles, chosen tile lit, press feedback, shelf title, tidier hero, bigger portrait tiles). Checked in the UI preview app, portrait, landscape and controller layout. Not run on a device.
+
+CHANGED (1.2.96): Home: slow zoom on the backdrop (SlowZoom), staggered tile entrance, "n of N" counter, shelf edge fade, clock icon (UI/Kit/HomeViews.swift). Checked in the UI preview app. Not run on a device.
+
+FIXED (1.2.97): the "Cellular data is off" notice stuck on Wi-Fi: CellularGuard.recheck/restoreIfPaused/restoreNow tested cellularInUse() (cellular is the ONLY network) instead of cellularAvailable(); the path monitor now calls recheck on every change, and recheck skips while a game or the tunnel runs. Assumes NWPath.availableInterfaces leaves cellular out while Cellular Data is off in Settings (not verified on a device; the [cellular] log lines print the path).
+
+CHANGED (1.2.98): Stores front page redesigned (UI/Kit/StoresHub.swift, StoresScreen.swift StoresHome; StoreBadge loads loose PNGs for the preview). Checked in the UI preview app. Not run on a device.
+
+CHANGED (1.2.99): game page redesigned (UI/Kit/GameHero.swift, Game/GamePage.swift: hero card, stat tiles, two panes when wide, rows grouped). Checked in the UI preview app (shot game). Not run on a device.
+
+CHANGED (1.2.100): setup guide polish (UI/Kit/SetupKit.swift, SetupGuideView.swift: stepper, welcome hero, step cards, store sign-in rows). Checked in the UI preview app (shot setup, setup-games), portrait only. Not run on a device.
+
+CHANGED (1.2.101): performance overlay redesigned (UI/Kit/PerfCard.swift, InGame/PerfOverlay.swift: big FPS, area graph, icons, line pill; FPSGraph and OverlayColumns moved to the Kit) and Downloads page polish (AllDownloadsScreen.swift). Overlay checked in the UI preview app (shot perf --graph / --line / --bad); Downloads not previewed. Not run on a device.
+
+FIXED (1.2.102): two Back buttons on narrow Settings sub pages (SettingsScreen.swift: the Settings back pill is hidden while a sub page is open). Logic read, not run on a device.
+
+CHANGED (1.2.103): holiday looks run from 7 days before to 2 days after the day (Season.daysBefore/daysAfter in UI/Kit/Seasonal.swift; Halloween 24 Oct - 2 Nov); the Settings explanation no longer gives the timing. Holidays are not in the public changelog or the Discord post on purpose.
+
+FIXED (1.2.104): overlay rows no longer vanish (PerfOverlayModel.kept keeps each optional metric's last row: gpuBusy/gpuFrame are nil in a second with no new command buffers, the swap values when the log tail has no census line, topThread/battery when detail is off). Cause read from Telemetry.swift/EngineStats.swift, not seen on a device.
+
+CHANGED (1.2.105): performance overlay compacted (UI/Kit/PerfCard.swift: grid of cells, no per-cell icons, FPS left; InGame/PerfOverlay.swift: OverlaySize.tiny, power mode name only). Checked in the UI preview app (shot perf, 13 numbers). Not run on a device.
+
+CHANGED (1.2.106): store tiles and sheets (UI/Kit/StoreTile.swift: TileStatus, TileProgress, storeTileStyle, StoreSheetShell, StoreSheetButton; the six store tiles and the GOG/itch/Amazon/EA sheets use them). Tiles and sheet drawn in the UI preview app (shot store-tiles, store-sheet); the real tiles and sheets not run. Steam and Epic game PAGES unchanged.
+
+CHANGED (1.2.107): Settings page header (UI/Kit/Rows.swift PageHeader, PageScaffold subtitle, SubPage uses it; subtitles on nine pages). Header drawn in the UI preview app (shot settings); the real pages not run.
+
+CHANGED (1.2.108): top bar line under the chosen section (matchedGeometryEffect in TabPill/AppShell) and SectionFade (content fades in on a section change, .id(selection)); UI/Kit/ShellViews.swift. The line was seen in the UI preview app; the slide and the fade are motion, not seen. Because SectionFade uses .id(selection) the section content is recreated on a change, as the switch in RootView already did.
+
+CHANGED (1.2.109): Steam and Epic game pages (UI/SteamPage.swift, EpicLibraryScreens.swift: GameStatTiles, taller banner with a mask fade, TileProgress, TilePress on screenshots, Steam store chip, Explore heading); GameStatTiles extracted in UI/Kit/GameHero.swift. Drawn in the UI preview app as a mock with the same components (shot store-game); the real pages not run.
+
+ADDED (1.2.110): Wine Gecko (vendored WineGecko.swift via tools/vendor_glue.sh, Madeira's settings section cut; UI/WineGeckoPanel.swift in the setup guide; a row on Settings > Advanced > Windows components). Not downloaded automatically (upstream does it on Wi-Fi at app start): Porthole asks first, like Wine Mono. Needs a device run: download, then a program that shows a web page.
+
+ADDED (1.2.111): the 32-bit Visual C++ runtime (vendored VCRedist.swift + CabinetReader.c/h via tools/vendor_glue.sh, packages cut to x86 only, Settings section cut, session check = AppModel.shared.session.isActive; UI/VCRedist32Panel.swift; a row in Settings > Advanced > Windows components). The 64-bit runtime stays Porthole's own VCRuntimeInstaller. Needs a device run: download, then a 32-bit game; the bridge logs "[WineProc] Symlinked N MS VC++ x86 runtime DLLs".
+
+ADDED (1.2.112): Steam Big Picture, experimental (Core/SteamBigPicture.swift, adapted from Madeira's Library.swift ml2021: C:\big-picture.bat, its own Steam folder seeded with the Dock's steam.exe, Madeira's tested lines via GameTestedSetup; a row in Settings > Stores > Steam). Left out: listing Madeira's Steam libraries in the client (needs SwiftSteam's AppManifestWriter). Needs a device run; Madeira calls it unfinished and ships it compiled out.
+
+ADDED (1.2.113): GOG Galaxy services (Gog/Galaxy/* = Madeira's Galaxy files with the GOGAPI references replaced; Gog/GogGalaxy.swift = Porthole's controller, token source from GogAuth.hostRefreshToken, GalaxyCommunication service registration; GogBuildMeta.galaxy and GogInstalledGame.galaxy record the game's client, backfilled once for older installs; hooked in SessionController.launchResolved and the session end; toggle in Settings > Stores > GOG). madeira-galaxy-service.exe IS in the stage (aarch64-windows is symlinked from the vendor tree): the audit said it was not. Needs a device run with a GOG game that uses the Galaxy SDK.
+
+FIXED (1.2.114): the exe-window widening (1.2.89) measured the folder of a program at the top of drive C or of a .bat, which is every game on the drive: Big Picture got widened for FFRS-Win64-Shipping.exe (user log 050bc129, 21:54:13). SessionController skips both (dock == nil only). From the log: Big Picture started with the right flags and reached the client UI (steamui.dll, V8, WinH264InitCheck); then ~100 s waits and one core pegged. The freeze itself is NOT explained by this fix.
+
+CHANGED (1.2.115): audio options (env.MADEIRA_AUDIO_GAIN, env.MADEIRA_AUDIO_RESUME in EngineOptions and on Settings > Play > Sound, written to madeira.cfg only when changed); Steam and Epic game pages rebuilt on the new StoreHero (UI/Kit/GameHero.swift; two panes when wide); Big Picture row hidden behind seven taps on the version and a switch (SteamBigPicture.shownKey). Drawn in the UI preview as a mock (shot store-game); the real pages not run. Public notes no longer mention Big Picture; CHANGELOG.json entries 1.2.112 and 1.2.115 still do and are on the scrub list.
+
+ADDED (1.2.116): pso-archive, env.MADEIRA_PSO_ARCHIVE_MB and pso-async in EngineOptions (Direct3D 12 group) and a Keep compiled pipelines row in Performance > Graphics (advanced); EngineChoiceRow shared by Sound and Performance. Not run on a device. The Workshop search already used PadTextField, so the known limit was removed from the public notes.
+
+ADDED (1.2.117): keep a game running in the background (vendored BackgroundRun.swift + Winios/BackgroundCPUCap.c + Winios/MetalBackgroundGate.m via tools/vendor_glue.sh with game minutes defaulting to 0 and the Metal gate installed only when on; BackgroundRun.shared.start() in RootView; background-run / background-sound / background-cpu in EngineOptions; a row in Settings > Play > Performance). Downloads are NOT routed through BackgroundRun (Porthole keeps its own). Experimental; needs a device run (log tag [bg-run], [metal-bg]).
+
+FIXED (1.2.118): engine pin Madeira 3af3467 = upstream #557-#559: Social Club 2.4.0.296 renderer bridge (ios_sch_builds table in build/ntdll-unix/virtual_ios.c; the log showed "[sc-rph] SocialClubHelper.exe not patched: another build" then SC_INIT_ERR_WEBSITE_FAILED_LOAD after 80 s). Library tab/touch Opacity commits are Madeira UI only. libntdll_unix.a rebuilt; host check-sc-helper-binary passes; the assembler-based check-sc-* tests need GNU as --64 (not on this Mac) and check-sc-layout / check-sc-cef-gate already failed before the merge. Engine bumped to 3af3467-r0. Not run on a device.
+
+CHANGED (1.2.119): RDR2 diagnostic only. GameFixes rdr2 configLines gain env.MADEIRA_SC_CEF_FLAGS = --log-severity=info and the log mirror limit goes 4000 -> 30000. Reason: logs 03:13 and 03:22 on 1.2.118 show the in-game Social Club page requested at 16 s, the helper side connected 0.5 s later, but the game side only saw OnChannelConnected 87 s later (CPU ~9 cores busy with RDR2 workers; Chrome_InProcRendererThread 63-72%) and Rockstar times out 130 s after LoadUrl (-1002). Not run on a device. Remove with the answer.
+
+FIXED (1.2.120): MADEIRA_GUEST_LOG_LIMIT > 4000 makes wine/dlls/ntdll/unix/file.c fall back to 400 lines (lim > 4000 -> 400 in every-line mode), so 1.2.119 (30000) cut the mirror at #400 (08:39:06) before the game Social Club phase. Back to 4000; --log-severity=info stays. Not run on a device.
+
+CHANGED (1.2.121): EXPERIMENT, RDR2 only: env.MADEIRA_SC_IPC_SPLIT = 0 in GameFixes. Logs 03:48-03:56 (1.2.119/120): the game overlay browser sends LoadUrl, helper connects, but Chromium logs "Timeout of new browser info response for frame ... (has_rfh=1)", no page console output, and the offline local page also never becomes ready; the launcher page in the same helper process works. Revert if no change. Not run on a device.
+
+FIXED (1.2.122): reverted the 1.2.121 experiment. Log 04:09 (1.2.121): with MADEIRA_SC_IPC_SPLIT=0 the launcher page itself fails (SC_INIT_ERR_WEBSITE_FAILED_LOAD at 09:10:12, game never started), so the split is needed for the 2.4.0.296 build. Chromium logging stays. Open: the in-game overlay browser still never finishes its renderer handshake (Timeout of new browser info response ... has_rfh=1).
+
+ADDED (1.2.123): hardware keyboard and mouse/trackpad in games, ported from Madeira's HardwareInput.swift (app/Sources/Core/HardwareInput.swift, InputSettings.swift; docs/KEYBOARD_MOUSE.md). Before this the game view only took touches (and typed text when the on-screen keyboard was open). Keys: GCKeyboard (raw HID, one callback per transition) -> Windows virtual keys with left/right modifiers -> winios_post_key; the driver derives scan codes and the E0 bit. Mouse: GCMouse deltas + buttons + wheel, UIKit hover/pan/scroll fallback (needs UIApplicationSupportsIndirectInputEvents, added to Info.plist), the game's own cursor follows the pointer on the absolute route, relative moves + pointer lock while the game hides its cursor. Focus rules (sheet/alert/text field/in-game menu/pointer elsewhere = nothing reaches the game, everything held is released). Chords Ctrl+Alt+P (lock) and Ctrl+Alt+M (menu). The keyboard's one key handler moved from Focus.swift to HardwareInput (outside a game and while the menu is open keys go back to the app's navigation). PadPointerView and HardwareInput share one cursor-report notify. winios_mouse_routing_enabled now comes from HardwareInput (MouseRoutingShim.swift deleted). Settings > Engine options > Keyboard and mouse. Host test app/Tests/HardwareInput/run.sh (77 checks). NOT run on a device.
+
+FIXED (1.2.124): hardware keyboard and mouse never reached the game (user, Firewatch, 1.2.123). HardwareInput.computeBaseFocus returned false whenever any window's root had a presentedViewController, and the game session IS a fullScreenCover (RootView.swift), so focus was always 'elsewhere'. Now only a presented screen that does not contain the game view counts; the pointer-lock owner list includes the presented game screen; the log says why focus is missing. Not run on a device.
+
+FIXED (1.2.125): Escape in a game flashed the library and returned (user, Firewatch). Unhandled UIKit presses dismiss the fullScreenCover the session runs in; SwiftUI's binding re-presented it. GameSurfaceView.captureKeys(): a PressSink (first responder, not a UIKeyInput) swallows presses while HardwareInput has the keyboard, GameSurfaceView's own press overrides do the same when a hardware keyboard handles typing, and the presented screen gets isModalInPresentation. Not run on a device.
+
+CHANGED (1.2.126): hovering with a mouse no longer triggers a focus target's onFocus (Settings page choose(), Home hero shownID); NavHub.pointerFocusID marks a hover focus, a tap calls onFocus itself. The glow still follows the pointer. Not run on a device.
+
+FIXED (1.2.127): a keyboard's Backspace in a search box went back a screen (Focus.swift navigate maps Backspace to Back, Space/Return to Select). HardwareInput no longer hands keys to the app's navigation while a UIKeyInput responder (a text field) has the keyboard. Not run on a device.
+
+ADDED (1.2.128): PointerScroll.swift (wheel -> sideways scroll for horizontal-only scroll views, pointer drag scrolls; installed in FocusScroll, the tab row); KeyBind (configurable menu key F10 / lock key, 'press a key' capture in HardwareInput.captureKey, KeybindRow in the Keyboard and mouse engine group; Ctrl+Alt+M/P stay as fallbacks; hint on the first 3 games); scroll direction (PORTHOLE_SCROLL_DIRECTION) for the game wheel and the shelf; software key repeat for editing keys (PORTHOLE_KEY_REPEAT); opt-in letters layout (PORTHOLE_KEY_LAYOUT, learned from UIKit presses); per-game mouse speed/look (GameEngine.mouseSpeed/mouseLook -> env lines); pointer-lock refused notice; Home tile context menu Details + double-click plays when a mouse is connected. Host test: 88 checks. Not run on a device.
+
+FIXED (1.2.129): mouse wheel did not scroll most screens after 1.2.128. FocusScroll (the vertical container of Settings, game pages, stores, sheets) got .background(PointerScroll()), whose wheel recognizer (same scroll types as the scroll view's own pan) competed with the native one. The recognizer now has a delegate: it only begins on a view that scrolls sideways only, and recognizes simultaneously; PointerScrollEverywhere swizzles UIScrollView.didMoveToWindow (add-then-exchange, UIScrollView only) so every scroll view accepts pointer drags (text views and WK web views excluded). Not run on a device.
+
+CHANGED (1.2.130): removed the 1.2.119 RDR2 diagnostic (env.MADEIRA_SC_CEF_FLAGS = --log-severity=info) from GameFixes (user, release prep). The guest log mirror (4000 lines) stays. Build 681 is reserved for the public 1.2.0.
+
+ADDED (1.2.131): itch.io .rar downloads (ItchRar.swift + itch_rar.c, over the system /usr/lib/libarchive.2.dylib loaded with dlopen: the SDK has the .tbd with rar/rar5 readers but no header). Handles a .rar upload, a .zip/.7z/.rar upload that is really a .rar, and a .rar inside an unpacked download (ItchSevenZip.unpackInner now returns the count and unpacks .rar too); refuses links, unsafe paths, encrypted and multi-volume sets. Host test app/Tests/ItchRar (stored RAR4/RAR5 built by mk.py). Compressed RAR methods are Apple's libarchive and are NOT tested here; not run on a device.

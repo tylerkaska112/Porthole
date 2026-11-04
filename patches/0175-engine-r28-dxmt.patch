@@ -1,0 +1,1435 @@
+diff --git a/build-arm64ec b/build-arm64ec
+new file mode 120000
+index 0000000..62fa2d2
+--- /dev/null
++++ b/build-arm64ec
+@@ -0,0 +1 @@
++/Volumes/MadeiraWork/update3/dxmt-ec
+\ No newline at end of file
+diff --git a/src/airconv/nt/air_builder.cpp b/src/airconv/nt/air_builder.cpp
+index d9e26ca..7f8c7f6 100644
+--- a/src/airconv/nt/air_builder.cpp
++++ b/src/airconv/nt/air_builder.cpp
+@@ -1643,6 +1643,7 @@ AIRBuilder::CreateSetMeshPointSize(Value *Vertex, Value *Size) {
+ 
+ Value *
+ AIRBuilder::CreateFPUnOp(FPUnOp Op, Value *Operand, bool FastVariant) {
++  if (airconv_precise_math()) FastVariant = false; // f4-0004
+   static char const *FnNames[] = {
+       "saturate", "log2", "exp2", "sqrt", "rsqrt", "fract", "rint", "floor", "ceil", "trunc", "cos", "sin", "fabs",
+   };
+@@ -1671,6 +1672,7 @@ AIRBuilder::CreateFPUnOp(FPUnOp Op, Value *Operand, bool FastVariant) {
+ 
+ Value *
+ AIRBuilder::CreateFPBinOp(FPBinOp Op, Value *LHS, Value *RHS, bool FastVariant) {
++  if (airconv_precise_math()) FastVariant = false; // f4-0004
+   static char const *FnNames[] = {
+       "fmax",
+       "fmin",
+diff --git a/src/airconv/nt/air_builder.hpp b/src/airconv/nt/air_builder.hpp
+index a5f7668..4ad4a37 100644
+--- a/src/airconv/nt/air_builder.hpp
++++ b/src/airconv/nt/air_builder.hpp
+@@ -1,11 +1,19 @@
+ 
+ #pragma once
+ 
++#include <cstdlib>
+ #include "llvm/ADT/APFloat.h"
+ #include "llvm/IR/Constants.h"
+ #include "llvm/IR/DerivedTypes.h"
+ #include "llvm/IR/IRBuilder.h"
+ 
++// f4-0004: MADEIRA_PRECISE_MATH=1 makes the DXBC converter use the exact AIR math functions (air.log2, air.exp2, air.pow, ...) instead of the "fast_" ones,
++// and sets no fast-math flags. Read once, at the first shader compile.
++inline bool airconv_precise_math() {
++  static const bool precise = [] { const char *e = std::getenv("MADEIRA_PRECISE_MATH"); return e && *e == '1'; }();
++  return precise;
++}
++
+ namespace llvm::air {
+ 
+ struct sample_level {
+diff --git a/src/airconv/nt/dxbc_converter_base.cpp b/src/airconv/nt/dxbc_converter_base.cpp
+index 1cc24a1..aac4476 100644
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -3030,7 +3030,7 @@ Converter::CreateGEPInt32WithBoundCheck(AtomicBufferResourceHandle &Buffer, llvm
+ 
+ std::unique_ptr<llvm::IRBuilder<>::FastMathFlagGuard>
+ Converter::UseFastMath(bool OptOut) {
+-  if (OptOut)
++  if (OptOut || airconv_precise_math()) // f4-0004: no fast-math flags at all in precise mode
+     return nullptr;
+   auto Guard = std::make_unique<llvm::IRBuilder<>::FastMathFlagGuard>(ir);
+   llvm::FastMathFlags FMF;
+diff --git a/src/d3d11/d3d11_context_impl.cpp b/src/d3d11/d3d11_context_impl.cpp
+index 7257ecf..5a872dd 100644
+--- a/src/d3d11/d3d11_context_impl.cpp
++++ b/src/d3d11/d3d11_context_impl.cpp
+@@ -8,6 +8,7 @@ since it is for internal use only
+ */
+ #include "Metal.hpp"
+ #include "config/config.hpp"   /* ml869 */
++#include "f4_diag.hpp"
+ #include <deque>   /* ml1256 */
+ #include <string>
+ #include "d3d11_annotation.hpp"
+@@ -358,7 +359,13 @@ public:
+       DstSubresource(DstSubresource),
+       SrcFormat(Src_.FormatDescription),
+       DstFormat(Dst_.FormatDescription) {
+-    if (Dst_.Dimension != Src_.Dimension)
++    /* f4-0006: D3D11 allows CopySubresourceRegion between a 2D texture and one slice of a 3D texture (either way);
++     * Factorio builds its day/night colour table this way (256x16 render target -> sixteen 16x16 slices of a 3D LUT).
++     * Dropping those copies left the LUT unchanged, i.e. a black world at dusk and dawn. Every other mixed pair is still dropped. */
++    const bool mixed_2d_3d =
++        (Dst_.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D && Src_.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D) ||
++        (Dst_.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D && Src_.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D);
++    if (Dst_.Dimension != Src_.Dimension && !mixed_2d_3d)
+       return;
+ 
+     if (SrcFormat.PixelFormat == WMTPixelFormatInvalid)
+@@ -366,69 +373,44 @@ public:
+     if (DstFormat.PixelFormat == WMTPixelFormatInvalid)
+       return;
+ 
+-    switch (Dst_.Dimension) {
+-    default: {
++    auto describe = [](BlitObject &O, UINT Sub, Subresource &Out) -> bool {
++      switch (O.Dimension) {
++      case D3D11_RESOURCE_DIMENSION_TEXTURE1D: {
++        D3D11_TEXTURE1D_DESC &d = O.Texture1DDesc;
++        Out.Format = d.Format;
++        Out.MipLevel = Sub % d.MipLevels;
++        Out.ArraySlice = Sub / d.MipLevels;
++        Out.Width = std::max(1u, d.Width >> Out.MipLevel);
++        Out.Height = 1;
++        Out.Depth = 1;
++        return true;
++      }
++      case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
++        D3D11_TEXTURE2D_DESC1 &d = O.Texture2DDesc;
++        Out.Format = d.Format;
++        Out.MipLevel = Sub % d.MipLevels;
++        Out.ArraySlice = Sub / d.MipLevels;
++        Out.Width = std::max(1u, d.Width >> Out.MipLevel);
++        Out.Height = std::max(1u, d.Height >> Out.MipLevel);
++        Out.Depth = 1;
++        return true;
++      }
++      case D3D11_RESOURCE_DIMENSION_TEXTURE3D: {
++        D3D11_TEXTURE3D_DESC1 &d = O.Texture3DDesc;
++        Out.Format = d.Format;
++        Out.MipLevel = Sub;
++        Out.ArraySlice = 0;
++        Out.Width = std::max(1u, d.Width >> Out.MipLevel);
++        Out.Height = std::max(1u, d.Height >> Out.MipLevel);
++        Out.Depth = std::max(1u, d.Depth >> Out.MipLevel);
++        return true;
++      }
++      default:
++        return false;
++      }
++    };
++    if (!describe(Src_, SrcSubresource, Src) || !describe(Dst_, DstSubresource, Dst))
+       return;
+-    }
+-    case D3D11_RESOURCE_DIMENSION_TEXTURE1D: {
+-      D3D11_TEXTURE1D_DESC &dst_desc = Dst_.Texture1DDesc;
+-      D3D11_TEXTURE1D_DESC &src_desc = Src_.Texture1DDesc;
+-
+-      Src.Format = src_desc.Format;
+-      Src.MipLevel = SrcSubresource % src_desc.MipLevels;
+-      Src.ArraySlice = SrcSubresource / src_desc.MipLevels;
+-      Src.Width = std::max(1u, src_desc.Width >> Src.MipLevel);
+-      Src.Height = 1;
+-      Src.Depth = 1;
+-
+-      Dst.Format = dst_desc.Format;
+-      Dst.MipLevel = DstSubresource % dst_desc.MipLevels;
+-      Dst.ArraySlice = DstSubresource / dst_desc.MipLevels;
+-      Dst.Width = std::max(1u, dst_desc.Width >> Dst.MipLevel);
+-      Dst.Height = 1;
+-      Dst.Depth = 1;
+-      break;
+-    }
+-    case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
+-      D3D11_TEXTURE2D_DESC1 &dst_desc = Dst_.Texture2DDesc;
+-      D3D11_TEXTURE2D_DESC1 &src_desc = Src_.Texture2DDesc;
+-
+-      Src.Format = src_desc.Format;
+-      Src.MipLevel = SrcSubresource % src_desc.MipLevels;
+-      Src.ArraySlice = SrcSubresource / src_desc.MipLevels;
+-      Src.Width = std::max(1u, src_desc.Width >> Src.MipLevel);
+-      Src.Height = std::max(1u, src_desc.Height >> Src.MipLevel);
+-      Src.Depth = 1;
+-
+-      Dst.Format = dst_desc.Format;
+-      Dst.MipLevel = DstSubresource % dst_desc.MipLevels;
+-      Dst.ArraySlice = DstSubresource / dst_desc.MipLevels;
+-      Dst.Width = std::max(1u, dst_desc.Width >> Dst.MipLevel);
+-      Dst.Height = std::max(1u, dst_desc.Height >> Dst.MipLevel);
+-      Dst.Depth = 1;
+-      break;
+-    }
+-    case D3D11_RESOURCE_DIMENSION_TEXTURE3D: {
+-      D3D11_TEXTURE3D_DESC1 &dst_desc = Dst_.Texture3DDesc;
+-      D3D11_TEXTURE3D_DESC1 &src_desc = Src_.Texture3DDesc;
+-
+-      Src.Format = src_desc.Format;
+-      Src.MipLevel = SrcSubresource;
+-      Src.ArraySlice = 0;
+-      Src.Width = std::max(1u, src_desc.Width >> Src.MipLevel);
+-      Src.Height = std::max(1u, src_desc.Height >> Src.MipLevel);
+-      Src.Depth = std::max(1u, src_desc.Depth >> Src.MipLevel);
+-
+-      Dst.Format = dst_desc.Format;
+-      Dst.MipLevel = DstSubresource;
+-      Dst.ArraySlice = 0;
+-      Dst.Width = std::max(1u, dst_desc.Width >> Dst.MipLevel);
+-      Dst.Height = std::max(1u, dst_desc.Height >> Dst.MipLevel);
+-      Dst.Depth = std::max(1u, dst_desc.Depth >> Dst.MipLevel);
+-
+-      break;
+-    }
+-    }
+ 
+     D3D11_BOX SrcBox;
+ 
+@@ -1248,6 +1230,8 @@ public:
+     BlitObject Dst(device, pDstResource);
+     BlitObject Src(device, pSrcResource);
+ 
++    if (Dst.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D || Src.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D)
++      F4_DIAG(200, "CopyResource dstDim=", (unsigned)Dst.Dimension, " srcDim=", (unsigned)Src.Dimension);
+     switch (Dst.Dimension) {
+     case D3D11_RESOURCE_DIMENSION_UNKNOWN:
+       break;
+@@ -1310,6 +1294,12 @@ public:
+     BlitObject Dst(device, pDstResource);
+     BlitObject Src(device, pSrcResource);
+ 
++    if (Dst.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D || Src.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D)
++      F4_DIAG(200, "CopySubresourceRegion dstDim=", (unsigned)Dst.Dimension, " dstSub=", DstSubresource, " dst=(", DstX, ",",
++              DstY, ",", DstZ, ") srcDim=", (unsigned)Src.Dimension, " srcSub=", SrcSubresource, " box=",
++              pSrcBox ? (int)pSrcBox->left : -1, ",", pSrcBox ? (int)pSrcBox->top : -1, ",", pSrcBox ? (int)pSrcBox->front : -1,
++              "..", pSrcBox ? (int)pSrcBox->right : -1, ",", pSrcBox ? (int)pSrcBox->bottom : -1, ",",
++              pSrcBox ? (int)pSrcBox->back : -1);
+     switch (Dst.Dimension) {
+     case D3D11_RESOURCE_DIMENSION_UNKNOWN:
+       break;
+@@ -1376,6 +1366,11 @@ public:
+ 
+     BlitObject Dst(device, pDstResource);
+ 
++    if (Dst.Dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D)
++      F4_DIAG(200, "UpdateSubresource dstSub=", DstSubresource, " box=", pDstBox ? (int)pDstBox->left : -1, ",",
++              pDstBox ? (int)pDstBox->top : -1, ",", pDstBox ? (int)pDstBox->front : -1, "..",
++              pDstBox ? (int)pDstBox->right : -1, ",", pDstBox ? (int)pDstBox->bottom : -1, ",",
++              pDstBox ? (int)pDstBox->back : -1, " rowPitch=", SrcRowPitch, " depthPitch=", SrcDepthPitch);
+     if (Dst.Dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
+       D3D11_BUFFER_DESC desc;
+       ((ID3D11Buffer *)pDstResource)->GetDesc(&desc);
+diff --git a/src/d3d11/d3d11_device.cpp b/src/d3d11/d3d11_device.cpp
+index 3cb10ab..c3fc0e9 100644
+--- a/src/d3d11/d3d11_device.cpp
++++ b/src/d3d11/d3d11_device.cpp
+@@ -28,6 +28,7 @@
+ #include <algorithm>
+ #include <unordered_map>
+ #include "config/config.hpp"   /* ml670: d3d11.mipClampBC */
++#include "f4_diag.hpp"
+ #include "d3d11_4.h"
+ #include "util_win32_compat.h"
+ 
+@@ -1073,6 +1074,9 @@ public:
+     if ((pDesc->MiscFlags & D3D11_RESOURCE_MISC_TILED))
+       return E_INVALIDARG; // not supported yet
+ 
++    F4_DIAG(64, "CreateTexture3D ", pDesc->Width, "x", pDesc->Height, "x", pDesc->Depth, " mips=", pDesc->MipLevels,
++            " fmt=", (unsigned)pDesc->Format, " usage=", (unsigned)pDesc->Usage, " bind=", pDesc->BindFlags,
++            " cpu=", pDesc->CPUAccessFlags, " misc=", pDesc->MiscFlags, " init=", pInitialData ? 1 : 0);
+     try {
+       switch (pDesc->Usage) {
+       case D3D11_USAGE_DEFAULT:
+diff --git a/src/d3d11/d3d11_resource_view_helper.cpp b/src/d3d11/d3d11_resource_view_helper.cpp
+index 4d1214d..5dc7317 100644
+--- a/src/d3d11/d3d11_resource_view_helper.cpp
++++ b/src/d3d11/d3d11_resource_view_helper.cpp
+@@ -1,3 +1,4 @@
++#include "f4_diag.hpp"
+ #include "dxmt_format.hpp"
+ #include "d3d11_resource.hpp"
+ 
+@@ -468,6 +469,8 @@ HRESULT InitializeAndNormalizeViewDescriptor(
+     break;
+   }
+   case D3D11_RTV_DIMENSION_TEXTURE3D: {
++    F4_DIAG(64, "CreateRTV tex3d mip=", ViewDesc.Texture3D.MipSlice, " firstW=", ViewDesc.Texture3D.FirstWSlice, " wsize=",
++            ViewDesc.Texture3D.WSize, " depth=", ArraySize);
+     ArraySize = std::max(ArraySize >> ViewDesc.Texture3D.MipSlice, 1u); 
+     if (~ViewDesc.Texture3D.WSize == 0)
+       ViewDesc.Texture3D.WSize = ArraySize - ViewDesc.Texture3D.FirstWSlice;
+diff --git a/src/d3d11/f4_diag.hpp b/src/d3d11/f4_diag.hpp
+new file mode 100644
+index 0000000..8c43250
+--- /dev/null
++++ b/src/d3d11/f4_diag.hpp
+@@ -0,0 +1,10 @@
++#pragma once
++/* f4-0005: rate-limited diagnostics for 3D-texture traffic (dusk/dawn colour-table blend investigation). */
++#include <atomic>
++#include "log/log.hpp"
++#define F4_DIAG(limit, ...)                                                                            \
++  do {                                                                                                 \
++    static std::atomic<unsigned> f4_diag_n{0};                                                         \
++    if (f4_diag_n.fetch_add(1, std::memory_order_relaxed) < (limit))                                   \
++      ERR("[f4-3d] ", __VA_ARGS__);                                                                    \
++  } while (0)
+diff --git a/src/d3d9/d3d9_buffer.cpp b/src/d3d9/d3d9_buffer.cpp
+index 565a69f..5c2fc19 100644
+--- a/src/d3d9/d3d9_buffer.cpp
++++ b/src/d3d9/d3d9_buffer.cpp
+@@ -10,6 +10,8 @@
+ #include "d3d9_census.hpp"
+ #include "util_env.hpp"
+ 
++#include <algorithm>
++#include <cstdint>
+ #include <cstring>
+ 
+ namespace dxmt {
+@@ -66,6 +68,37 @@ wantsDirectMap(MTLD3D9Device *device, D3DPOOL pool, DWORD usage) {
+   return directMapEnabled() && pool == D3DPOOL_DEFAULT && (usage & D3DUSAGE_DYNAMIC) && !device->canOnlySWVP();
+ }
+ 
++// MTLD3D9IndexBuffer::refreshRange: an indexed draw stores only the index bytes
++// it reads. MADEIRA_D3D9_INDEX_RANGE=0 keeps the whole-buffer refresh before
++// every draw. Read once.
++bool
++indexRangeEnabled() {
++  static const bool enabled = env::getEnvVar("MADEIRA_D3D9_INDEX_RANGE") != "0";
++  return enabled;
++}
++
++// What refreshRange saved, logged now and then so a session log shows it.
++// Calling thread under the device lock; a second device only mixes its counts in.
++struct IndexRangeStats {
++  uint64_t stores = 0, stored = 0, whole = 0, renames = 0;
++};
++
++void
++noteIndexRangeStore(IndexRangeStats &stats, uint64_t stored, uint64_t whole) {
++  ++stats.stores;
++  stats.stored += stored;
++  stats.whole += whole;
++  if (stats.stores != 1 && stats.stores != 4096 && (stats.stores & ((1u << 18) - 1)) != 0)
++    return;
++  Logger::info(
++      "[d3d9-index-range] " + std::to_string(stats.stores) + " index stores, " + std::to_string(stats.stored >> 10) +
++      " KB stored where the whole-buffer refresh would have stored " + std::to_string(stats.whole >> 10) + " KB, " +
++      std::to_string(stats.renames) + " renames (MADEIRA_D3D9_INDEX_RANGE=0 restores the whole-buffer refresh)"
++  );
++}
++
++IndexRangeStats g_indexRangeStats;
++
+ // A direct-mapped buffer's allocations keep the default CPU cache mode rather
+ // than write-combined: the application may read what it locked, and
+ // ProcessVertices and the strip and fan index scans read it too
+@@ -531,6 +564,122 @@ MTLD3D9IndexBuffer::refreshWholeMirror() {
+   m_dirty = m_writeLocked;
+ }
+ 
++bool
++MTLD3D9IndexBuffer::renameBeforeStore() {
++  // refreshWholeMirror's rename and its madeira-bcd out-of-memory fallback, the
++  // same steps in the same order: wait for the GPU and try again, and with
++  // nothing to recycle store into the current generation, which no unfinished
++  // draw reads once the GPU is idle.
++  if (SUCCEEDED(renameDynamicBuffer(
++          m_device, m_dynamic.ptr(), m_device->m_currentCmdSeq,
++          m_device->m_cachedSignaled.load(std::memory_order_acquire)
++      )))
++    return true;
++  if (m_device->drainForDynamicRename()) {
++    if (FAILED(renameDynamicBuffer(
++            m_device, m_dynamic.ptr(), m_device->m_currentCmdSeq,
++            m_device->m_cachedSignaled.load(std::memory_order_acquire)
++        )))
++      m_device->noteRenameInPlace();
++    return true;
++  }
++  static bool warned = false;
++  if (!warned) {
++    warned = true;
++    Logger::warn("d3d9: out of video memory refreshing a dynamic buffer; the draw reads stale contents");
++  }
++  return false;
++}
++
++// refreshWholeMirror stores the whole mirror before every draw that follows a
++// write lock, and before every draw while a lock is held. An engine that keeps
++// one large index buffer mapped while it draws from it, or locks a little of it
++// before each draw, then copies the whole buffer per draw: a Call of Duty
++// engine's render thread spent nearly all its time in that copy (memmove under
++// refreshWholeMirror) on an A19 Pro, at 12-20 fps with the GPU 22% busy.
++//
++// An indexed draw reads exactly its StartIndex .. StartIndex + count indices,
++// so only those bytes have to be current when it is recorded. What keeps this
++// as safe as the whole-buffer refresh:
++// - The range comes from the draw, never from the window a lock announced, so
++//   a write past a lock's window still reaches the draw that reads it.
++// - A write lock makes every byte of the current allocation suspect (Lock), so
++//   each later draw stores its own range from the mirror again, and while a
++//   lock is held every draw does: the application may write at any time.
++// - A store goes into the allocation earlier draws were recorded against only
++//   while every write lock since that allocation was installed carried
++//   NOOVERWRITE. The application then promises not to change the bytes those
++//   draws read, so the store rewrites them with the values they already hold,
++//   which is what a draw on Windows reads from a directly mapped buffer. After
++//   any other write lock (plain or DISCARD) the store renames first, and for as
++//   long as such a lock is held every store does, so the recorded draws keep
++//   the contents they were recorded with.
++// - The bytes known to be current are one interval, grown together with the
++//   gap to a new range when the gap is no larger than that range, so between
++//   two write locks no byte is stored twice and a draw whose range is current
++//   stores nothing.
++void
++MTLD3D9IndexBuffer::refreshRange(UINT begin, UINT end) {
++  if (!indexRangeEnabled()) {
++    refreshWholeMirror();
++    return;
++  }
++  if (!m_dirty || m_direct || !m_hostPtr)
++    return;
++  end = std::min(end, m_size);
++  if (begin >= end)
++    return;
++  if (!m_writeLocked && begin >= m_currentBegin && end <= m_currentEnd)
++    return;
++  if (m_renameDue) {
++    if (!renameBeforeStore())
++      return;
++    ++g_indexRangeStats.renames;
++    // While a lock without NOOVERWRITE is held, the application may still
++    // change the bytes this draw reads, so the next store renames again: each
++    // draw keeps its own copy, as with refreshWholeMirror.
++    m_renameDue = m_renameEachStore;
++    m_currentBegin = m_currentEnd = 0;
++  }
++  // The bytes to store: the new range, plus the gap to the current interval
++  // when that keeps it one piece, minus what is current already.
++  UINT lo = begin, hi = end;
++  bool grow = m_currentBegin < m_currentEnd && !m_writeLocked;
++  if (grow) {
++    const UINT gap = begin > m_currentEnd ? begin - m_currentEnd : (m_currentBegin > end ? m_currentBegin - end : 0);
++    grow = gap <= end - begin;
++  }
++  const uint32_t sub = m_dynamic->immediateSuballocation();
++  const char *mirror = static_cast<const char *>(m_hostPtr);
++  uint64_t stored = 0;
++  if (grow) {
++    lo = std::min(begin, m_currentBegin);
++    hi = std::max(end, m_currentEnd);
++    if (lo < m_currentBegin) {
++      m_dynamic->immediateName()->updateContents(lo, mirror + lo, m_currentBegin - lo, sub);
++      stored += m_currentBegin - lo;
++    }
++    if (hi > m_currentEnd) {
++      m_dynamic->immediateName()->updateContents(m_currentEnd, mirror + m_currentEnd, hi - m_currentEnd, sub);
++      stored += hi - m_currentEnd;
++    }
++  } else {
++    m_dynamic->immediateName()->updateContents(begin, mirror + begin, end - begin, sub);
++    stored = end - begin;
++  }
++  noteIndexRangeStore(g_indexRangeStats, stored, m_size);
++  // Still mapped: nothing is current past this draw (see m_writeLocked). Else
++  // keep the larger of the two intervals when they did not join.
++  if (m_writeLocked)
++    return;
++  if (grow || hi - lo >= m_currentEnd - m_currentBegin) {
++    m_currentBegin = lo;
++    m_currentEnd = hi;
++  }
++  if (m_currentBegin == 0 && m_currentEnd == m_size)
++    m_dirty = false;
++}
++
+ void
+ MTLD3D9IndexBuffer::markLosable() {
+   if (!m_isLosable) {
+@@ -681,6 +830,14 @@ MTLD3D9IndexBuffer::Lock(UINT OffsetToLock, UINT SizeToLock, void **ppbData, DWO
+   if (buffer_lock_updates_dirty(Flags)) {
+     m_dirty = true;
+     m_writeLocked = true;
++    // refreshRange: so no byte of the current allocation is known to be current
++    // any more. Only a lock without NOOVERWRITE (after sanitisation, every lock
++    // outside the DEFAULT pool) allows changing bytes a recorded draw reads.
++    m_currentBegin = m_currentEnd = 0;
++    if (!(Flags & D3DLOCK_NOOVERWRITE)) {
++      m_renameDue = true;
++      m_renameEachStore = true;
++    }
+   }
+   m_lockCount.increment();
+   *ppbData = static_cast<char *>(m_hostPtr) + OffsetToLock;
+@@ -692,8 +849,11 @@ MTLD3D9IndexBuffer::Unlock() {
+   D3D9_CENSUS(D3D9_CENSUS_MTLD3D9IndexBuffer_Unlock);
+   D9DeviceLock lock = m_device->LockDevice();
+   // See MTLD3D9VertexBuffer::Unlock: the draw refreshes, not this.
+-  if (m_lockCount.decrement() == 0)
++  if (m_lockCount.decrement() == 0) {
+     m_writeLocked = false;
++    // refreshRange: no lock without NOOVERWRITE is held any more.
++    m_renameEachStore = false;
++  }
+   return D3D_OK;
+ }
+ 
+diff --git a/src/d3d9/d3d9_buffer.hpp b/src/d3d9/d3d9_buffer.hpp
+index 62bd9f3..28a164d 100644
+--- a/src/d3d9/d3d9_buffer.hpp
++++ b/src/d3d9/d3d9_buffer.hpp
+@@ -211,6 +211,11 @@ public:
+     return m_dirty;
+   }
+   void refreshWholeMirror();
++  // Bring only the bytes [begin, end) of the current allocation up to date: the
++  // index range one draw reads (DrawIndexedPrimitive's StartIndex and index
++  // count). An empty range stores nothing. See the definition for why this is
++  // as safe as refreshWholeMirror; MADEIRA_D3D9_INDEX_RANGE=0 makes it one.
++  void refreshRange(UINT begin, UINT end);
+   // Host-mapped pointer to the current index data: the allocation draws read
+   // when the buffer is direct-mapped, else the host mirror, which is then
+   // authoritative. The index fan-remap path in d3d9_device.cpp reads the
+@@ -247,6 +252,20 @@ private:
+   // then leave every later write unpublished. While this is set, a refresh
+   // re-uploads unconditionally.
+   bool m_writeLocked = false;
++  // refreshRange only. A write lock without NOOVERWRITE since the current
++  // allocation was installed: the application may then have changed bytes a
++  // recorded draw reads, so the next store renames first.
++  bool m_renameDue = false;
++  // refreshRange only. Such a lock is still held, so every store renames.
++  bool m_renameEachStore = false;
++  // refreshRange only. The bytes of the current allocation known to equal the
++  // mirror, [m_currentBegin, m_currentEnd); empty after every write lock, since
++  // which bytes the application writes is not known.
++  UINT m_currentBegin = 0;
++  UINT m_currentEnd = 0;
++  // refreshWholeMirror's rename with its out-of-memory fallback, for
++  // refreshRange: false when the store has to be skipped.
++  bool renameBeforeStore();
+   // See MTLD3D9VertexBuffer::m_direct.
+   bool m_direct = false;
+   D3D9BufferLockCount m_lockCount;
+diff --git a/src/d3d9/d3d9_device.cpp b/src/d3d9/d3d9_device.cpp
+index 59295f1..6da7305 100644
+--- a/src/d3d9/d3d9_device.cpp
++++ b/src/d3d9/d3d9_device.cpp
+@@ -7448,7 +7448,7 @@ MTLD3D9Device::DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex, U
+     if (ib_handle == 0)
+       return D3D_OK;
+     BatchedDraw draw{};
+-    draw.cap = BuildDrawCapture();
++    draw.cap = BuildDrawCapture(0, 0);
+     draw.type = BatchedDraw::kIndexed;
+     draw.primitive_type = D3DPT_TRIANGLELIST;
+     draw.vertex_or_index_count = PrimitiveCount * 3;
+@@ -7462,7 +7462,7 @@ MTLD3D9Device::DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex, U
+   }
+   UINT vertex_count = prim_to_vertex_count(PrimitiveType, PrimitiveCount);
+   BatchedDraw draw{};
+-  draw.cap = BuildDrawCapture();
++  draw.cap = BuildDrawCapture(0, 0);
+   draw.type = BatchedDraw::kNonIndexed;
+   draw.primitive_type = PrimitiveType;
+   draw.vertex_or_index_count = vertex_count;
+@@ -7526,7 +7526,7 @@ MTLD3D9Device::DrawIndexedPrimitive(
+     if (ib_handle == 0)
+       return D3D_OK;
+     BatchedDraw draw{};
+-    draw.cap = BuildDrawCapture();
++    draw.cap = BuildDrawCapture(0, 0);
+     draw.type = BatchedDraw::kIndexed;
+     draw.primitive_type = D3DPT_TRIANGLELIST;
+     draw.vertex_or_index_count = fan_prim_count * 3;
+@@ -7572,7 +7572,7 @@ MTLD3D9Device::DrawIndexedPrimitive(
+         if (ib_handle == 0)
+           return D3D_OK;
+         BatchedDraw draw{};
+-        draw.cap = BuildDrawCapture();
++        draw.cap = BuildDrawCapture(0, 0);
+         draw.type = BatchedDraw::kIndexed;
+         draw.primitive_type = PrimitiveType;
+         draw.vertex_or_index_count = strip_count;
+@@ -7586,8 +7586,14 @@ MTLD3D9Device::DrawIndexedPrimitive(
+     }
+   }
+   UINT index_count = prim_to_vertex_count(PrimitiveType, PrimitiveCount);
++  // The bytes of the bound index buffer this draw reads, clamped to the buffer
++  // (MTLD3D9IndexBuffer::refreshRange); the GPU reads nothing else of it.
++  const uint64_t ib_index_size = m_indexBuffer->indexFormat() == D3DFMT_INDEX32 ? 4u : 2u;
++  const uint64_t ib_size = m_indexBuffer->size();
++  const uint64_t ib_begin = std::min<uint64_t>(uint64_t(StartIndex) * ib_index_size, ib_size);
++  const uint64_t ib_end = std::min<uint64_t>(ib_begin + uint64_t(index_count) * ib_index_size, ib_size);
+   BatchedDraw draw{};
+-  draw.cap = BuildDrawCapture();
++  draw.cap = BuildDrawCapture(static_cast<UINT>(ib_begin), static_cast<UINT>(ib_end));
+   draw.type = BatchedDraw::kIndexed;
+   draw.primitive_type = PrimitiveType;
+   draw.vertex_or_index_count = index_count;
+@@ -7602,7 +7608,7 @@ MTLD3D9Device::DrawIndexedPrimitive(
+ // Validation gate reads from capture (caller-provided or UP-built at queue time).
+ // UP build at queue time ensures validation sees shader/RT bindings from draw thread, not FlushDrawBatch thread.
+ MTLD3D9Device::D3D9DrawCapture
+-MTLD3D9Device::BuildDrawCapture() {
++MTLD3D9Device::BuildDrawCapture(UINT ib_begin, UINT ib_end) {
+   // Bring every bound buffer's device copy up to date before the record timer
+   // starts. The refresh charges itself to the staging axis, so timing it here as
+   // well would count it on two axes that the frontend total adds together, and
+@@ -7614,8 +7620,14 @@ MTLD3D9Device::BuildDrawCapture() {
+     if (auto *vb = m_vertexBuffers[s].ptr())
+       vb->refreshWholeMirror();
+   }
+-  if (m_indexBuffer.ptr() != nullptr)
+-    m_indexBuffer->refreshWholeMirror();
++  // The index buffer stores only the bytes the draw reads, nothing for a draw
++  // that reads none of it (the declaration's comment).
++  if (m_indexBuffer.ptr() != nullptr) {
++    if (ib_begin == 0 && ib_end == UINT_MAX)
++      m_indexBuffer->refreshWholeMirror();
++    else
++      m_indexBuffer->refreshRange(ib_begin, ib_end);
++  }
+ 
+   // POD state read by Resolve from D9EncodingState; setter-flush invariant ensures batch shares one snapshot.
+   // Ref-counted state via setter ops into m_encodeSideRefs.
+@@ -11366,7 +11378,7 @@ MTLD3D9Device::DrawPrimitiveUP(
+     if (ib_handle == 0)
+       return D3D_OK;
+     BatchedDraw draw{};
+-    draw.cap = BuildDrawCapture();
++    draw.cap = BuildDrawCapture(0, 0);
+     draw.type = BatchedDraw::kIndexed;
+     draw.primitive_type = D3DPT_TRIANGLELIST;
+     draw.vertex_or_index_count = PrimitiveCount * 3;
+@@ -11384,7 +11396,7 @@ MTLD3D9Device::DrawPrimitiveUP(
+   }
+ 
+   BatchedDraw draw{};
+-  draw.cap = BuildDrawCapture();
++  draw.cap = BuildDrawCapture(0, 0);
+   draw.type = BatchedDraw::kNonIndexed;
+   draw.primitive_type = PrimitiveType;
+   draw.vertex_or_index_count = vertex_count;
+@@ -11483,7 +11495,7 @@ MTLD3D9Device::DrawIndexedPrimitiveUP(
+     if (ib_handle == 0)
+       return D3D_OK;
+     BatchedDraw draw{};
+-    draw.cap = BuildDrawCapture();
++    draw.cap = BuildDrawCapture(0, 0);
+     draw.type = BatchedDraw::kIndexed;
+     draw.primitive_type = D3DPT_TRIANGLELIST;
+     draw.vertex_or_index_count = PrimitiveCount * 3;
+@@ -11527,7 +11539,7 @@ MTLD3D9Device::DrawIndexedPrimitiveUP(
+   }
+ 
+   BatchedDraw draw{};
+-  draw.cap = BuildDrawCapture();
++  draw.cap = BuildDrawCapture(0, 0);
+   draw.type = BatchedDraw::kIndexed;
+   draw.primitive_type = PrimitiveType;
+   draw.vertex_or_index_count = index_count;
+diff --git a/src/d3d9/d3d9_device.hpp b/src/d3d9/d3d9_device.hpp
+index 1fdd62a..ca4d316 100644
+--- a/src/d3d9/d3d9_device.hpp
++++ b/src/d3d9/d3d9_device.hpp
+@@ -1079,7 +1079,11 @@ private:
+   // currentOffset snapshot at queue time).
+   // Ref-counted state travels via setters to D9EncodingState on encode thread;
+   // override_* args are per-call, not device state.
+-  D3D9DrawCapture BuildDrawCapture();
++  // [ib_begin, ib_end) is the byte range of the bound index buffer the draw
++  // reads (MTLD3D9IndexBuffer::refreshRange): an empty range for a draw that
++  // reads none (non-indexed, or with an index buffer of its own); the default
++  // refreshes the whole buffer, as every draw did before.
++  D3D9DrawCapture BuildDrawCapture(UINT ib_begin = 0, UINT ib_end = UINT_MAX);
+ 
+   // Op-stream queue helpers. QueueBatchedDraw appends to m_pendingDraws
+   // *and* records its position in m_pendingOps; QueueBlitOp does the
+diff --git a/src/dxmt/dxmt_shader_cache.cpp b/src/dxmt/dxmt_shader_cache.cpp
+index 5387c62..9950032 100644
+--- a/src/dxmt/dxmt_shader_cache.cpp
++++ b/src/dxmt/dxmt_shader_cache.cpp
+@@ -1,3 +1,4 @@
++#include <cstdlib>
+ #include "dxmt_shader_cache.hpp"
+ #include "util_env.hpp"
+ #include "util_string.hpp"
+@@ -63,8 +64,11 @@ ShaderCache::ShaderCache(WMTMetalVersion metal_version) {
+   /* madeira ml1382: shaders built with DXMT_PRECISE_MINMAX=0 (fast min/max) get their own file */
+   path += str::format("shaders_", (unsigned int)metal_version,
+                       env::getEnvVar("DXMT_PRECISE_MINMAX") == "0" ? "_fastminmax" : "", ".db");
+-  scache_writer_ = WMT::CacheWriter::alloc_init(path.c_str(), kDXMTShaderCacheVersion);
+-  scache_reader_ = WMT::CacheReader::alloc_init(path.c_str(), kDXMTShaderCacheVersion);
++  // f4-0004: precise-math shaders are different binaries; keep them in their own cache table so cached fast-math ones are never reused.
++  const char *precise_env = std::getenv("MADEIRA_PRECISE_MATH");
++  uint64_t cache_version = kDXMTShaderCacheVersion + ((precise_env && *precise_env == '1') ? 1000 : 0);
++  scache_writer_ = WMT::CacheWriter::alloc_init(path.c_str(), cache_version);
++  scache_reader_ = WMT::CacheReader::alloc_init(path.c_str(), cache_version);
+ }
+ 
+ } // namespace dxmt
+\ No newline at end of file
+diff --git a/src/util/wsi_window_headless.cpp b/src/util/wsi_window_headless.cpp
+index c4b1ded..b1d65dd 100644
+--- a/src/util/wsi_window_headless.cpp
++++ b/src/util/wsi_window_headless.cpp
+@@ -45,8 +45,52 @@ void getWindowSize(HWND hWindow, uint32_t *pWidth, uint32_t *pHeight) {
+     *pHeight = (sh > 0) ? (uint32_t)sh : 768;
+ }
+ 
++/* 0157 (Porthole): the window is resized/moved the way native DXGI does it when a program asks for it (ResizeTarget, SetFullscreenState),
++ * but ONLY when it does not already match: a window that already has the right size or already covers the screen is left exactly as before.
++ * American Truck Simulator creates a 1x1-client placeholder window, strips its border and relies on DXGI to make it screen-sized; with these
++ * no-ops it stayed 132x38 and the picture showed as a postage stamp. Everything is logged as [wsi-0157]. */
++static bool screenRect(RECT *pRect) {
++  int sw = ::GetSystemMetrics(SM_CXSCREEN), sh = ::GetSystemMetrics(SM_CYSCREEN);
++  if (sw < 320 || sh < 240)
++    return false;
++  pRect->left = 0;
++  pRect->top = 0;
++  pRect->right = sw;
++  pRect->bottom = sh;
++  return true;
++}
++
++static bool coversRect(HWND hWindow, const RECT &r) {
++  RECT w = {};
++  if (!::GetWindowRect(hWindow, &w))
++    return false;
++  return w.left <= r.left && w.top <= r.top && w.right >= r.right && w.bottom >= r.bottom;
++}
++
+ void resizeWindow(HWND hWindow, DXMTWindowState *pState, uint32_t width,
+                   uint32_t height) {
++  RECT screen = {};
++  RECT client = {};
++  if (!hWindow || !screenRect(&screen) || !::GetClientRect(hWindow, &client))
++    return;
++  if (width > (uint32_t)screen.right)
++    width = (uint32_t)screen.right;
++  if (height > (uint32_t)screen.bottom)
++    height = (uint32_t)screen.bottom;
++  if (width < 64 || height < 64)
++    return;
++  if ((uint32_t)(client.right - client.left) == width &&
++      (uint32_t)(client.bottom - client.top) == height)
++    return;
++  RECT oldRect = {};
++  ::GetWindowRect(hWindow, &oldRect);
++  RECT newRect = {0, 0, (LONG)width, (LONG)height};
++  ::AdjustWindowRectEx(&newRect, ::GetWindowLongW(hWindow, GWL_STYLE), FALSE,
++                       ::GetWindowLongW(hWindow, GWL_EXSTYLE));
++  LONG outerW = newRect.right - newRect.left, outerH = newRect.bottom - newRect.top;
++  WARN("[wsi-0157] resizeWindow ", width, "x", height, " (client was ", client.right - client.left, "x",
++       client.bottom - client.top, ")");
++  ::MoveWindow(hWindow, oldRect.left, oldRect.top, outerW, outerH, TRUE);
+ }
+ 
+ /* Headless no-op fullscreen success. Games negotiate a mode and expect
+@@ -59,11 +103,42 @@ bool setWindowMode(HMONITOR hMonitor, HWND hWindow, const WsiMode &mode) {
+ bool enterFullscreenMode(HMONITOR hMonitor, HWND hWindow,
+                          DXMTWindowState *pState,
+                          [[maybe_unused]] bool modeSwitch) {
++  RECT rect = {};
++  if (!hWindow || !pState || !screenRect(&rect))
++    return true;
++  pState->style = 0;
++  if (coversRect(hWindow, rect)) {
++    WARN("[wsi-0157] enterFullscreenMode: the window already covers the screen, left as it is");
++    return true;
++  }
++  ::GetWindowRect(hWindow, &pState->rect);
++  LONG style = ::GetWindowLongW(hWindow, GWL_STYLE);
++  LONG exstyle = ::GetWindowLongW(hWindow, GWL_EXSTYLE);
++  pState->style = style ? style : 1;           /* non-zero marks "we changed this window" */
++  pState->exstyle = exstyle;
++  ::SetWindowLongW(hWindow, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
++  ::SetWindowLongW(hWindow, GWL_EXSTYLE, exstyle & ~WS_EX_OVERLAPPEDWINDOW);
++  WARN("[wsi-0157] enterFullscreenMode: window ", pState->rect.right - pState->rect.left, "x",
++       pState->rect.bottom - pState->rect.top, " -> ", rect.right - rect.left, "x", rect.bottom - rect.top);
++  ::SetWindowPos(hWindow, HWND_TOP, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
++                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+   return true;
+ }
+ 
+ bool leaveFullscreenMode(HWND hWindow, DXMTWindowState *pState,
+                          bool restoreCoordinates) {
++  /* Only a window enterFullscreenMode changed is put back. */
++  if (!hWindow || !pState || pState->style == 0)
++    return true;
++  ::SetWindowLongW(hWindow, GWL_STYLE, pState->style == 1 ? ::GetWindowLongW(hWindow, GWL_STYLE) : pState->style);
++  ::SetWindowLongW(hWindow, GWL_EXSTYLE, pState->exstyle);
++  UINT flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER;
++  const RECT rect = pState->rect;
++  if (!restoreCoordinates)
++    flags |= SWP_NOSIZE | SWP_NOMOVE;
++  WARN("[wsi-0157] leaveFullscreenMode: window back to ", rect.right - rect.left, "x", rect.bottom - rect.top);
++  ::SetWindowPos(hWindow, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, flags);
++  pState->style = 0;
+   return true;
+ }
+ 
+@@ -84,6 +159,11 @@ bool isWindow(HWND hWindow) { return true; }
+ 
+ void updateFullscreenWindow(HMONITOR hMonitor, HWND hWindow,
+                             bool forceTopmost) {
++  RECT rect = {};
++  if (!hWindow || !screenRect(&rect) || coversRect(hWindow, rect))
++    return;
++  WARN("[wsi-0157] updateFullscreenWindow: window moved to cover the screen");
++  ::MoveWindow(hWindow, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
+ }
+ 
+ bool isForeground(HWND hWindow) { return true; }
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 8592f89..9ba5904 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -600,6 +600,192 @@ static void madeira_gpu_meter_attach(id<MTLCommandBuffer> cmdbuf) {
+   }];
+ }
+ 
++
++/* 0144: GPU time per render pass, for the in-game profile ("Profile where the time goes").
++ *
++ * While it is on, every render pass the game starts gets two timestamps (start of its vertex stage, end of its fragment stage) in one shared MTLCounterSampleBuffer;
++ * when the command buffer has completed they are resolved and added up per kind of pass (size, attachments, load and store actions). madeira_passprof_dump() prints
++ * the table once, with the time per second of play. Costs a few hundred bytes per pass; off, nothing is attached. Needs a GPU that samples at stage boundaries
++ * (the A14 and later do); otherwise it says so in the log and stays off. */
++static _Atomic int g_pp_on;
++static id<MTLCounterSampleBuffer> g_pp_sb;
++static id<MTLDevice> g_pp_dev;
++static int g_pp_failed;
++#define PP_SAMPLES 4096u   /* the sample buffer may hold at most 32768 bytes = 4096 timestamps */
++#define PP_RECORDS 2048u
++struct pp_key { uint32_t w, h, ncolor, cfmt, dfmt, cload, cstore, dload, dstore, samples, tex_n; };
++struct pp_rec { uintptr_t cb; uint32_t si, seq; struct pp_key k; };
++struct pp_stat { struct pp_key k; uint64_t n; double ticks; };
++static struct pp_rec g_pp_rec[PP_RECORDS];
++static _Atomic uint32_t g_pp_next;
++static struct pp_stat g_pp_stat[128];
++static int g_pp_nstat;
++static os_unfair_lock g_pp_lock = OS_UNFAIR_LOCK_INIT;
++static MTLTimestamp g_pp_cpu0, g_pp_gpu0;
++static double g_pp_span_sec, g_pp_span_ticks;   /* sum over command buffers: GPUEndTime-GPUStartTime, and the timestamps between their first and last pass */
++
++void madeira_passprof_start(void) {
++  os_unfair_lock_lock(&g_pp_lock);
++  g_pp_nstat = 0;
++  memset(g_pp_stat, 0, sizeof g_pp_stat);
++  os_unfair_lock_unlock(&g_pp_lock);
++  g_pp_cpu0 = 0;   /* calibrated at the first pass */
++  atomic_store_explicit(&g_pp_on, 1, memory_order_relaxed);
++}
++
++static int madeira_pp_setup(id<MTLDevice> dev) {
++  if (g_pp_sb) return 1;
++  if (g_pp_failed) return 0;
++  g_pp_failed = 1;
++  if (![dev supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) {
++    dprintf(STDERR_FILENO, "[gpu-prof] this GPU cannot sample counters at stage boundaries -- no per-pass GPU times\n");
++    return 0;
++  }
++  id<MTLCounterSet> ts = nil;
++  for (id<MTLCounterSet> cs in dev.counterSets) if ([cs.name isEqualToString:MTLCommonCounterSetTimestamp]) ts = cs;
++  if (!ts) { dprintf(STDERR_FILENO, "[gpu-prof] no timestamp counter set -- no per-pass GPU times\n"); return 0; }
++  MTLCounterSampleBufferDescriptor *d = [[MTLCounterSampleBufferDescriptor alloc] init];
++  d.counterSet = ts; d.sampleCount = PP_SAMPLES; d.storageMode = MTLStorageModeShared; d.label = @"porthole-pass-profile";
++  NSError *err = nil;
++  g_pp_sb = [dev newCounterSampleBufferWithDescriptor:d error:&err];
++  [d release];
++  if (!g_pp_sb) { dprintf(STDERR_FILENO, "[gpu-prof] could not make the counter buffer: %s\n", err ? err.description.UTF8String : "?"); return 0; }
++  g_pp_dev = dev;
++  g_pp_failed = 0;
++  dprintf(STDERR_FILENO, "[gpu-prof] timing every render pass (counter buffer of %u samples)\n", PP_SAMPLES);
++  return 1;
++}
++
++static void madeira_pp_prepare(MTLRenderPassDescriptor *d, const struct WMTRenderPassInfo *info, id<MTLCommandBuffer> cb) {
++  if (!madeira_pp_setup(cb.device)) return;
++  if (!g_pp_cpu0) [g_pp_dev sampleTimestamps:&g_pp_cpu0 gpuTimestamp:&g_pp_gpu0];
++  uint32_t n = atomic_fetch_add_explicit(&g_pp_next, 1, memory_order_relaxed);
++  struct pp_rec *r = &g_pp_rec[n % PP_RECORDS];
++  uint32_t si = (n * 2u) % PP_SAMPLES;
++  memset(r, 0, sizeof *r);
++  struct pp_key *k = &r->k;
++  id<MTLTexture> t0 = nil;
++  for (unsigned i = 0; i < 8; i++) if (info->colors[i].texture) {
++    if (!t0) { t0 = (id<MTLTexture>)info->colors[i].texture; k->cfmt = (uint32_t)t0.pixelFormat; k->cload = info->colors[i].load_action; k->cstore = info->colors[i].store_action; }
++    k->ncolor++;
++  }
++  if (info->depth.texture) {
++    id<MTLTexture> dt = (id<MTLTexture>)info->depth.texture;
++    if (!t0) t0 = dt;
++    k->dfmt = (uint32_t)dt.pixelFormat; k->dload = info->depth.load_action; k->dstore = info->depth.store_action;
++  }
++  if (t0) { k->w = (uint32_t)t0.width; k->h = (uint32_t)t0.height; k->samples = (uint32_t)t0.sampleCount; }
++  r->si = si;
++  r->seq = n;
++  r->cb = (uintptr_t)cb;
++  MTLRenderPassSampleBufferAttachmentDescriptor *a = d.sampleBufferAttachments[0];
++  a.sampleBuffer = g_pp_sb;
++  a.startOfVertexSampleIndex = si;
++  a.endOfVertexSampleIndex = MTLCounterDontSample;
++  a.startOfFragmentSampleIndex = MTLCounterDontSample;
++  a.endOfFragmentSampleIndex = si + 1;
++}
++
++static int pp_seq_cmp(const void *a, const void *b) {
++  uint32_t x = ((const struct pp_rec *)a)->seq, y = ((const struct pp_rec *)b)->seq;
++  return x < y ? -1 : x > y;
++}
++
++/* Metal starts the vertex work of a pass long before its fragment work (the vertex stages of the passes of a command buffer overlap the fragment stages of the ones
++ * before), so end-of-fragment minus start-of-vertex is mostly waiting for the earlier passes -- a 160x90 pass came out as long as a 1280x720 one. The fragment stage runs
++ * in order, so the time a pass occupied the GPU is the gap between its end-of-fragment and the previous pass's (the first pass of a command buffer: from its own start). */
++static void madeira_pp_attach(id<MTLCommandBuffer> cmdbuf) {
++  uintptr_t cbp = (uintptr_t)cmdbuf;
++  [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> b) {
++    struct pp_rec local[96]; int nl = 0;
++    for (uint32_t i = 0; i < PP_RECORDS && nl < 96; i++) {
++      struct pp_rec *r = &g_pp_rec[i];
++      if (r->cb != cbp) continue;
++      local[nl++] = *r;
++      r->cb = 0;
++    }
++    if (!nl) return;
++    qsort(local, nl, sizeof local[0], pp_seq_cmp);
++    uint64_t prev = 0, first_sv = 0, last_ef = 0;
++    double d[96]; memset(d, 0, sizeof d);
++    for (int j = 0; j < nl; j++) {
++      NSData *data = [g_pp_sb resolveCounterRange:NSMakeRange(local[j].si, 2)];
++      if (!data || data.length < 2 * sizeof(MTLCounterResultTimestamp)) continue;
++      const MTLCounterResultTimestamp *ts = data.bytes;
++      if (ts[0].timestamp == MTLCounterErrorValue || ts[1].timestamp == MTLCounterErrorValue) continue;
++      uint64_t sv = ts[0].timestamp, ef = ts[1].timestamp;
++      if (!first_sv) first_sv = sv;
++      if (!prev) prev = sv;
++      d[j] = ef > prev ? (double)(ef - prev) : 0.0;
++      if (ef > prev) prev = ef;
++      last_ef = ef > last_ef ? ef : last_ef;
++    }
++    double sec = b.GPUEndTime - b.GPUStartTime;
++    os_unfair_lock_lock(&g_pp_lock);
++    if (sec > 0 && last_ef > first_sv) { g_pp_span_sec += sec; g_pp_span_ticks += (double)(last_ef - first_sv); }
++    for (int j = 0; j < nl; j++) {
++      int k;
++      for (k = 0; k < g_pp_nstat; k++) if (!memcmp(&g_pp_stat[k].k, &local[j].k, sizeof local[j].k)) break;
++      if (k == g_pp_nstat && g_pp_nstat < 128) { g_pp_stat[k].k = local[j].k; g_pp_nstat++; }
++      if (k < g_pp_nstat) { g_pp_stat[k].n++; g_pp_stat[k].ticks += d[j]; }
++    }
++    os_unfair_lock_unlock(&g_pp_lock);
++  }];
++}
++
++static double pp_bpp(uint32_t fmt) {
++  switch (fmt) {
++  case 10: case 12: case 253: return 1;
++  case 20: case 22: case 25: case 30: case 250: return 2;
++  case 40: case 55: case 65: case 70: case 71: case 80: case 81: case 90: case 92: case 93: case 252: return 4;
++  case 255: case 260: return 5;   /* depth 24/32 + stencil 8 (real storage may be 8) */
++  case 105: case 115: case 114: return 8;
++  case 125: return 16;
++  default: return 4;
++  }
++}
++/* bytes one pass of this kind moves between the tile memory and RAM, counting what its load and store actions ask for */
++static double pp_traffic(const struct pp_key *k) {
++  double px = (double)k->w * k->h * (k->samples ? k->samples : 1);
++  double b = 0;
++  if (k->cload == 1) b += px * pp_bpp(k->cfmt) * k->ncolor;
++  if (k->cstore == 1 || k->cstore == 3) b += px * pp_bpp(k->cfmt) * k->ncolor;
++  if (k->dfmt) { if (k->dload == 1) b += px * pp_bpp(k->dfmt); if (k->dstore == 1 || k->dstore == 3) b += px * pp_bpp(k->dfmt); }
++  return b;
++}
++
++static int pp_cmp(const void *a, const void *b) {
++  double x = ((const struct pp_stat *)a)->ticks, y = ((const struct pp_stat *)b)->ticks;
++  return x < y ? 1 : x > y ? -1 : 0;
++}
++
++void madeira_passprof_dump(double seconds) {
++  atomic_store_explicit(&g_pp_on, 0, memory_order_relaxed);
++  if (!g_pp_sb || !g_pp_cpu0) { dprintf(STDERR_FILENO, "[gpu-prof] no render passes were timed\n"); return; }
++  usleep(300000);   /* the last command buffers may still be completing */
++  struct pp_stat st[128]; int n; double span_sec, span_ticks;
++  os_unfair_lock_lock(&g_pp_lock);
++  n = g_pp_nstat; memcpy(st, g_pp_stat, sizeof st); span_sec = g_pp_span_sec; span_ticks = g_pp_span_ticks;
++  os_unfair_lock_unlock(&g_pp_lock);
++  /* seconds per timestamp tick: the command buffers' own GPU time against the timestamps between their first and last pass */
++  double ns_per_tick = span_ticks > 0 ? span_sec * 1e9 / span_ticks : 1.0;
++  qsort(st, n, sizeof st[0], pp_cmp);
++  double total = 0, traffic = 0; uint64_t passes = 0;
++  for (int i = 0; i < n; i++) { total += st[i].ticks; passes += st[i].n; traffic += st[i].n * pp_traffic(&st[i].k); }
++  dprintf(STDERR_FILENO, "[gpu-prof] %.0f s: %llu render passes, %d kinds, %.1f ms of GPU time per second spent in them (%.3f ns per timestamp tick, from %.1f s of command buffers); load/store traffic asked for: %.0f MB/s\n",
++          seconds, (unsigned long long)passes, n, seconds > 0 ? total * ns_per_tick / 1e6 / seconds : 0.0, ns_per_tick, span_sec, seconds > 0 ? traffic / 1e6 / seconds : 0.0);
++  static const char *ld[] = { "dontcare", "load", "clear" };
++  static const char *stn[] = { "dontcare", "store", "resolve", "storeresolve", "unknown", "custom" };
++  for (int i = 0; i < n && i < 24; i++) {
++    const struct pp_key *k = &st[i].k;
++    double ms_total = st[i].ticks * ns_per_tick / 1e6;
++    dprintf(STDERR_FILENO, "[gpu-prof]   %5.1f%% %6.1f ms/s  %4.1f/s of %ux%u (%ux), %u colour(s) fmt %u [%s/%s], depth fmt %u [%s/%s]: %.2f ms each, %.1f MB moved each\n",
++            total > 0 ? 100.0 * st[i].ticks / total : 0.0, seconds > 0 ? ms_total / seconds : 0.0, seconds > 0 ? st[i].n / seconds : 0.0, k->w, k->h, k->samples,
++            k->ncolor, k->cfmt, k->cload < 3 ? ld[k->cload] : "?", k->cstore < 6 ? stn[k->cstore] : "?", k->dfmt, k->dload < 3 ? ld[k->dload] : "?",
++            k->dstore < 6 ? stn[k->dstore] : "?", st[i].n ? ms_total / st[i].n : 0.0, pp_traffic(k) / 1e6);
++  }
++}
++
+ static NTSTATUS
+ _MTLCommandBuffer_commit(void *obj) {
+   struct unixcall_generic_obj_noret *params = obj;
+@@ -625,6 +811,8 @@ _MTLCommandBuffer_commit(void *obj) {
+   }
+   if (atomic_load_explicit(&g_madeira_gpu_meter, memory_order_relaxed))
+     madeira_gpu_meter_attach((id<MTLCommandBuffer>)params->handle);
++  if (atomic_load_explicit(&g_pp_on, memory_order_relaxed) && g_pp_sb)
++    madeira_pp_attach((id<MTLCommandBuffer>)params->handle);
+   [(id<MTLCommandBuffer>)params->handle commit];
+   return STATUS_SUCCESS;
+ }
+@@ -716,6 +904,174 @@ madeira_cpu_cache_mode(MTLResourceOptions options) {
+   return keep ? options : (options & ~(MTLResourceOptions)MTLResourceCPUCacheModeMask);
+ }
+ 
++/* 0080: FILE-BACKED HOST BUFFERS (opt-in: madeira.cfg buffer-swap-kb = N, 0 = off).
++ *
++ * A D3D11 buffer the game creates with data (meshes, vertex and index buffers,
++ * constant data) is a shared MTLBuffer from Metal's own allocator: IOAccelerator
++ * memory, charged in full to phys_footprint whether it is resident or compressed.
++ * Rust's load makes ~96,000 of them, 2.1 GB, and the 6144 MB jetsam limit ends
++ * the process at the "Opening scene" step.
++ *
++ * Dirty pages of a MAP_SHARED file mapping are not charged (ml1076 canary, the
++ * ml1077 swap tier). So for a CPU-visible buffer of at least N KB this hands
++ * Metal memory carved out of such a mapping (newBufferWithBytesNoCopy) instead
++ * of its own. DXMT already supports a buffer that brings its own memory
++ * (CpuPlaced); the contents pointer it gets back is simply ours.
++ *
++ * Whether Metal/IOKit keep the pages of a no-copy buffer wired, and so charged,
++ * is the open question the device run answers (see the [bufswap] lines). Every
++ * failure falls back to Metal's own allocation. */
++#include <pthread.h>
++#define BUFSWAP_PAGE       16384ull
++#define BUFSWAP_CHUNK      (256ull << 20)
++#define BUFSWAP_MAX_CHUNKS 96
++#define BUFSWAP_CLASSES    128
++static struct {
++  int state;                              /* 0 = not read yet, 1 = on, -1 = off */
++  int fd;
++  uint64_t min_bytes, cap_bytes;
++  pthread_mutex_t mu;
++  char *chunk[BUFSWAP_MAX_CHUNKS];
++  uint64_t bump;                          /* next never-used file offset */
++  struct { uint64_t size; uint64_t *off; unsigned n, cap; } cls[BUFSWAP_CLASSES];
++  unsigned ncls;
++  uint64_t live, peak, logged_peak;
++  unsigned long nbuf, nlive, nfall, nnil, npunch_fail;
++} g_bufswap = { .mu = PTHREAD_MUTEX_INITIALIZER, .fd = -1 };
++
++/* Size classes: exact up to 8 pages, then four steps per power of two. Unused
++ * pages of a file extent cost nothing (sparse), so the rounding is free. */
++static uint64_t bufswap_class_size(uint64_t bytes) {
++  uint64_t pages = (bytes + BUFSWAP_PAGE - 1) / BUFSWAP_PAGE;
++  if (pages <= 8) return pages * BUFSWAP_PAGE;
++  uint64_t top = 1; while (top * 2 < pages) top *= 2;          /* top < pages <= 2*top */
++  uint64_t step = top / 4;
++  return ((pages + step - 1) / step) * step * BUFSWAP_PAGE;
++}
++static int bufswap_class_idx(uint64_t size) {                  /* caller holds mu */
++  for (unsigned i = 0; i < g_bufswap.ncls; i++) if (g_bufswap.cls[i].size == size) return (int)i;
++  if (g_bufswap.ncls >= BUFSWAP_CLASSES) return -1;
++  g_bufswap.cls[g_bufswap.ncls].size = size;
++  return (int)g_bufswap.ncls++;
++}
++static int bufswap_enabled(void) {
++  if (g_bufswap.state) return g_bufswap.state > 0;
++  pthread_mutex_lock(&g_bufswap.mu);
++  if (!g_bufswap.state) {
++    long long kb = madeira_cfg_int("buffer-swap-kb", 0);
++    const char *e = getenv("MADEIRA_BUFFER_SWAP_KB");
++    if (e && *e) kb = atoll(e);
++    g_bufswap.state = -1;
++    if (kb > 0) {
++      long long mb = madeira_cfg_int("buffer-swap-mb", 8192);
++      if (mb < 256) mb = 256;
++      NSString *dir = NSTemporaryDirectory();
++      const char *sw = getenv("MADEIRA_SWAP_FILE");
++      if (sw && *sw) dir = [[NSString stringWithUTF8String:sw] stringByDeletingLastPathComponent];
++      NSString *path = [dir stringByAppendingPathComponent:@"madeira-bufswap.bin"];
++      [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
++#if TARGET_OS_IOS
++      [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:@{NSFileProtectionKey: NSFileProtectionNone}];
++#else
++      [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
++#endif
++      int fd = open(path.fileSystemRepresentation, O_RDWR | O_CLOEXEC);
++      if (fd >= 0 && !ftruncate(fd, (off_t)(BUFSWAP_MAX_CHUNKS * BUFSWAP_CHUNK))) {
++        unlink(path.fileSystemRepresentation);   /* nothing left behind if the app dies */
++        g_bufswap.fd = fd;
++        g_bufswap.min_bytes = (uint64_t)kb << 10;
++        if (g_bufswap.min_bytes < BUFSWAP_PAGE) g_bufswap.min_bytes = BUFSWAP_PAGE;
++        g_bufswap.cap_bytes = (uint64_t)mb << 20;
++        g_bufswap.state = 1;
++        dprintf(STDERR_FILENO, "[bufswap] 0080 file-backed buffers ON: buffers of at least %llu KB, live cap %lld MB, %s (madeira.cfg buffer-swap-kb / buffer-swap-mb)\n",
++                (unsigned long long)(g_bufswap.min_bytes >> 10), mb, path.UTF8String);
++      } else {
++        dprintf(STDERR_FILENO, "[bufswap] 0080 cannot create the backing file %s (errno %d): off\n", path.UTF8String, errno);
++        if (fd >= 0) close(fd);
++      }
++    }
++  }
++  pthread_mutex_unlock(&g_bufswap.mu);
++  return g_bufswap.state > 0;
++}
++/* Carve `bytes` (rounded to a size class) out of the file mapping. NULL = use Metal's own. */
++static void *bufswap_alloc(uint64_t bytes, size_t *out_len) {
++  uint64_t size = bufswap_class_size(bytes);
++  void *ret = NULL;
++  if (size > BUFSWAP_CHUNK) return NULL;
++  pthread_mutex_lock(&g_bufswap.mu);
++  if (g_bufswap.live + size <= g_bufswap.cap_bytes) {
++    int ci = bufswap_class_idx(size);
++    uint64_t off = (uint64_t)-1;
++    if (ci >= 0 && g_bufswap.cls[ci].n) off = g_bufswap.cls[ci].off[--g_bufswap.cls[ci].n];
++    else {
++      uint64_t b = g_bufswap.bump;
++      if ((b % BUFSWAP_CHUNK) + size > BUFSWAP_CHUNK) b = (b / BUFSWAP_CHUNK + 1) * BUFSWAP_CHUNK;
++      if (b + size <= BUFSWAP_MAX_CHUNKS * BUFSWAP_CHUNK) { off = b; g_bufswap.bump = b + size; }
++    }
++    if (off != (uint64_t)-1) {
++      unsigned c = (unsigned)(off / BUFSWAP_CHUNK);
++      if (!g_bufswap.chunk[c]) {
++        void *m = mmap(NULL, BUFSWAP_CHUNK, PROT_READ | PROT_WRITE, MAP_SHARED, g_bufswap.fd, (off_t)(c * BUFSWAP_CHUNK));
++        if (m != MAP_FAILED) g_bufswap.chunk[c] = m;
++      }
++      if (g_bufswap.chunk[c]) {
++        ret = g_bufswap.chunk[c] + (off % BUFSWAP_CHUNK);
++        *out_len = (size_t)size;
++        g_bufswap.live += size; g_bufswap.nlive++; g_bufswap.nbuf++;
++        if (g_bufswap.live > g_bufswap.peak) g_bufswap.peak = g_bufswap.live;
++        if (g_bufswap.peak >= g_bufswap.logged_peak + (512ull << 20) || g_bufswap.nbuf == 1) {
++          g_bufswap.logged_peak = g_bufswap.peak;
++          dprintf(STDERR_FILENO, "[bufswap] 0080 live %llu MB in %lu buffers (peak %llu MB, %lu created, %lu fell back to Metal, %lu refused by Metal)\n",
++                  (unsigned long long)(g_bufswap.live >> 20), g_bufswap.nlive, (unsigned long long)(g_bufswap.peak >> 20),
++                  g_bufswap.nbuf, g_bufswap.nfall, g_bufswap.nnil);
++        }
++      } else if (ci >= 0 && off != (uint64_t)-1) {
++        /* the chunk could not be mapped: keep the extent for a later try */
++        if (g_bufswap.cls[ci].n == g_bufswap.cls[ci].cap) {
++          unsigned nc = g_bufswap.cls[ci].cap ? g_bufswap.cls[ci].cap * 2 : 256;
++          uint64_t *p = realloc(g_bufswap.cls[ci].off, nc * sizeof(uint64_t));
++          if (p) { g_bufswap.cls[ci].off = p; g_bufswap.cls[ci].cap = nc; }
++        }
++        if (g_bufswap.cls[ci].n < g_bufswap.cls[ci].cap) g_bufswap.cls[ci].off[g_bufswap.cls[ci].n++] = off;
++      }
++    }
++  }
++  if (!ret) g_bufswap.nfall++;
++  pthread_mutex_unlock(&g_bufswap.mu);
++  return ret;
++}
++static void bufswap_free(void *p, uint64_t len) {
++  uint64_t off = 0; unsigned c;
++  pthread_mutex_lock(&g_bufswap.mu);
++  for (c = 0; c < BUFSWAP_MAX_CHUNKS; c++)
++    if (g_bufswap.chunk[c] && (char *)p >= g_bufswap.chunk[c] && (char *)p < g_bufswap.chunk[c] + BUFSWAP_CHUNK) {
++      off = (uint64_t)c * BUFSWAP_CHUNK + (uint64_t)((char *)p - g_bufswap.chunk[c]);
++      break;
++    }
++  if (c < BUFSWAP_MAX_CHUNKS) {
++    struct fpunchhole ph = { 0, 0, (off_t)off, (off_t)len };
++    int ci = bufswap_class_idx(len);
++    if (fcntl(g_bufswap.fd, F_PUNCHHOLE, &ph)) g_bufswap.npunch_fail++;   /* stale bytes are harmless, only disk */
++    if (ci >= 0) {
++      if (g_bufswap.cls[ci].n == g_bufswap.cls[ci].cap) {
++        unsigned nc = g_bufswap.cls[ci].cap ? g_bufswap.cls[ci].cap * 2 : 256;
++        uint64_t *np = realloc(g_bufswap.cls[ci].off, nc * sizeof(uint64_t));
++        if (np) { g_bufswap.cls[ci].off = np; g_bufswap.cls[ci].cap = nc; }
++      }
++      if (g_bufswap.cls[ci].n < g_bufswap.cls[ci].cap) g_bufswap.cls[ci].off[g_bufswap.cls[ci].n++] = off;
++    }
++    if (g_bufswap.live >= len) g_bufswap.live -= len;
++    if (g_bufswap.nlive) g_bufswap.nlive--;
++  }
++  pthread_mutex_unlock(&g_bufswap.mu);
++}
++/* A buffer the game fills through its mapped pointer (CPU-visible, default cache mode). */
++static int bufswap_eligible(const struct WMTBufferInfo *bi) {
++  unsigned storage = ((unsigned)bi->options >> 4) & 0xf;   /* 0 shared, 1 managed (shared on Apple GPUs), 2 private */
++  return storage <= 1 && bufswap_enabled() && (uint64_t)bi->length >= g_bufswap.min_bytes;
++}
++
+ static NTSTATUS
+ _MTLDevice_newBuffer(void *obj) {
+   struct unixcall_mtldevice_newbuffer *params = obj;
+@@ -833,8 +1189,25 @@ _MTLDevice_newBuffer(void *obj) {
+                                       options:madeira_cpu_cache_mode((MTLResourceOptions)info->options)
+                                   deallocator:NULL];
+   } else {
+-    buffer = [device newBufferWithLength:info->length options:madeira_cpu_cache_mode((MTLResourceOptions)info->options)];
+-    info->memory.ptr = [buffer storageMode] == MTLStorageModePrivate ? NULL : [buffer contents];
++    buffer = nil;
++    if (bufswap_eligible(info)) {   /* 0080 */
++      size_t flen = 0;
++      void *fp = bufswap_alloc(info->length, &flen);
++      if (fp) {
++        buffer = [device newBufferWithBytesNoCopy:fp length:flen
++                                          options:madeira_cpu_cache_mode((MTLResourceOptions)info->options)
++                                      deallocator:^(void *ptr, NSUInteger len) { bufswap_free(ptr, len); }];
++        if (buffer) info->memory.ptr = fp;
++        else {
++          bufswap_free(fp, flen);
++          pthread_mutex_lock(&g_bufswap.mu); g_bufswap.nnil++; pthread_mutex_unlock(&g_bufswap.mu);
++        }
++      }
++    }
++    if (!buffer) {
++      buffer = [device newBufferWithLength:info->length options:madeira_cpu_cache_mode((MTLResourceOptions)info->options)];
++      info->memory.ptr = [buffer storageMode] == MTLStorageModePrivate ? NULL : [buffer contents];
++    }
+   }
+   params->ret = (obj_handle_t)buffer;
+   info->gpu_address = [buffer gpuAddress];
+@@ -1965,6 +2338,8 @@ _MTLCommandBuffer_renderCommandEncoder(void *obj) {
+   descriptor.renderTargetWidth = info->render_target_width;
+   descriptor.visibilityResultBuffer = (id<MTLBuffer>)info->visibility_buffer;
+ 
++  if (atomic_load_explicit(&g_pp_on, memory_order_relaxed))
++    madeira_pp_prepare(descriptor, info, (id<MTLCommandBuffer>)params->handle);
+   params->ret = (obj_handle_t)[(id<MTLCommandBuffer>)params->handle renderCommandEncoderWithDescriptor:descriptor];
+ 
+   /* Count realized native passes, including clears and the final present.
+@@ -3683,6 +4058,7 @@ static float madeira_fg_envf(const char *name, float dflt) {
+   return (e && *e) ? (float)atof(e) : dflt;
+ }
+ 
++
+ static const char *g_fg_msl =
+   "#include <metal_stdlib>\n"
+   "using namespace metal;\n"
+@@ -3739,6 +4115,16 @@ static struct {
+   uint64_t last_abs;
+   double dt;
+   unsigned long long frames, generated, no_drawable;
++  /* 0135: what the display can show and what is still waiting for it. */
++  double hz;                                 /* the panel's top refresh rate (MADEIRA_FRAMEGEN_HZ, set by the app); 0 = unknown */
++  int inflight;                              /* generated and real frames presented by this path and not yet on the screen */
++  double disp_dt, last_pt;                   /* measured gap between two frames on the screen (seconds) */
++  unsigned long long skip_rate, skip_flight;
++  double acq_sum, acq_max;                   /* time spent getting the extra drawable */
++  unsigned acq_n;
++  uint64_t stat_abs;
++  unsigned long long stat_frames, stat_gen;
++  int inflight_max;
+ } g_fg;
+ 
+ static void madeira_fg_release(void) {
+@@ -3839,31 +4225,95 @@ static int madeira_fg_setup(id<MTLDevice> dev, id<MTLTexture> src) {
+   return 0;
+ }
+ 
++/* 0136: frame generation can be switched on and off while the game runs (the in-game menu). The layer has to hand out drawables that can be read, so the layer's
++ * framebufferOnly flag follows the switch (kept from setProps); a frame whose drawable still comes from before the change is presented as it is. */
++static CAMetalLayer *g_fg_fbo_layer;   /* (upstream's g_fg_layer is the layer frame generation follows) */
++static int g_fg_orig_fbo = 1;
++void madeira_framegen_set(int on, double hz) {
++  g_fg_on = on ? 1 : 0;
++  if (hz > 0) g_fg.hz = hz;
++  g_fg.have_prev = 0; g_fg.last_abs = 0; g_fg.dt = 0; g_fg.stat_abs = 0;
++  dprintf(STDERR_FILENO, "[framegen] %s from the app (screen %.0f Hz)\n", on ? "ON" : "OFF", hz > 0 ? hz : 0.0);
++  if (g_fg_fbo_layer) {
++    CAMetalLayer *l = g_fg_fbo_layer;
++    int fbo = on ? 0 : g_fg_orig_fbo;
++    dispatch_async(dispatch_get_main_queue(), ^{ l.framebufferOnly = fbo ? YES : NO; });
++  }
++}
++int madeira_framegen_get(void) { return madeira_fg_enabled() && !g_fg.dead; }
++
+ static void madeira_fg_dispatch(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger w, NSUInteger h) {
+   [enc setComputePipelineState:p];
+   [enc dispatchThreads:MTLSizeMake(w, h, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+ }
+ 
++/* 0135: once every two seconds, what happened: the game's pace, how many frames were generated, why the others were not, how long the extra drawable took and what the screen did. */
++static void madeira_fg_stats(uint64_t now, uint32_t numer, uint32_t denom) {
++  if (!g_fg.stat_abs) { g_fg.stat_abs = now; return; }
++  double secs = (double)(now - g_fg.stat_abs) * numer / denom / 1e9;
++  if (secs < 2.0) return;
++  dprintf(STDERR_FILENO, "[framegen] %.1f s: game %.1f fps (frame %.1f ms), generated %.1f/s, skipped: screen too slow %llu, drawables busy %llu, none %llu | "
++          "extra drawable wait avg %.2f max %.1f ms | screen %.1f Hz seen, %.0f asked | in flight now %d, most %d\n",
++          secs, g_fg.stat_frames / secs, g_fg.dt * 1000.0, g_fg.stat_gen / secs, g_fg.skip_rate, g_fg.skip_flight, g_fg.no_drawable,
++          g_fg.acq_n ? g_fg.acq_sum / g_fg.acq_n : 0.0, g_fg.acq_max, g_fg.disp_dt > 0 ? 1.0 / g_fg.disp_dt : 0.0, g_fg.hz > 0 ? g_fg.hz : 0.0,
++          __atomic_load_n(&g_fg.inflight, __ATOMIC_RELAXED), g_fg.inflight_max);
++  g_fg.stat_abs = now; g_fg.stat_frames = 0; g_fg.stat_gen = 0; g_fg.skip_rate = g_fg.skip_flight = 0; g_fg.no_drawable = 0;
++  g_fg.acq_sum = g_fg.acq_max = 0; g_fg.acq_n = 0; g_fg.inflight_max = 0;
++}
++
++/* 0135: a frame this path presented is on its way to the screen; when it is on the screen it no longer holds a drawable of the layer's small pool. */
++static void madeira_fg_track(id<MTLDrawable> d) {
++  int n = __atomic_add_fetch(&g_fg.inflight, 1, __ATOMIC_RELAXED);
++  if (n > g_fg.inflight_max) g_fg.inflight_max = n;
++  [d addPresentedHandler:^(id<MTLDrawable> dd) {
++    __atomic_sub_fetch(&g_fg.inflight, 1, __ATOMIC_RELAXED);
++    double t = dd.presentedTime;
++    if (t > 0) {
++      if (g_fg.last_pt > 0) {
++        double x = t - g_fg.last_pt;
++        if (x > 0.002 && x < 0.1) g_fg.disp_dt = g_fg.disp_dt > 0 ? g_fg.disp_dt * 0.9 + x * 0.1 : x;
++      }
++      g_fg.last_pt = t;
++    }
++  }];
++}
++
+ /* Returns 1 when it presented (the generated frame, then the real one). */
+ static int madeira_fg_present_inner(id<MTLCommandBuffer> cb, id<CAMetalDrawable> drawable) {
+   static mach_timebase_info_data_t tb;
+   id<MTLTexture> src = drawable.texture;
+   id<MTLDevice> dev = src.device;
+   uint64_t now = mach_absolute_time();
+-  int ni, have_prev;
++  int ni, have_prev, gen_ok = 1;
+ 
+   if (!tb.denom) mach_timebase_info(&tb);
+   if (g_fg.last_abs) {
+     double d = (double)(now - g_fg.last_abs) * tb.numer / tb.denom / 1e9;
+     if (d < 1.0 / 120.0) d = 1.0 / 120.0;
+-    if (d > 1.0 / 15.0) { d = 1.0 / 15.0; g_fg.have_prev = 0; }   /* a stall: no stale history */
++    /* 0138: a stall (no stale history) was anything over 66 ms, which cut a game running at 10-15 fps off from frame generation; now it is over 160 ms. */
++    if (d > 0.16) { d = 0.16; g_fg.have_prev = 0; }
+     g_fg.dt = g_fg.dt > 0 ? g_fg.dt * 0.8 + d * 0.2 : d;
+   }
+   g_fg.last_abs = now;
+-  if (!src || !madeira_fg_setup(dev, src)) return 0;
++  if (!src || ((CAMetalLayer *)drawable.layer).framebufferOnly || !madeira_fg_setup(dev, src)) return 0;   /* 0136: a drawable from before the switch cannot be read */
++  if (g_fg.hz == 0) { float h = madeira_fg_envf("MADEIRA_FRAMEGEN_HZ", 0.0f); g_fg.hz = h > 0 ? h : -1.0; }   /* -1: asked, not known */
+ 
+   ni = g_fg.cur ^ 1;
+   have_prev = g_fg.have_prev;
++  g_fg.stat_frames++;
++  /* 0135: show two frames per game frame only when the screen can, and only when the layer has the drawables for it. The 0.50.3xx version took a second drawable
++   * unconditionally and WAITED for it: a layer has two or three, the game's own, the generated one and the real one held back half a frame leave none, so the
++   * next frame stalled until one reached the screen, and the game ran at the screen's pace divided by two (a 60 fps game at 30 with the input lag of a full queue). */
++  if (have_prev) {
++    if (g_fg.hz > 0 && g_fg.dt < 1.9 / g_fg.hz) { g_fg.skip_rate++; gen_ok = 0; }          /* the game is too fast for the screen to show twice per frame */
++    else {
++      int maxd = (int)((CAMetalLayer *)drawable.layer).maximumDrawableCount;
++      if (maxd < 2) maxd = 2;
++      /* 0137: the frame on the screen holds a drawable too (until the next one replaces it), besides the game's own and the extra one; every frame that
++       * goes out counts, those that were not generated as well (see the tracking below). With the pool at three this means "nothing waiting to be shown". */
++      if (__atomic_load_n(&g_fg.inflight, __ATOMIC_RELAXED) + 3 > maxd) { g_fg.skip_flight++; gen_ok = 0; }
++    }
++  }
+   {
+     id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+     [blit copyFromTexture:src toTexture:g_fg.hist[ni]];
+@@ -3874,8 +4324,9 @@ static int madeira_fg_present_inner(id<MTLCommandBuffer> cb, id<CAMetalDrawable>
+     [enc setTexture:g_fg.hist[ni] atIndex:0];
+     [enc setTexture:g_fg.luma[ni] atIndex:1];
+     madeira_fg_dispatch(enc, g_fg.k_luma, g_fg.luma[ni].width, g_fg.luma[ni].height);
+-    if (have_prev) {
+-      int radius = (int)madeira_fg_envf("MADEIRA_FRAMEGEN_RADIUS", 6.0f);
++    if (have_prev && gen_ok) {
++      /* 0138: a slow game moves further between two frames: the search reaches 6 blocks (48 px) at 30 fps and above, 10 below 20 fps. */
++      int radius = (int)madeira_fg_envf("MADEIRA_FRAMEGEN_RADIUS", g_fg.dt > 0.05 ? 10.0f : 6.0f);
+       float scale = 8.0f * madeira_fg_envf("MADEIRA_FRAMEGEN_MVSIGN", 1.0f);
+       if (radius < 1) radius = 1;
+       if (radius > 16) radius = 16;
+@@ -3900,6 +4351,14 @@ static int madeira_fg_present_inner(id<MTLCommandBuffer> cb, id<CAMetalDrawable>
+     [[cb renderCommandEncoderWithDescriptor:rp] endEncoding];
+     g_fg.cur = ni;
+     g_fg.have_prev = 1;
++    madeira_fg_track(drawable);
++    return 0;
++  }
++  if (!gen_ok) {      /* this frame goes out as it is; the history still moves on */
++    g_fg.cur = ni;
++    g_fg.frames++;
++    madeira_fg_stats(now, tb.numer, tb.denom);
++    madeira_fg_track(drawable);
+     return 0;
+   }
+ 
+@@ -3907,6 +4366,7 @@ static int madeira_fg_present_inner(id<MTLCommandBuffer> cb, id<CAMetalDrawable>
+   if (@available(iOS 26.0, macOS 26.0, *)) {
+     id<MTLFXFrameInterpolator> fi = (id<MTLFXFrameInterpolator>)g_fg.interp;
+     float mvs = madeira_fg_envf("MADEIRA_FRAMEGEN_MVSCALE", 1.0f);
++    uint64_t t0;
+     fi.colorTexture = g_fg.hist[ni];
+     fi.prevColorTexture = g_fg.hist[g_fg.cur];
+     fi.depthTexture = g_fg.depth;
+@@ -3922,12 +4382,20 @@ static int madeira_fg_present_inner(id<MTLCommandBuffer> cb, id<CAMetalDrawable>
+     fi.jitterOffsetX = 0; fi.jitterOffsetY = 0;
+     fi.shouldResetHistory = g_fg.generated == 0;
+     [fi encodeToCommandBuffer:cb];
++    t0 = mach_absolute_time();
+     extra = [(CAMetalLayer *)drawable.layer nextDrawable];
++    {
++      double w = (double)(mach_absolute_time() - t0) * tb.numer / tb.denom / 1e6;   /* ms */
++      g_fg.acq_sum += w; g_fg.acq_n++;
++      if (w > g_fg.acq_max) g_fg.acq_max = w;
++    }
+   }
+   g_fg.cur = ni;
+   g_fg.frames++;
+   if (!extra || extra.texture.width != g_fg.w || extra.texture.height != g_fg.h) {
+     g_fg.no_drawable++;
++    madeira_fg_stats(now, tb.numer, tb.denom);
++    madeira_fg_track(drawable);
+     return 0;   /* the caller presents the real frame as usual */
+   }
+   {
+@@ -3935,12 +4403,16 @@ static int madeira_fg_present_inner(id<MTLCommandBuffer> cb, id<CAMetalDrawable>
+     [blit copyFromTexture:g_fg.out toTexture:extra.texture];
+     [blit endEncoding];
+   }
++  madeira_fg_track(extra);
++  madeira_fg_track(drawable);
+   [cb presentDrawable:extra];
+   [cb presentDrawable:drawable atTime:CACurrentMediaTime() + g_fg.dt * 0.5];
+   g_fg.generated++;
+-  if (g_fg.generated == 1 || (g_fg.generated % 600) == 0)
+-    dprintf(STDERR_FILENO, "[framegen] %llu generated / %llu frames (no drawable %llu), game frame %.1f ms\n",
+-            g_fg.generated, g_fg.frames, g_fg.no_drawable, g_fg.dt * 1000.0);
++  g_fg.stat_gen++;
++  if (g_fg.generated == 1)
++    dprintf(STDERR_FILENO, "[framegen] first generated frame: game frame %.1f ms, screen %.0f Hz (MADEIRA_FRAMEGEN_HZ), drawables %d\n",
++            g_fg.dt * 1000.0, g_fg.hz > 0 ? g_fg.hz : 0.0, (int)((CAMetalLayer *)drawable.layer).maximumDrawableCount);
++  madeira_fg_stats(now, tb.numer, tb.denom);
+   return 1;
+ }
+ /* One layer at a time: the largest one presenting. Every Wine process presents
+@@ -4022,6 +4494,8 @@ _MTLCommandBuffer_presentDrawable(void *obj) {
+   /* ml1050: this call IS the frame boundary on the encode thread. */
+   if (madeira_frame_hooks_on())
+     ios_frame_encode_present(0);
++  /* 0136: switched off from the menu: give the history and interpolator textures back (here, on the encode thread, where they are used). */
++  if (!madeira_fg_enabled() && g_fg.interp) madeira_fg_release();
+   madeira_frame_mark_drawable((id)params->arg);
+   /* Frame generation presents both frames itself (madeira_fg_present). */
+   if (mode != 2 && madeira_fg_enabled() &&
+@@ -4467,6 +4941,8 @@ _MetalLayer_setProps(void *obj) {
+     layer.device = (id<MTLDevice>)props->device;
+     layer.opaque = props->opaque;
+     layer.framebufferOnly = madeira_fg_enabled() ? NO : props->framebuffer_only;   /* frame generation reads the drawable */
++    if (layer != g_fg_fbo_layer) { [g_fg_fbo_layer release]; g_fg_fbo_layer = [layer retain]; }
++    g_fg_orig_fbo = props->framebuffer_only;
+     layer.contentsScale = props->contents_scale;
+ #if !TARGET_OS_IOS
+     layer.displaySyncEnabled = props->display_sync_enabled;

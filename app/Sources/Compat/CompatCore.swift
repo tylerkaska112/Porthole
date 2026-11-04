@@ -127,6 +127,8 @@ struct CompatMyReport: Codable, Identifiable, Equatable {
     var rating: CompatVerdict
     var comment: String?
     var commentStatus: String
+    /// pending: waiting for the developer to approve it; approved: public; rejected: not accepted. Nil from a server that does not have approval yet.
+    var status: String?
     var hidden: Bool
     var date: String
 }
@@ -213,6 +215,8 @@ struct CompatReportPayload: Codable, Equatable {
     var perf: CompatPerf?
     var settings: CompatSettings?
     var comment: String
+    /// The game's own log, cleaned and packed (raw deflate, base64): private, read only by the developer's Launcher. Not kept in a queued report (the log waits in a file).
+    var logGz: String?
 }
 
 // MARK: - This phone
@@ -425,10 +429,10 @@ struct CompatClient: Sendable {
         return try await get(gamePath(gameID) + "/reports", items, as: [CompatPublicReport].self)
     }
 
-    struct Saved: Decodable { var id: Int; var replaced: Bool; var commentStatus: String }
+    struct Saved: Decodable { var id: Int; var replaced: Bool; var commentStatus: String; var status: String?; var logStored: Bool? }
 
     func submit(_ payload: CompatReportPayload) async throws -> Saved {
-        try await signed("POST", "/compat/reports", body: try JSONEncoder().encode(payload), as: Saved.self)
+        try await signed("POST", "/compat/reports", body: try JSONEncoder().encode(payload), long: payload.logGz != nil, as: Saved.self)
     }
 
     func mine() async throws -> [CompatMyReport] { try await signed("GET", "/compat/mine", as: [CompatMyReport].self) }

@@ -22,7 +22,8 @@ final class PadPointerView: UIView {
     static func enableReports() {
         guard !enabled else { return }
         enabled = true
-        winios_direct_cursor_enable { }          // the view reads the state on its own clock
+        // The view reads the state on its own clock; a hardware mouse (HardwareInput) wants to hear about every change, and there is one notify for both.
+        winios_direct_cursor_enable { DispatchQueue.main.async { HardwareInput.shared.directCursorChanged() } }
         winios_direct_cursor_track(1)
     }
 

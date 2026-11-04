@@ -2,10 +2,20 @@
 #import "JITAllocator.h"
 #import "WineServerBridge.h"
 #import "WineProcessBridge.h"
+#import "CabinetReader.h"
+// Madeira in the background (audio_null_ios.c in the engine library, BackgroundRun.swift, Winios/BackgroundCPUCap.c, Winios/MetalBackgroundGate.m).
+int madeira_audio_background(int keepalive, int mute, int halt);
+void madeira_audio_resume_after_interruption(void);
+int madeira_audio_check(void);
+void madeira_bg_cpu_cap(int percent);
+void madeira_bg_cpu_stats(double *cpu_s, double *wall_s, double *held_s);
+int madeira_metal_gate_install(void);
 #import "IOSDisplayShim.h"
 #import "Winios/Winios.h"
 #import "Winios/WiniosCursor.h"
 #import "Winios/WiniosGamepad.h"
+#include "itch_rar.h"      // Sources/Itch: the .rar reader for itch.io downloads (over the system libarchive)
+#include "itch_7z.h"      // Sources/Itch: the .7z reader for itch.io downloads (Madeira's)
 #include <stdint.h>
 // Provided by Sources/Core/RuntimeStubs.c
 int64_t fex_get_jit_write_offset(void);

@@ -40,6 +40,12 @@ final class CompatStore: ObservableObject {
         var id = UUID()
         var gameID: UUID?
         var payload: CompatReportPayload
+        /// The report's packed log, kept in its own file (Application Support/CompatQueue) while the report waits: a log is megabytes, the queue is a small list.
+        var logFile: String?
+    }
+
+    private static var queueFolder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CompatQueue", isDirectory: true)
     }
     private struct Marker: Codable { var gameID: UUID; var gameName: String; var started: Date; var stats: CompatSessionStats? }
     private struct Saved: Codable {
@@ -232,7 +238,8 @@ final class CompatStore: ObservableObject {
 
     // MARK: Reports
 
-    enum SubmitResult { case sent(commentPending: Bool), queued }
+    /// `logSent`: the game's log went with the report. Every report waits for the developer's approval before it is public, so there is nothing else to say about when it appears.
+    enum SubmitResult { case sent(logSent: Bool), queued }
 
     /// What a report about `game` would be filed under. A Steam game (downloaded here, or copied from Steam and matched) is shared by everyone who has it;
     /// anything else is identified by its program's fingerprint.
@@ -257,7 +264,7 @@ final class CompatStore: ObservableObject {
     }
 
     func submit(game: Game, rating: CompatVerdict, stability: CompatStability, tags: [CompatTag], source: CompatSource,
-                stats: CompatSessionStats?, shareNumbers: Bool, shareSettings: Bool, comment: String) async throws -> SubmitResult {
+                stats: CompatSessionStats?, shareNumbers: Bool, shareSettings: Bool, comment: String, log: CompatLog.Gathered? = nil) async throws -> SubmitResult {
         guard let device = CompatDeviceInfo.current else { throw CompatError.notAvailable("Reports can only be sent from an iPhone or iPad.") }
         let effectiveSource: CompatSource = game.dockAppID != nil ? .steam : source
         guard let ref = await gameRef(for: game, source: effectiveSource) else { throw CompatError.notAvailable("Couldn't read this game's program to identify it.") }
@@ -273,14 +280,26 @@ final class CompatStore: ObservableObject {
             game: ref, device: .init(id: device.id, name: device.name), ios: CompatDeviceInfo.iOSVersion, appVersion: CompatDeviceInfo.appVersion, engine: CompatEngine.id,
             rating: rating, stability: stability, tags: tags, source: effectiveSource, perf: perf,
             settings: shareSettings ? currentSettings(for: game) : nil, comment: comment.trimmingCharacters(in: .whitespacesAndNewlines))
+        var withLog = payload
+        withLog.logGz = log?.base64
         do {
-            let saved = try await CompatClient.standard().submit(payload)
+            var logSent = log != nil
+            let saved: CompatClient.Saved
+            do { saved = try await CompatClient.standard().submit(withLog) }
+            catch let error as CompatError where log != nil && Self.refusesLog(error) {
+                // The server would not take the log (too large, or no room left for logs): the report matters more, so it goes without.
+                logSent = false
+                LogStore.shared.log("[compat] the server refused the log (\(error.localizedDescription)); sending the report without it", level: .error)
+                saved = try await CompatClient.standard().submit(payload)
+            }
             markReported(game)
             clearPrompt(for: game)
             await refreshBadges(for: AppModel.shared.games)
-            return .sent(commentPending: saved.commentStatus == "pending")
+            return .sent(logSent: logSent && (saved.logStored ?? false))
         } catch let error as CompatError where error.isTemporary {
-            saved.queue.append(Queued(gameID: game.id, payload: payload))
+            var item = Queued(gameID: game.id, payload: payload)
+            if let log { item.logFile = Self.keepForQueue(log.packed, id: item.id) }
+            saved.queue.append(item)
             queuedCount = saved.queue.count
             markReported(game)
             clearPrompt(for: game)
@@ -289,15 +308,35 @@ final class CompatStore: ObservableObject {
         }
     }
 
+    /// 413 (log too large) and 507 (the server's room for logs is full): the report can still be sent without its log.
+    private static func refusesLog(_ error: CompatError) -> Bool {
+        if case .server(let code, _) = error { return code == 413 || code == 507 }
+        return false
+    }
+
+    private static func keepForQueue(_ packed: Data, id: UUID) -> String? {
+        let name = "\(id.uuidString).gz"
+        try? FileManager.default.createDirectory(at: queueFolder, withIntermediateDirectories: true)
+        guard (try? packed.write(to: queueFolder.appendingPathComponent(name), options: .atomic)) != nil else { return nil }
+        return name
+    }
+
     /// Sends reports that were waiting for the server. Called when the app opens and comes back to the front.
     func flushQueue() async {
         guard !saved.queue.isEmpty else { return }
         let before = saved.queue.count
         var remaining: [Queued] = []
         for item in saved.queue {
-            do { _ = try await CompatClient.standard().submit(item.payload) }
+            var payload = item.payload
+            let file = item.logFile.map { Self.queueFolder.appendingPathComponent($0) }
+            if let file, let packed = try? Data(contentsOf: file) { payload.logGz = packed.base64EncodedString() }
+            do {
+                do { _ = try await CompatClient.standard().submit(payload) }
+                catch let error as CompatError where payload.logGz != nil && Self.refusesLog(error) { payload.logGz = nil; _ = try await CompatClient.standard().submit(payload) }
+                if let file { try? FileManager.default.removeItem(at: file) }
+            }
             catch let error as CompatError where error.isTemporary { remaining.append(item) }
-            catch { /* the server refused it for good: sending it again would not help */ }
+            catch { if let file { try? FileManager.default.removeItem(at: file) } /* the server refused it for good: sending it again would not help */ }
         }
         saved.queue = remaining
         queuedCount = remaining.count

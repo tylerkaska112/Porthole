@@ -9,6 +9,8 @@ struct GameEngineSection: View {
     @State private var showBinds = false
     @State private var showRemap = false
     @State private var showConfig = false
+    @State private var showApplySetup = false
+    @State private var shareItems: [Any]?
     @State private var workText = ""
     @State private var loaded = false
 
@@ -30,8 +32,17 @@ struct GameEngineSection: View {
                                 value: e.anisotropy, globalText: "the game's own", options: [(1, "1\u{00D7}"), (2, "2\u{00D7}"), (4, "4\u{00D7}"), (8, "8\u{00D7}")]) { v in change(g) { $0.anisotropy = v } }
                     OverrideRow(id: "ge-x87", symbol: "function", title: "Reduced-precision x87", info: "Makes old floating-point instructions faster and less exact. The engine turns it on by itself for 32-bit games; Off asks for full precision, which some games need (Assassin's Creed's character cannot be moved with the left stick otherwise). Leave it alone for games that run well.",
                                 value: e.reducedX87, globalText: "the engine's own (on for 32-bit games)", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.reducedX87 = v } }
+                    OverrideRow(id: "ge-gpu", symbol: "display", title: "Graphics card the game sees", info: "Which graphics card this game is told it has, everywhere it can ask: Direct3D 9, 10, 11 and 12, Windows' own adapter list and NVIDIA's NVAPI. For a game that refuses to start or picks poor settings because it does not know the card, or that needs an NVIDIA one. This changes only what the game reads; the device draws the same.",
+                                value: e.gpuCard, globalText: "the engine's own", options: GPUCards.all.map { ($0.id, $0.title) }) { v in change(g) { $0.gpuCard = v } }
                     OverrideRow(id: "ge-oversize", symbol: "arrow.up.left.and.arrow.down.right", title: "Large memory reservations", info: "Turn this on when a game quits at start because it reserves far more address space than iOS gives the app (64 GB or more, as Final Fantasy Tactics - The Ivalice Chronicles does). Porthole then really backs 16 GB of it and tells the game it got everything. Off (the default) leaves such a reservation to fail, as before.",
                                 value: e.largeReservations, globalText: "Off", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.largeReservations = v } }
+                }
+                SettingsGroup(title: "Keyboard and mouse") {
+                    OverrideRow(id: "ge-mouse-speed", symbol: "computermouse", title: "Mouse speed", info: "How fast the mouse turns this game's camera. 1\u{00D7} sends the mouse's own movement unchanged. Applies at once.",
+                                value: e.mouseSpeed, globalText: EngineOptions.value(InputSettings.sensKey).isEmpty ? "1\u{00D7}" : EngineOptions.value(InputSettings.sensKey) + "\u{00D7}",
+                                options: [(0.25, "0.25\u{00D7}"), (0.5, "0.5\u{00D7}"), (0.75, "0.75\u{00D7}"), (1.5, "1.5\u{00D7}"), (2.0, "2\u{00D7}"), (3.0, "3\u{00D7}"), (4.0, "4\u{00D7}"), (6.0, "6\u{00D7}")]) { v in change(g) { $0.mouseSpeed = v } }
+                    OverrideRow(id: "ge-mouse-look", symbol: "viewfinder", title: "Always use the mouse to look", info: "For a game that turns the camera with the mouse but never says it hides its cursor: the mouse always moves the camera and the pointer is locked to the game (Ctrl+Alt+P frees it). Off lets the game's cursor decide.",
+                                value: e.mouseLook, globalText: EngineOptions.value(InputSettings.relativeKey) == "1" ? "On" : "the game decides", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.mouseLook = v } }
                 }
                 if PadInput.keyboardMouseAvailable {
                     SettingsGroup(title: "Controller") {
@@ -53,12 +64,23 @@ struct GameEngineSection: View {
                         }
                     }
                 }
+                PadAssistGroup(settings: Binding(get: { e.padAssist }, set: { v in change(g) { $0.padAssist = v } }))
                 SettingsGroup(title: "Starting") {
                     TextFieldRow(id: "ge-workdir", symbol: "folder.fill", title: "Working folder", placeholder: "the program's own",
                                  info: "The folder the program starts in, as a Windows path such as C:\\Games\\Foo. Leave empty to start in the program's own folder. A batch file (.bat or .cmd) as the program runs through cmd.exe.", monospaced: true,
                                  text: Binding(get: { workText }, set: { workText = $0; let t = $0.trimmingCharacters(in: .whitespaces); change(g) { $0.workDir = t.isEmpty ? nil : t } }))
                     ActionRow(id: "ge-config", symbol: "text.alignleft", title: "This game's engine lines",
                               subtitle: configSummary(e.config), info: "Lines in madeira.cfg's syntax that apply to this game only, for example env.MADEIRA_FEX_AVX = 1. A key here wins over the app-wide madeira.cfg while this game runs.") { showConfig = true }
+                }
+                SettingsGroup(title: "Share this game's setup") {
+                    ActionRow(id: "ge-share", symbol: "square.and.arrow.up", title: "Share this game's setup", subtitle: "A file for a chat or the Files app",
+                              info: "Puts this game's launch options, per-game settings, engine choices and saved controls into one file you can send. It holds nothing of yours: no program path, account or play history.") {
+                        if let file = GameSetupShare.file(GameSetupShare.make(from: g)) { shareItems = [file] }
+                    }
+                    ActionRow(id: "ge-share-text", symbol: "doc.on.doc", title: "Copy this setup as text", subtitle: "One line to paste into a message", chevron: false) {
+                        if let text = GameSetupShare.text(GameSetupShare.make(from: g)) { UIPasteboard.general.string = text }
+                    }
+                    ActionRow(id: "ge-apply-setup", symbol: "square.and.arrow.down", title: "Apply a shared setup", subtitle: "From a file or the clipboard") { showApplySetup = true }
                 }
                 SettingsGroup(title: "Home Screen shortcut") {
                     ActionRow(id: "ge-link", symbol: "link", title: "Copy this game's shortcut link", subtitle: "porthole://play\u{2026}",
@@ -74,6 +96,8 @@ struct GameEngineSection: View {
             .sheet(isPresented: $showBinds) { PadBindsSheet(gameID: gameID).environmentObject(model).preferredColorScheme(Theme.scheme) }
             .sheet(isPresented: $showRemap) { PadRemapSheet(gameID: gameID).environmentObject(model).preferredColorScheme(Theme.scheme) }
             .sheet(isPresented: $showConfig) { GameConfigSheet(gameID: gameID).environmentObject(model).preferredColorScheme(Theme.scheme) }
+            .sheet(isPresented: $showApplySetup) { SharedSetupSheet(gameID: gameID).environmentObject(model).preferredColorScheme(Theme.scheme) }
+            .sheet(isPresented: Binding(get: { shareItems != nil }, set: { if !$0 { shareItems = nil } })) { ActivityView(items: shareItems ?? []) }
         }
     }
 

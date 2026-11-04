@@ -145,29 +145,73 @@ struct GlowChip: View {
 
 /// The hints for a controller or keyboard at the bottom of a screen.
 struct ControllerHints: View {
-    /// nil = the standard guide, named for the connected controller (✕ Select, ○ Back, L1 R1 Switch on a PlayStation pad).
+    /// nil = every control that does something right now, named for the connected controller: what the highlighted item does with A, X and left / right, and what the
+    /// page does (move, back, the neighbouring sections on LB and RB, Y, Menu). A control with nothing to do is left out.
     var items: [(String, String)]?
+    /// The sections LB and RB lead to from here, named (nil: this layer cannot switch sections).
+    var previous: String?
+    var next: String?
     private var kind: ControllerKind { ControllerInput.shared.kind }
-    private var shown: [(String, String)] {
-        items ?? [(kind.glyph("A"), "Select"), (kind.glyph("B"), "Back"), ("\(kind.glyph("LB")) \(kind.glyph("RB"))", "Switch")]
+
+    private struct Hint: Identifiable { let glyph: String; let label: String; var on = true; var id: String { glyph } }
+
+    private var fixed: [Hint]? { items.map { $0.map { Hint(glyph: $0.0, label: $0.1) } } }
+
+    /// What the highlighted item does.
+    private var itemHints: [Hint] {
+        guard let scope = NavHub.shared.top else { return [Hint(glyph: kind.glyph("A"), label: "Select")] }
+        _ = scope.hintsTick
+        let entry = scope.focusedEntry
+        let x = entry?.secondary != nil ? entry?.secondaryLabel ?? "Action" : (scope.hasSecondaryFallback ? scope.secondaryLabel ?? "Action" : nil)
+        // A slider: A goes into it, then left / right change it and A or B come out; a plain item has no left / right use.
+        let engaged = scope.focused != nil && scope.engaged == scope.focused
+        let slider = entry?.engageToAdjust == true
+        let aLabel = engaged ? "Done" : slider ? "Adjust" : entry?.label ?? "Select"
+        let changes = engaged || (entry?.adjust != nil && !slider)
+        return [
+            Hint(glyph: kind.glyph("A"), label: aLabel, on: entry != nil || scope.focused == nil),
+            Hint(glyph: kind.glyph("X"), label: x ?? "", on: x != nil && !engaged),
+            Hint(glyph: "\u{25C0} \u{25B6}", label: "Change", on: changes),
+        ].filter(\.on)
     }
+
+    /// What the page (the screen, or the pop-up on top of it) does.
+    private var pageHints: [Hint] {
+        guard let scope = NavHub.shared.top else { return [Hint(glyph: kind.glyph("B"), label: "Back")] }
+        let canSwitch = scope.hasSections
+        return [
+            Hint(glyph: "D-pad", label: "Move"),
+            Hint(glyph: kind.glyph("B"), label: "Back"),
+            Hint(glyph: kind.glyph("LB"), label: previous ?? "Previous", on: canSwitch),
+            Hint(glyph: kind.glyph("RB"), label: next ?? "Next", on: canSwitch),
+            Hint(glyph: kind.glyph("Y"), label: scope.tertiaryLabel ?? "More", on: scope.hasTertiary),
+            Hint(glyph: kind.glyph("Menu"), label: scope.menuLabel ?? "Menu", on: scope.hasMenu),
+        ].filter(\.on)
+    }
+
     var body: some View {
-        HStack(spacing: 16) {
-            if items == nil, kind != .none {
-                HStack(spacing: 5) {
-                    Image(systemName: "gamecontroller.fill").font(.system(size: 12, weight: .semibold))
-                    Text(kind.displayName).font(.caption.weight(.semibold))
-                }
-                .foregroundStyle(Theme.textDim)
+        if let fixed { group(fixed) } else {
+            // One line when it fits, two (the item, then the page) on a narrower screen, a little smaller before anything is cut off.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 22) { group(itemHints, title: "Item"); group(pageHints, title: "Page") }.fixedSize()
+                VStack(spacing: 6) { group(itemHints, title: "Item"); group(pageHints, title: "Page") }.fixedSize()
+                VStack(spacing: 6) { group(itemHints, title: "Item"); group(pageHints, title: "Page") }.fixedSize().scaleEffect(0.82)
             }
-            ForEach(shown, id: \.0) { glyph, label in
-                HStack(spacing: 6) {
-                    Text(glyph).font(.system(size: 11, weight: .heavy, design: .rounded)).foregroundStyle(Theme.onAccent)
+        }
+    }
+
+    private func group(_ hints: [Hint], title: String? = nil) -> some View {
+        HStack(spacing: 12) {
+            if let title, !hints.isEmpty { Text(title.uppercased()).font(.system(size: 9, weight: .heavy, design: .rounded)).tracking(1).foregroundStyle(Theme.textDim.opacity(0.7)) }
+            ForEach(hints) { hint in
+                HStack(spacing: 5) {
+                    Text(hint.glyph).font(.system(size: 11, weight: .heavy, design: .rounded)).foregroundStyle(Theme.onAccent).lineLimit(1).fixedSize()
                         .padding(.horizontal, 6).frame(minWidth: 22, minHeight: 22).background(Theme.accent, in: Capsule())
-                    Text(label).font(.caption.weight(.semibold)).foregroundStyle(Theme.textDim)
+                    Text(hint.label).font(.caption.weight(.semibold)).foregroundStyle(Theme.textDim).lineLimit(1).fixedSize()
                 }
             }
         }
+        .fixedSize()
     }
 }
 

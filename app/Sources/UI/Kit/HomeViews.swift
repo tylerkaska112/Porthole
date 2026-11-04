@@ -140,32 +140,78 @@ struct GameArtView: View {
     }
 }
 
-/// One game on the shelf: just its picture (the name is written big above the shelf when it is the chosen one), and the glow when selected.
+/// One game on the shelf: just its picture (the name is written big above the shelf when it is the chosen one), small icons for how it runs, and the glow when selected. The games that
+/// are not the chosen one sit back a little, so the eye goes to the one the page is about.
 struct GameTile: View {
     let game: GameCardData
     var width: CGFloat = 230
     /// How much the glow ring grows when selected. Smaller when the tile itself already grows (a controller is in use).
     var focusScale: CGFloat = 1.12
-    /// A tile that has stepped back: fewer words on its badges.
+    /// A tile that has stepped back: smaller icons.
     var small = false
+    /// The game the page is showing (the others are dimmed a little).
+    var chosen = true
     var play: (() -> Void)?
     var onFocus: (() -> Void)?
     let open: () -> Void
 
+    private let radius: CGFloat = 18
+    @State private var pendingOpen: DispatchWorkItem?
+
+    /// With a mouse a second click on the tile within a third of a second plays the game; a single click opens its page once that time has passed.
+    private func clicked() {
+        guard HardwareInput.shared.mouseConnected, let play else { open(); return }
+        if let pending = pendingOpen { pending.cancel(); pendingOpen = nil; play(); return }
+        let item = DispatchWorkItem { pendingOpen = nil; open() }
+        pendingOpen = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
     var body: some View {
-        Button(action: open) {
+        Button(action: clicked) {
             Color.clear.aspectRatio(460.0 / 215.0, contentMode: .fit)
                 .overlay { GameArtView(id: game.id, name: game.name, titled: true) }
-                .overlay(alignment: .topLeading) { if let badge = game.badge { BadgePill(badge: badge).padding(8) } }
-                .overlay(alignment: .bottomTrailing) { if let store = game.store { StoreCorner(store: store, size: small ? 20 : 26).padding(8) } }
-                .overlay(alignment: .bottomLeading) { if let level = game.controller { ControllerPill(level: level, compact: true, iconOnly: small).padding(8) } }
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom).frame(height: width * 0.22).allowsHitTesting(false)
+                }
+                .overlay(alignment: .topLeading) { if let badge = game.badge { BadgeIcon(badge: badge, size: small ? 22 : 26).padding(small ? 7 : 9) } }
+                .overlay(alignment: .bottomTrailing) { if let store = game.store { StoreCorner(store: store, size: small ? 20 : 26).padding(small ? 7 : 9) } }
+                .overlay(alignment: .bottomLeading) { if let level = game.controller { ControllerPill(level: level, compact: true, iconOnly: true).padding(small ? 7 : 9) } }
+                .overlay(alignment: .topTrailing) {
+                    // Halloween: a cobweb in the corner of some tiles (always the same ones: it follows the game's id), a spider on a few.
+                    let pick = Int(game.id.uuid.0)
+                    if halloweenOn, pick % 3 == 0 { HalloweenWeb(corner: .topTrailing, size: max(40, width * 0.24), spider: pick % 6 == 0) }
+                }
+                .brightness(chosen ? 0 : -0.1).saturation(chosen ? 1 : 0.9)
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(chosen ? 0.22 : 0.1), lineWidth: 1))
+                .shadow(color: .black.opacity(chosen ? 0.45 : 0.25), radius: chosen ? 14 : 8, y: chosen ? 8 : 4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TilePress())
         .frame(width: width)
-        .focusTarget(game.id, radius: 16, scale: focusScale, secondary: play, onFocus: onFocus, action: open)
+        .animation(.easeOut(duration: 0.25), value: chosen)
+        .focusTarget(game.id, radius: radius, scale: focusScale, secondary: play, label: "Details", secondaryLabel: "Play", onFocus: onFocus, action: open)
         .accessibilityLabel(game.name)
+    }
+}
+
+/// A tile gives a little under the finger.
+struct TilePress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed ? 0.97 : 1).animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+/// How a game runs, as a small round icon in the badge's colour: the full words are on the page of the chosen game.
+struct BadgeIcon: View {
+    let badge: BadgeData
+    var size: CGFloat = 26
+    var body: some View {
+        Image(systemName: badge.symbol).font(.system(size: size * 0.5, weight: .bold)).foregroundStyle(badge.tint)
+            .frame(width: size, height: size)
+            .background(.black.opacity(0.6), in: Circle())
+            .overlay(Circle().strokeBorder(badge.tint.opacity(0.55), lineWidth: 1))
+            .accessibilityLabel(badge.text)
     }
 }
 
@@ -183,7 +229,7 @@ struct BadgePill: View {
     }
 }
 
-/// The chosen game, written large over its artwork: name, a line about it, and Play right there.
+/// The chosen game, written large over its artwork: name, a line about it, how it runs, and Play right there.
 struct HeroInfo: View {
     let game: GameCardData
     var mostRecent = true
@@ -193,22 +239,30 @@ struct HeroInfo: View {
     @Environment(\.verticalSizeClass) private var vSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: vSize == .compact ? 10 : 14) {
-            VStack(alignment: .leading, spacing: vSize == .compact ? 6 : 8) {
-                if vSize != .compact { Text(mostRecent ? "CONTINUE PLAYING" : "IN YOUR LIBRARY").font(.caption.weight(.heavy)).tracking(1.5).foregroundStyle(Theme.accent) }
-                Text(game.name).font(.system(size: vSize == .compact ? 28 : 40, weight: .heavy, design: .rounded)).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
-                    .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
+        let tight = vSize == .compact
+        VStack(alignment: .leading, spacing: tight ? 12 : 18) {
+            VStack(alignment: .leading, spacing: tight ? 6 : 10) {
+                if !tight {
+                    HStack(spacing: 7) {
+                        Image(systemName: mostRecent ? "play.circle.fill" : "books.vertical.fill").font(.system(size: 13, weight: .bold))
+                        Text(mostRecent ? "CONTINUE PLAYING" : "IN YOUR LIBRARY").font(.system(size: 12, weight: .heavy, design: .rounded)).tracking(1.6)
+                    }
+                    .foregroundStyle(Theme.accent)
+                }
+                Text(game.name).font(.system(size: tight ? 28 : 42, weight: .heavy, design: .rounded)).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
+                    .shadow(color: .black.opacity(0.55), radius: 10, y: 2)
+                Label { Text(game.subtitle) } icon: { Image(systemName: "clock.fill").font(.system(size: tight ? 11 : 12)) }
+                    .font(.system(size: tight ? 13 : 15, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.75)).shadow(color: .black.opacity(0.5), radius: 4, y: 1)
                 FlowLayout(spacing: 8) {
                     if let store = game.store { StoreChip(store: store) }
                     // The store chip already says "Steam"; this one is only for "Direct" (a game that skips its launcher).
                     if let chip = game.launchChip, !(game.store != nil && chip == "Steam") { GlowChip(text: chip, symbol: chip == "Steam" ? "shield.checkered" : "play.fill", tint: .white) }
                     if let badge = game.badge { BadgePill(badge: badge) }
-                    if let level = game.controller { ControllerPill(level: level) }
-                    Text(game.subtitle).font(.footnote).foregroundStyle(.white.opacity(0.8))
+                    if let level = game.controller { ControllerPill(level: level, compact: true) }
                 }
             }
             .id(game.id)
-            .transition(.opacity.combined(with: .offset(y: 8)))
+            .transition(.opacity.combined(with: .offset(y: 10)))
             HStack(spacing: 12) {
                 PillButton(id: "hero-play", title: playing ? "Preparing" : "Play", symbol: "play.fill", style: .primary, enabled: !playing, action: play)
                 PillButton(id: "hero-open", title: "Details", symbol: "slider.horizontal.3", action: open)
@@ -227,7 +281,7 @@ struct HomeBackdrop: View {
     var body: some View {
         ZStack(alignment: .top) {
             if let game {
-                Color.clear.overlay { GameArtView(id: game.id, name: game.name, kind: .hero, plain: true).opacity(0.85) }
+                Color.clear.overlay { SlowZoom { GameArtView(id: game.id, name: game.name, kind: .hero, plain: true).opacity(0.9) } }
                     .clipped()
                     .id(game.id)
                     .transition(.opacity)
@@ -235,11 +289,23 @@ struct HomeBackdrop: View {
         }
         .frame(maxWidth: .infinity).frame(height: height)
         .overlay { LinearGradient(colors: [Theme.backgroundBottom.opacity(0.88), Theme.backgroundBottom.opacity(0.4), .clear], startPoint: .leading, endPoint: .trailing) }
+        .overlay { LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: Theme.backgroundBottom.opacity(0.7), location: 1)], startPoint: .top, endPoint: .bottom) }
         .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.45), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.5), value: game?.id)
         .ignoresSafeArea()
         .allowsHitTesting(false)
+    }
+}
+
+/// Zooms its content in very slowly (a few percent over a quarter of a minute), so the picture behind the page is never quite still. It starts again when the content is replaced.
+struct SlowZoom<Content: View>: View {
+    @ViewBuilder let content: Content
+    @State private var zoomed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        content.scaleEffect(zoomed ? 1.07 : 1).onAppear { if !reduceMotion { withAnimation(.easeInOut(duration: 18)) { zoomed = true } } }
     }
 }
 
@@ -301,12 +367,12 @@ struct AddGameTile: View {
                         Text("Add a game").font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
                     }
                 }
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.accent.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [7, 6])))
+                .background(Theme.panel.opacity(0.7), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.accent.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [7, 6])))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TilePress())
         .frame(width: width)
-        .focusTarget("add-game", radius: 16, scale: 1.12, action: action)
+        .focusTarget("add-game", radius: 18, scale: 1.12, action: action)
         .accessibilityLabel("Add a game")
     }
 }
@@ -325,8 +391,15 @@ struct HomeView: View {
     /// Draws the controller layout (wide chosen tile) without a controller: for the simulator preview.
     var forceControllerLayout = false
     @State private var shownID: UUID?
+    /// False until the page has appeared: the tiles then come in one after another.
+    @State private var arrived = false
+    @Environment(\.focusScope) private var scope
     @Environment(\.horizontalSizeClass) private var hSize
     @Environment(\.verticalSizeClass) private var vSize
+
+    /// Always starts on the first game in the list (the Add button when there is none), so it is clear where the controller is whenever Home opens.
+    private func startFocus(force: Bool) { let target: AnyHashable = games.first.map { AnyHashable($0.id) } ?? AnyHashable("empty-add")
+        scope?.start(at: target, force: force) }
 
     private var shown: GameCardData? { games.first { $0.id == shownID } ?? games.first }
 
@@ -334,9 +407,11 @@ struct HomeView: View {
         GeometryReader { geo in
             let side: CGFloat = hSize == .regular ? 32 : 16
             let sideways = vSize == .compact   // a phone held sideways: everything has to fit in about 350 points of height
-            let tileWidth: CGFloat = sideways ? min(190, geo.size.width / 4.4) : geo.size.width > 900 ? 270 : hSize == .regular ? 230 : 160
+            let tileWidth: CGFloat = sideways ? min(190, geo.size.width / 4.4) : geo.size.width > 900 ? 270 : hSize == .regular ? 230 : min(max(180, geo.size.width * 0.56), 250)
             ZStack {
                 HomeBackdrop(game: shown, height: geo.size.height * (geo.size.height > geo.size.width ? 0.72 : 0.8))
+                // The bats (or falling leaves) go above the game's picture and still behind the text (the backdrop's own would be hidden by that picture).
+                FestiveSky()
                 // Not a scroll view: the page is sized to the screen and never moves up or down. Only the row of games scrolls, sideways.
                 VStack(alignment: .leading, spacing: sideways ? 8 : 20) {
                     if !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismiss, compact: sideways).padding(.horizontal, side - 2) }
@@ -344,6 +419,7 @@ struct HomeView: View {
                     if let shown {
                         HeroInfo(game: shown, mostRecent: shown.id == games.first?.id, play: { play(shown) }, open: { open(shown) }, playing: featuredPlaying && shown.id == games.first?.id)
                             .padding(.horizontal, side)
+                        if !sideways { shelfTitle.padding(.horizontal, side).padding(.bottom, -10) }
                         shelf(tileWidth: tileWidth, side: side, sideways: sideways)
                     } else {
                         EmptyHome(add: add).padding(.horizontal, side)
@@ -353,6 +429,24 @@ struct HomeView: View {
                 .frame(width: geo.size.width, height: geo.size.height)
             }
         }
+        .onAppear { startFocus(force: true); BatsPlacement.shared.homeDrawsThem = true; arrived = true }
+        .onDisappear { BatsPlacement.shared.homeDrawsThem = false }
+        .onChange(of: games.first?.id) { _, _ in startFocus(force: false) }
+    }
+
+    /// "Your library" with how many games it holds.
+    private var shelfTitle: some View {
+        HStack(spacing: 8) {
+            Text("YOUR LIBRARY").font(.system(size: 12, weight: .heavy, design: .rounded)).tracking(1.6).foregroundStyle(.white.opacity(0.6))
+            Text("\(games.count)").font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(.white.opacity(0.75))
+                .padding(.horizontal, 8).padding(.vertical, 2).background(.white.opacity(0.12), in: Capsule())
+            Spacer(minLength: 0)
+            if games.count > 1, let at = games.firstIndex(where: { $0.id == shown?.id }) {
+                Text("\(at + 1) of \(games.count)").font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit()).foregroundStyle(.white.opacity(0.5)).contentTransition(.numericText())
+                    .animation(.easeOut(duration: 0.2), value: at)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// With a controller the chosen game is wide and the others step back, like Steam's Big Picture shelf; with touch every tile is the same size.
@@ -360,12 +454,15 @@ struct HomeView: View {
         let pad = forceControllerLayout || ControllerInput.shared.connected
         let chosen = shown?.id
         @ViewBuilder func tiles() -> some View {
-            ForEach(games) { game in
-                GameTile(game: game, width: pad ? (game.id == chosen ? tileWidth * 1.3 : tileWidth * 0.78) : tileWidth, focusScale: pad ? 1.03 : 1.12, small: pad && game.id != chosen,
+            ForEach(Array(games.enumerated()), id: \.element.id) { index, game in
+                GameTile(game: game, width: pad ? (game.id == chosen ? tileWidth * 1.3 : tileWidth * 0.78) : tileWidth, focusScale: pad ? 1.03 : 1.12, small: pad && game.id != chosen, chosen: game.id == chosen,
                          play: { play(game) }, onFocus: { shownID = game.id }) { open(game) }
                     .contextMenu { if let menu { menu(game) } }
+                    .opacity(arrived ? 1 : 0).offset(y: arrived ? 0 : 16)
+                    .animation(.spring(response: 0.55, dampingFraction: 0.86).delay(Double(min(index, 8)) * 0.05), value: arrived)
             }
             AddGameTile(width: pad ? tileWidth * 0.78 : tileWidth, action: add)
+            FestivePatch(height: (pad ? tileWidth * 0.78 : tileWidth) * 215.0 / 460.0)
         }
         return FocusScroll(axes: .horizontal) {
             // A big library is built as it scrolls into view; a normal one is built whole, so the D-pad always finds its neighbour.
@@ -377,6 +474,7 @@ struct HomeView: View {
             .padding(.horizontal, side).padding(.vertical, sideways ? 14 : 26)
         }
         .scrollClipDisabled()
+        .mask { HStack(spacing: 0) { Rectangle(); LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 36) }.padding(.vertical, -80) }
     }
 }
 

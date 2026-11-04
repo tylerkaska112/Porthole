@@ -52,8 +52,44 @@ check(SteamDepotPlanner.windowsDepots(app: shared).map { $0.id } == [5], "depots
 shared.depots = [SteamDepot(id: 6)]
 check(SteamDepotPlanner.windowsDepots(app: shared).isEmpty, "depots: one with no manifest and no source is dropped")
 check(SteamDepotPlanner.safeInstallDirectory(SteamAppInfo(appid: 2, name: "x", installDirectory: "../../evil/../name:", buildID: nil, depots: [])) == "_____evil___name_" || !SteamDepotPlanner.safeInstallDirectory(SteamAppInfo(appid: 2, name: "x", installDirectory: "../../evil/../name:", buildID: nil, depots: [])).contains("/"), "install folder: separators and .. cannot escape")
+// What the library lists: games and their demos, beta apps and software, when they have a Windows depot; never tools, DLC or soundtracks.
+do {
+    var depot = SteamDepot(id: 9); depot.manifest = 1; depot.size = 10; depot.download = 5
+    func app(_ type: String, depots: [SteamDepot]) -> SteamAppInfo { var a = SteamAppInfo(appid: 7, name: "x", installDirectory: "x", buildID: "1", depots: depots); a.type = type; return a }
+    check(SteamDepotPlanner.isInstallableGame(app("game", depots: [depot])), "library: a game is listed")
+    check(SteamDepotPlanner.isInstallableGame(app("demo", depots: [depot])), "library: a demo is listed")
+    check(SteamDepotPlanner.isInstallableGame(app("beta", depots: [depot])) && SteamDepotPlanner.isInstallableGame(app("application", depots: [depot])), "library: a beta or playtest app and software are listed")
+    check(!SteamDepotPlanner.isInstallableGame(app("tool", depots: [depot])) && !SteamDepotPlanner.isInstallableGame(app("dlc", depots: [depot])) && !SteamDepotPlanner.isInstallableGame(app("music", depots: [depot])), "library: tools, DLC and soundtracks are not")
+    check(!SteamDepotPlanner.isInstallableGame(app("demo", depots: [])) && !SteamDepotPlanner.isInstallableGame(app("", depots: [depot])), "library: a demo with no Windows files, or an app that does not say what it is, is not")
+}
 check(SteamDepotPlanner.safeInstallDirectory(SteamAppInfo(appid: 3, name: "  ", installDirectory: "..", buildID: nil, depots: [])) == "App3", "install folder: nothing usable falls back to the app number")
 check(SteamAppInfoParser.parse(Data("not keyvalues".utf8), appid: 1) == nil, "app info: junk is refused")
+
+// MARK: - The size shown before installing
+
+do {
+    func sizedDepot(_ id: Int, size: UInt64, download: UInt64?, dlc: Int? = nil) -> SteamDepot {
+        var d = SteamDepot(id: id)
+        d.osList = ["windows"]; d.manifest = UInt64(id); d.size = size; d.download = download; d.dlcApp = dlc
+        d.branchManifests["public"] = SteamDepotManifestEntry(gid: UInt64(id), size: size, download: download)
+        return d
+    }
+    let big = SteamAppInfo(appid: 5, name: "Big", installDirectory: nil, buildID: nil, depots: [
+        sizedDepot(1, size: 4_250, download: 1_740),                   // the game: 1.7 GB to fetch, 4.3 GB once unpacked
+        sizedDepot(2, size: 900, download: 800, dlc: 77),              // DLC the account owns
+        sizedDepot(3, size: 500, download: 450, dlc: 88),              // DLC it does not
+        sizedDepot(4, size: 300, download: nil),                       // an entry that gives no download size
+    ])
+    let plain = SteamDepotPlanner.sizes(app: big)
+    check(plain.download == 1_740 + 300 && plain.disk == 4_250 + 300, "size: the download is the compressed size, the disk the unpacked one; no download size counts at the disk size (\(plain))")
+    let everything = SteamDepotPlanner.sizes(app: big, selection: SteamInstallSelection(dlc: .all))
+    check(everything.download == 1_740 + 800 + 450 + 300, "size: every DLC depot is counted when nothing says which the account owns (\(everything))")
+    let owned = SteamDepotPlanner.sizes(app: big, selection: SteamInstallSelection(dlc: .all), ownedDepots: [1, 2, 4])
+    check(owned.download == 1_740 + 800 + 300 && owned.disk == 4_250 + 900 + 300, "size: only the DLC depots the account owns are counted, like an install (\(owned))")
+    let off = SteamDepotPlanner.sizes(app: big, selection: SteamInstallSelection(dlc: .allExcept([77])), ownedDepots: [1, 2, 3, 4])
+    check(off.download == 1_740 + 450 + 300, "size: DLC the person turned off is left out (\(off))")
+    check(SteamDepotPlanner.sizes(app: big, selection: SteamInstallSelection(dlc: .all), ownedDepots: []).download == 1_740 + 300, "size: the game's own depots count even when the account's depot list has no entry for them")
+}
 
 // MARK: - Manifests
 
@@ -128,6 +164,11 @@ do {   // a complete install
     check(acf?.contains("\"StateFlags\"\t\t\"4\"") == true && acf?.contains("\"installdir\"\t\t\"Sample Game\"") == true && acf?.contains("\"buildid\"\t\t\"777\"") == true, "install: an appmanifest is written the way Steam does")
     check(!fm.fileExists(atPath: paths.driveC.appendingPathComponent("Program Files (x86)/Steam/steamapps/downloading/480").path), "install: the progress files are removed")
     check(fake.isClosed, "install: the connection to Steam is closed afterwards")
+    // The progress counts what crosses the network (the compressed chunks), the unit of the speed and of the size shown before installing.
+    let net = (try? SteamManifest.parse(zipped: depotA.manifestZip, depotKey: key))?.files.filter { !$0.isDirectory && !$0.isSymlink && !SteamInstaller.isRedistributable($0.path) }
+        .flatMap(\.chunks).reduce(UInt64(0)) { $0 + UInt64($1.compressedSize) }
+    let progresses = states.compactMap { state -> SteamDownloadProgress? in if case .downloading(let p) = state { return p } else { return nil } }
+    check(net != nil && net! > 0 && progresses.allSatisfy { $0.totalBytes == net! && $0.doneBytes <= net! }, "install: the progress total is the compressed download size (\(net ?? 0)), not the size on disk")
     let fractions = states.compactMap { state -> Double? in if case .downloading(let p) = state { return p.fraction } else { return nil } }
     check(states.first == .preparing("Asking Steam about Sample Game…") && !fractions.isEmpty && zip(fractions, fractions.dropFirst()).allSatisfy { $0 <= $1 }, "install: progress only ever moves forward")
 }
@@ -483,6 +524,20 @@ do {
     }
 }
 
+do {   // LZMA chunks: the system's liblzma and the Swift decoder give the same bytes
+    let plain = Data(vectorPlain)
+    let sealed = SteamCipher.encrypt(Data(vectorVZip), key: key, iv: Data((0..<16).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 1) }))!
+    LZMA.useSystemLibrary = true
+    let withSystem = SteamCipher.unpackChunk(sealed, key: key, originalSize: plain.count)
+    LZMA.useSystemLibrary = false
+    let withSwift = SteamCipher.unpackChunk(sealed, key: key, originalSize: plain.count)
+    LZMA.useSystemLibrary = true
+    check(withSystem == plain && withSwift == plain, "chunks: LZMA unpacks to the same bytes with the system library and with the Swift decoder")
+    var truncated = vectorVZip; truncated.removeSubrange((truncated.count / 2)..<(truncated.count - 6))
+    let sealedShort = SteamCipher.encrypt(Data(truncated), key: key, iv: Data(repeating: 5, count: 16))!
+    check(SteamCipher.unpackChunk(sealedShort, key: key, originalSize: plain.count).map { $0 != plain } ?? true, "chunks: a cut-short LZMA stream is not accepted as the original")
+}
+
 do {   // achievements: the schema's names and the unlock times, the answer's framing, and the public percentages
     func entry(_ type: UInt8, _ name: String, _ value: [UInt8]) -> [UInt8] { [type] + Array(name.utf8) + [0] + value }
     func text(_ name: String, _ value: String) -> [UInt8] { entry(1, name, Array(value.utf8) + [0]) }
@@ -643,6 +698,23 @@ do {   // which content server gets the next request
         ["host": "cache2.steamcontent.com", "https_support": "mandatory", "weighted_load": 70, "priority_class": 5],
         ["host": "cache4.steamcontent.com", "https_support": "mandatory", "weighted_load": 40, "priority_class": 10]]])
     check(ranked.map(\.host) == ["cache2.steamcontent.com", "cache1.steamcontent.com", "cache4.steamcontent.com", "cache3.steamcontent.com"], "content servers: ranked by Steam's priority class, then load, then the directory's order")
+}
+
+do {   // a server the directory ranked low, but that is fast from here, is found and used
+    // Twelve servers; Steam's order puts three slow ones first, and the fast one is ninth (outside the three in use).
+    let hosts = (0..<12).map { SteamCDNServer(host: "cache\($0).test", https: true) }
+    let speeds: [String: Double] = Dictionary(uniqueKeysWithValues: hosts.enumerated().map { ($0.element.host, $0.offset == 8 ? 40e6 : ($0.offset < 3 ? 1.5e6 : 6e6)) })
+    let book = SteamHostBook(hosts: hosts, startWith: 3)
+    var last: [String] = [], tried: Set<String> = []
+    for i in 0..<1500 {
+        guard let h = book.choose() else { break }
+        tried.insert(h.host)
+        book.finished(host: h.host, bytes: 165_000, seconds: 165_000 / speeds[h.host]!, ok: true)
+        if i >= 1200 { last.append(h.host) }
+    }
+    let share = Double(last.filter { $0 == "cache8.test" }.count) / Double(last.count)
+    check(tried.count == 12, "servers: every server is tried at least once, not only the first few (\(tried.count) of 12)")
+    check(share > 0.4, "servers: the fast server outside the first few ends up with most of the requests (\(Int(share * 100))%)")
 }
 
 do {   // servers are taken site by site, so every site gets tried
@@ -1104,6 +1176,43 @@ do {   // Workshop record: a single-file item is written the way Steam's client 
     try? FileManager.default.removeItem(at: root)
 }
 
+
+
+print("--- sign-in is not forgotten by one bad answer")
+do {
+    // A block page from a VPN, firewall or captive portal is a bare 401/403: never a reason to delete the saved sign-in.
+    check(!SteamAPIError(eresult: nil, http: 403).isSessionOver && !SteamAPIError(eresult: nil, http: 401).isSessionOver, "sign-in: a bare HTTP 401/403 is not 'the sign-in is over'")
+    check(SteamAPIError(eresult: nil, http: 403).isTokenRefusal, "sign-in: a bare 403 still makes a new access token be asked for once")
+    check(SteamAPIError(eresult: 15, http: 403).isSessionOver && SteamAPIError(eresult: 27, http: nil).isSessionOver, "sign-in: Steam's own numbered refusal is 'the sign-in is over'")
+
+    let session = SteamAccountSession(steamID: "76561198000000001", accountName: "tester", refreshToken: "refresh", accessToken: nil)
+    let account = SteamAccount(api: SteamAPI(transport: URLSessionSteamTransport()), store: MemorySteamSessionStore(session))
+    let t0 = Date()
+    check(!account.confirmedRefusal(SteamAPIError(eresult: nil, http: 403), now: t0) && account.isSignedIn, "sign-in: a bare 403 never signs out")
+    check(!account.confirmedRefusal(SteamAPIError(eresult: 15, http: 403), now: t0) && account.isSignedIn, "sign-in: the first numbered refusal keeps the sign-in")
+    check(!account.confirmedRefusal(SteamAPIError(eresult: 15, http: 403), now: t0.addingTimeInterval(0.5)), "sign-in: a second refusal right away is still not believed")
+    check(account.confirmedRefusal(SteamAPIError(eresult: 15, http: 403), now: t0.addingTimeInterval(3.5)), "sign-in: the same refusal a few seconds later is believed")
+    account.signOut()
+    check(!account.isSignedIn, "sign-in: after sign-out the account is signed out and stays so")
+
+    let late = SteamAccount(api: SteamAPI(transport: URLSessionSteamTransport()), store: MemorySteamSessionStore(session))
+    _ = late.confirmedRefusal(SteamAPIError(eresult: 27, http: nil), now: t0)
+    check(!late.confirmedRefusal(SteamAPIError(eresult: 27, http: nil), now: t0.addingTimeInterval(3600)), "sign-in: a refusal an hour later starts counting again instead of signing out")
+
+    // The Keychain unreadable at launch (device locked after a restart) must not look like a sign-out for the whole run.
+    final class LateStore: SteamSessionStore {
+        var session: SteamAccountSession?; var readable = false
+        init(_ session: SteamAccountSession) { self.session = session }
+        func load() -> SteamAccountSession? { readable ? session : nil }
+        func save(_ session: SteamAccountSession) { self.session = session }
+        func clear() { session = nil }
+    }
+    let store = LateStore(session)
+    let launched = SteamAccount(api: SteamAPI(transport: URLSessionSteamTransport()), store: store)
+    check(!launched.isSignedIn, "sign-in: an unreadable Keychain reads as signed out for now")
+    store.readable = true
+    check(launched.isSignedIn && launched.session?.accountName == "tester", "sign-in: once the Keychain can be read the saved sign-in is back without a relaunch")
+}
 
 
 print(failures == 0 ? "\nALL PASSED" : "\n\(failures) FAILURE(S)")

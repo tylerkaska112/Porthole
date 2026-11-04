@@ -1,0 +1,53 @@
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index 72bd99e..87f9237 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -2171,6 +2171,48 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+     FEXCore::Utils::WritePriorityMutex::IosAdjustUnpublishedCompileDepth(-1);
+   }
+ #endif
++  /* Porthole 0169: MADEIRA_COMPILE_LOG=1 logs the guest address, block length and first bytes (up to 512; blocks that start with 32 zero bytes are logged only 3 times) of each block compiled at a user-space address
++   * (0x7000000000-0x71f0000000: the game exe and its data, not Wine's DLLs), up to MADEIRA_COMPILE_LOG_LIMIT lines (default 10000). Used to
++   * disassemble a copy-protection loop offline. Reads only inside the range the compiler itself has just read. */
++  {
++    static const bool CompileLogOn = [] { const char* V = getenv("MADEIRA_COMPILE_LOG"); return V && V[0] == '1'; }();
++    if (CompileLogOn && GuestRIP >= 0x7000000000ull && GuestRIP < 0x71f0000000ull) {
++      static const long CompileLogLimit = [] { const char* V = getenv("MADEIRA_COMPILE_LOG_LIMIT"); return V ? atol(V) : 10000L; }();
++      static std::atomic<long> CompileLogCount {0};
++      if (CompileLogCount.fetch_add(1, std::memory_order_relaxed) < CompileLogLimit) {
++        const uint64_t End = StartAddr + Length;
++        uint64_t N = (GuestRIP >= StartAddr && GuestRIP < End) ? End - GuestRIP : 0;
++        if (N > 512) {
++          N = 512;
++        }
++        char Hex[512 * 2 + 1];
++        bool Zero = N >= 32;
++        for (uint64_t i = 0; i < N; ++i) {
++          const uint8_t B = reinterpret_cast<const uint8_t*>(GuestRIP)[i];
++          if (i < 32 && B) {
++            Zero = false;
++          }
++          snprintf(Hex + i * 2, 3, "%02x", B);
++        }
++        Hex[N * 2] = 0;
++        static std::atomic<long> ZeroLogged {0};
++        if (!Zero || ZeroLogged.fetch_add(1, std::memory_order_relaxed) < 3) {
++          // Wine's debug output buffer is 1 KB per message (an overlong one raises STATUS_BUFFER_OVERFLOW in the game): at most 192 bytes (384 hex digits) per line.
++          for (uint64_t Off = 0; Off == 0 || Off < N; Off += 192) {
++            const uint64_t Chunk = (N - Off > 192) ? 192 : (N > Off ? N - Off : 0);
++            char Piece[192 * 2 + 1];
++            memcpy(Piece, Hex + Off * 2, Chunk * 2);
++            Piece[Chunk * 2] = 0;
++            if (Off == 0) {
++              LogMan::Msg::EFmt("[cblog] rip=0x{:x} start=0x{:x} len={} bytes={}", GuestRIP, StartAddr, Length, Piece);
++            } else {
++              LogMan::Msg::EFmt("[cblog+] rip=0x{:x} off={} bytes={}", GuestRIP, Off, Piece);
++            }
++          }
++        }
++      }
++    }
++  }
+   auto CodePtr = CompiledCode.EntryPoints[GuestRIP];
+   /* iOS-Madeira diag (Thumper desktop ILL 2026-07-06): three crashes branched
+    * to BlockTail+0x18 instead of a code entry — the published entry itself

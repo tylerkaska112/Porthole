@@ -7,10 +7,13 @@ import SwiftUI
 /// A titled stack of rows.
 struct SettingsGroup<Content: View>: View {
     var title: String?
+    /// One line under the title that says what the group is for.
+    var note: String?
     @ViewBuilder var content: Content
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let title { Theme.label(title).padding(.horizontal, 6) }
+            if let note { Text(note).font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
             VStack(spacing: 8) { content }
         }
     }
@@ -21,9 +24,35 @@ struct SettingsGroup<Content: View>: View {
 private struct EmbeddedPageKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues { var embeddedPage: Bool { get { self[EmbeddedPageKey.self] } set { self[EmbeddedPageKey.self] = newValue } } }
 
+/// The top of a Settings page: the page's icon on a gradient tile, its name, and one line that says what the page is for.
+struct PageHeader: View {
+    let title: String
+    var symbol: String?
+    var subtitle: String?
+
+    var body: some View {
+        HStack(spacing: 14) {
+            if let symbol {
+                Image(systemName: symbol).font(.system(size: 20, weight: .bold)).foregroundStyle(Theme.onAccent)
+                    .frame(width: 46, height: 46)
+                    .background(Theme.accentGradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: Theme.accent.opacity(0.45 * Theme.glowStrength), radius: 10, y: 3)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 30, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text).lineLimit(2).minimumScaleFactor(0.7)
+                if let subtitle { Text(subtitle).font(.system(size: 14, design: .rounded)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true) }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 struct PageScaffold<Content: View>: View {
     let title: String
     var symbol: String?
+    /// One line under the title that says what the page is for.
+    var subtitle: String?
     @ViewBuilder var content: Content
     @Environment(\.embeddedPage) private var embedded
     var body: some View {
@@ -33,10 +62,7 @@ struct PageScaffold<Content: View>: View {
     }
     private var framed: some View {
         VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 12) {
-                if let symbol { Image(systemName: symbol).font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.accentGradient) }
-                Text(title).font(.system(size: 30, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
-            }
+            PageHeader(title: title, symbol: symbol, subtitle: subtitle)
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,7 +123,7 @@ struct ToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        RowBase(id: id, symbol: symbol, tint: tint, title: title, subtitle: subtitle, info: info, adjust: { isOn = $0 > 0 }, action: { isOn.toggle() }) {
+        RowBase(id: id, symbol: symbol, tint: tint, title: title, subtitle: subtitle, info: info, action: { isOn.toggle() }) {
             GlowSwitch(isOn: isOn)
         }
     }
@@ -116,7 +142,7 @@ struct GlowSwitch: View {
     }
 }
 
-/// Pick one of several. A opens a list; Left / Right steps through the choices.
+/// Pick one of several. A opens a list (Left / Right only move the glow, they never change the choice).
 struct ChoiceRow<T: Hashable>: View {
     let id: AnyHashable
     var symbol: String?
@@ -132,7 +158,7 @@ struct ChoiceRow<T: Hashable>: View {
     private var label: String { options.first { $0.0 == selection }?.1 ?? "\u{2014}" }
 
     var body: some View {
-        RowBase(id: id, symbol: symbol, tint: tint, title: title, subtitle: subtitle, info: info, adjust: step, action: { open = true }) {
+        RowBase(id: id, symbol: symbol, tint: tint, title: title, subtitle: subtitle, info: info, action: { open = true }) {
             HStack(spacing: 6) {
                 Text(label).font(.system(size: 15, weight: .semibold, design: .rounded)).foregroundStyle(Theme.accent).lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textDim)
@@ -204,8 +230,9 @@ struct ChoiceSheet<T: Hashable>: View {
     }
 }
 
-/// A value on a track. Drag it, or press Left / Right.
+/// A value on a track. Drag it; with a controller press A to go into it, then Left / Right change it and A or B leave it again.
 struct SliderRow: View {
+    @Environment(\.focusScope) private var scope
     let id: AnyHashable
     var symbol: String?
     let title: String
@@ -243,8 +270,8 @@ struct SliderRow: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
-        .focusTarget(id, radius: 16, scale: 1.012, adjust: { set(value + Double($0) * step) }, action: {})
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(scope?.engaged == id ? Theme.accent : Theme.line, lineWidth: scope?.engaged == id ? 2.5 : 1))
+        .focusTarget(id, radius: 16, scale: 1.012, adjust: { set(value + Double($0) * step) }, engageToAdjust: true, action: {})
     }
 
     private func set(_ new: Double) {

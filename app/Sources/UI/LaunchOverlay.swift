@@ -36,8 +36,14 @@ final class LaunchOverlay {
     private var window: UIWindow?
     private let scope = FocusScope()
 
+    private var lastWanted = false
+
     func update(session: SessionController) {
         let wanted = session.launchOverlayActive
+        if wanted != lastWanted {
+            lastWanted = wanted
+            LogStore.shared.log("[launch-screen] \(wanted ? "shown" : "hidden"): state=\(session.state) gameUp=\(session.launchGameUp) peeking=\(session.launchPeeking) game=\(session.game?.name ?? "none")")
+        }
         if wanted { show(session: session) } else { hide() }
         // While the launch screen is up it owns the controller; once the game is running the controller belongs to the game.
         NavHub.shared.enabled = wanted || !session.isActive
@@ -71,6 +77,10 @@ final class LaunchOverlay {
 /// While the person peeks at Steam, only the "back" pill takes touches; everything else falls through to the game view underneath.
 final class PassthroughWindow: UIWindow {
     var pillOnly = false
+    /// Never the key window. A touch on a window that can be key makes it key, and the game's picture (Wine's compositor view) is added to whichever window is key when Steam starts:
+    /// tapping this screen first put the picture INSIDE this window, over the launch screen, and took it away again when this window went (a blue picture, then a black screen with
+    /// only the controls). The launch screen has no text field, so nothing here needs the keyboard.
+    override var canBecomeKey: Bool { false }
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard pillOnly else { return super.hitTest(point, with: event) }
         let pill = CGRect(x: bounds.midX - 120, y: 0, width: 240, height: 64)

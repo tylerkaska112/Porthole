@@ -127,7 +127,7 @@ final class BuiltinJIT: NSObject, F4JITHost {
         launcher.failureHandler = { [weak self] message in self?.finish(message) }
         launcher.start(withHost: self, hostProtocol: F4JITHost.self, workerProtocol: F4JITWorker.self) { [weak self] worker, error in
             guard let self, !self.done else { return }
-            guard let worker = worker as? F4JITWorker else { self.finish(error?.localizedDescription ?? "The JIT helper did not start."); return }
+            guard let worker = worker as? F4JITWorker else { self.finish((error?.localizedDescription ?? "The JIT helper did not start.") + " You can choose StikDebug as the JIT method in Settings instead, or reinstall Porthole and keep its app extensions if your signing tool asks."); return }
             worker.enable(getpid(), pairing: pairing)
         }
         // The app is "debugged" the moment the helper attaches; that is the signal to carry on with the runtime's own startup.
@@ -140,7 +140,7 @@ final class BuiltinJIT: NSObject, F4JITHost {
         }
         let deadline = DispatchWorkItem { [weak self] in
             guard let self, !self.done, self.onAttached != nil else { return }
-            self.finish("JIT timed out. Check that the tunnel (or LocalDevVPN) is on and the pairing file is current.")
+            self.finish("JIT timed out. Check that the tunnel (or LocalDevVPN) is on and the pairing file is current. StikDebug is another JIT method you can choose in Settings.")
         }
         self.deadline = deadline
         DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: deadline)

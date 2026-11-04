@@ -18,7 +18,8 @@ fi
 if [ "${1:-}" != "shot" ]; then
   rm -rf "$BUILD"; mkdir -p "$APP"
   swiftc -swift-version 5 -parse-as-library -O -sdk "$SDK" -target arm64-apple-ios18.0-simulator \
-    -module-name Preview -o "$APP/Preview" "$KIT"/*.swift "$HERE"/Preview/*.swift
+    -module-name Preview -o "$APP/Preview" "$KIT"/*.swift "$HERE/../../Sources/Core/ControllerKind.swift" "$HERE/../../Sources/Core/ControllerKindDetect.swift" "$HERE/../../Sources/Compat/CompatBadges.swift" "$HERE/../../Sources/Compat/ReportsLogic.swift" "$HERE/../../Sources/Compat/CompatViews.swift" "$HERE"/../../Sources/UI/Reports/ReportsParts.swift "$HERE"/../../Sources/UI/Reports/ReportsLayouts.swift "$HERE"/Preview/*.swift
+  for n in Steam Epic Gog Itch Amazon; do cp "$HERE/../../Assets.xcassets/Store$n.imageset/Store$n.png" "$APP/Store$n.png"; done   # the store logos (an asset catalog in the real app)
   cp "$HERE/../../Assets.xcassets/PortholeMark.imageset/PortholeMark.png" "$APP/PortholeMark.png"   # the top bar's porthole (an asset catalog in the real app)
   cat > "$APP/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

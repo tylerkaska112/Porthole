@@ -12,6 +12,7 @@ struct SetupGuideView: View {
     @ObservedObject private var gog = GogAuth.shared
     @ObservedObject private var itch = ItchAuth.shared
     @ObservedObject private var amazon = AmazonAuth.shared
+    @ObservedObject private var ea = EAAuth.shared
     @Environment(\.dismiss) private var dismiss
     /// A phone held sideways: the height is what is scarce, so the buttons move up beside the steps and the pages get the whole height.
     @Environment(\.verticalSizeClass) private var vSize
@@ -22,6 +23,7 @@ struct SetupGuideView: View {
     var openGog: () -> Void = {}
     var openItch: () -> Void = {}
     var openAmazon: () -> Void = {}
+    var openEA: () -> Void = {}
 
     /// First time through on iOS 27 or later the in-app method (with the on-device pairing button) is preselected; otherwise whatever is set already.
     private static func initialMethod() -> JITMethod {
@@ -90,7 +92,7 @@ struct SetupGuideView: View {
     }
 
     /// Signed in to any of the five stores.
-    private var anyStore: Bool { steam.signedIn || epic.signedIn || gog.signedIn || itch.signedIn || amazon.signedIn }
+    private var anyStore: Bool { steam.signedIn || epic.signedIn || gog.signedIn || itch.signedIn || amazon.signedIn || ea.signedIn }
 
     private func complete(_ s: Step) -> Bool {
         switch s {
@@ -198,23 +200,18 @@ struct SetupGuideView: View {
     }
 
     private var regularTopBar: some View {
-        VStack(spacing: 8) {
-            HStack {
+        VStack(spacing: 10) {
+            HStack(alignment: .top) {
                 if let n = step.number {
-                    HStack(spacing: 6) {
-                        ForEach(1...Step.numbered, id: \.self) { i in
-                            Capsule().fill(i <= n ? AnyShapeStyle(Theme.accentGradient) : AnyShapeStyle(Theme.panelHigh)).frame(width: 34, height: 6)
-                                .shadow(color: i == n ? Theme.accent.opacity(0.6 * Theme.glowStrength) : .clear, radius: 5)
-                        }
-                    }
+                    SetupStepper(names: ["Speed", "Components", "Games"], current: n, done: [complete(.speed), complete(.downloads), complete(.games)]).frame(maxWidth: 360)
                 }
                 Spacer()
                 PillButton(id: "su-later", title: step == .done ? "Close" : "Finish later", symbol: "xmark") { dismiss() }
             }
-            if step.number != nil {
+            if step.number != nil, let need = need(step) {
                 HStack(spacing: 8) {
                     Text(step.name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.textDim)
-                    if let need = need(step) { tag(complete(step) ? "Done" : need.label, good: complete(step)) }
+                    tag(complete(step) ? "Done" : need.label, good: complete(step))
                     Spacer()
                 }
             }
@@ -262,37 +259,14 @@ struct SetupGuideView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if short {
-                // Sideways there is no room for a big picture above the title: the two sit side by side.
-                HStack(spacing: 12) {
-                    Image(systemName: "gamecontroller.fill").font(.system(size: 30)).foregroundStyle(Theme.accentGradient)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Welcome to Porthole").font(.system(size: 26, weight: .black, design: .rounded)).foregroundStyle(Theme.text)
-                        Text("Three quick steps. Stop any time.").font(.subheadline).foregroundStyle(Theme.textDim)
-                    }
-                }
-            } else {
-                Image(systemName: "gamecontroller.fill").font(.system(size: 46)).foregroundStyle(Theme.accentGradient).shadow(color: Theme.accent.opacity(0.6 * Theme.glowStrength), radius: 16)
-                Text("Welcome to Porthole").font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(Theme.text)
-                Text("Three quick steps. Stop any time.").font(.title3).foregroundStyle(Theme.textDim)
+            SetupWelcomeHero(compact: short)
+            VStack(spacing: 10) {
+                SetupStepCard(id: "su-o-1", number: 1, symbol: "bolt.fill", title: "Full speed", subtitle: "About 2 minutes", tag: complete(.speed) ? "Done" : Need.needed.label, tagGood: complete(.speed)) { step = .speed }
+                SetupStepCard(id: "su-o-2", number: 2, symbol: "shippingbox.fill", title: "Windows components", subtitle: "About 25 MB", tag: complete(.downloads) ? "Done" : Need.recommended.label, tagGood: complete(.downloads)) { step = .downloads }
+                SetupStepCard(id: "su-o-3", number: 3, symbol: "gamecontroller.fill", title: "Add your games", subtitle: "Steam, Epic Games, GOG, itch.io, Amazon Games, EA or Files", tag: complete(.games) ? "Done" : Need.optional.label, tagGood: complete(.games)) { step = .games }
             }
-            SettingsGroup {
-                ForEach([Step.speed, .downloads, .games], id: \.rawValue) { s in outlineRow(s) }
-                RowBase(id: "su-privacy", symbol: "lock.shield.fill", tint: Theme.good, title: "Stays on this device",
-                        info: "Your store sign-ins stay in this device\u{2019}s Keychain and go only to the store itself. Porthole goes online to download what you ask for (Microsoft\u{2019}s components, your game downloads and updates), to check for updates, and to load compatibility badges. It asks for the whole list of badges, so nobody is told which games you own. A compatibility report or a problem report is sent only when you choose to send one; a problem log is cleaned of account names, e-mail addresses and public IP addresses first.", action: {}) { EmptyView() }
-            }
-        }
-    }
-
-    private func outlineRow(_ s: Step) -> some View {
-        let lines: [Step: (String, String, String)] = [
-            .speed: ("bolt.fill", "Full speed", "About 2 minutes"),
-            .downloads: ("shippingbox.fill", "Windows components", "About 25 MB"),
-            .games: ("gamecontroller.fill", "Add your games", "Steam, Epic Games, GOG, itch.io, Amazon Games or Files"),
-        ]
-        let l = lines[s] ?? ("circle", s.name, "")
-        return RowBase(id: "su-o-\(s.rawValue)", symbol: l.0, title: l.1, subtitle: l.2, action: { step = s }) {
-            if let need = need(s) { tag(need.label) }
+            RowBase(id: "su-privacy", symbol: "lock.shield.fill", tint: Theme.good, title: "Stays on this device",
+                    info: "Your store sign-ins stay in this device\u{2019}s Keychain and go only to the store itself. Porthole goes online to download what you ask for (Microsoft\u{2019}s components, your game downloads and updates), to check for updates, and to load compatibility badges. It asks for the whole list of badges, so nobody is told which games you own. A compatibility report or a problem report is sent only when you choose to send one; a problem log is cleaned of account names, e-mail addresses and public IP addresses first.", action: {}) { EmptyView() }
         }
     }
 
@@ -376,38 +350,24 @@ struct SetupGuideView: View {
 
     private var downloadsPage: some View {
         VStack(alignment: .leading, spacing: 14) {
-            header("Windows components", info: "Many games need Microsoft's Visual C++ runtime. Porthole downloads it straight from Microsoft (about 25 MB), checks that it is the genuine file, and keeps it on this device. Without it some games won't start. You can also do this later in Settings \u{203A} Advanced.", infoTitle: "Why download this?")
+            header("Windows components", info: "Many games need Microsoft's Visual C++ runtime. Porthole downloads it straight from Microsoft (about 25 MB), checks that it is the genuine file, and keeps it on this device. Without it some games won't start. Games built on Microsoft's .NET Framework (Celeste, many indie games) also need .NET support, Wine Mono, about 42 MB from WineHQ, and launchers or installers that show a web page need Wine Gecko, about 110 MB from WineHQ. Older 32-bit programs can use Microsoft's 32-bit runtime too, about 14 MB. Download them here if you want those. You can also do either later in Settings \u{203A} Advanced \u{203A} Windows components.", infoTitle: "Why download this?")
             VCRuntimePanel()
+            WineMonoPanel()
+            VCRedist32Panel()
+            WineGeckoPanel()
         }
     }
 
     private var gamesPage: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("Add your games", info: "Bring in the games you already own, from a store or from Files. You can do any of them, all of them, or none now; they are always available from the home screen and the Stores tab later.", infoTitle: "Adding games")
-            SettingsGroup(title: "Steam") {
-                ValueRow(id: "su-steam-state", symbol: steam.signedIn ? "checkmark.circle.fill" : "circle.dashed", title: steam.signedIn ? "Signed in" : "Not signed in", value: steam.signedIn ? "Done" : "Optional", statusColor: steam.signedIn ? Theme.good : Theme.textDim)
-                ActionRow(id: "su-steam", symbol: "arrow.down.circle.fill", tint: .blue, title: steam.signedIn ? "Open your Steam library" : "Sign in to Steam",
-                          info: "Download the games you own on Steam straight to this device. Your password is encrypted before it leaves the device and is never saved.", chevron: false, prominent: !steam.signedIn) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openSteam() } }
-            }
-            SettingsGroup(title: "Epic Games") {
-                ValueRow(id: "su-epic-state", symbol: epic.signedIn ? "checkmark.circle.fill" : "circle.dashed", title: epic.signedIn ? "Signed in" : "Not signed in", value: epic.signedIn ? "Done" : "Optional", statusColor: epic.signedIn ? Theme.good : Theme.textDim)
-                ActionRow(id: "su-epic", symbol: "arrow.down.circle.fill", tint: .indigo, title: epic.signedIn ? "Open your Epic Games library" : "Sign in to Epic Games",
-                          info: "Download the games you own on Epic Games straight to this device. You sign in on Epic's own page; Porthole never sees your password.", chevron: false, prominent: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openEpic() } }
-            }
-            SettingsGroup(title: "GOG") {
-                ValueRow(id: "su-gog-state", symbol: gog.signedIn ? "checkmark.circle.fill" : "circle.dashed", title: gog.signedIn ? "Signed in" : "Not signed in", value: gog.signedIn ? "Done" : "Optional", statusColor: gog.signedIn ? Theme.good : Theme.textDim)
-                ActionRow(id: "su-gog", symbol: "arrow.down.circle.fill", tint: .purple, title: gog.signedIn ? "Open your GOG library" : "Sign in to GOG",
-                          info: "Download the games you own on GOG straight to this device. You sign in on GOG's own page; Porthole never sees your password.", chevron: false, prominent: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openGog() } }
-            }
-            SettingsGroup(title: "itch.io") {
-                ValueRow(id: "su-itch-state", symbol: itch.signedIn ? "checkmark.circle.fill" : "circle.dashed", title: itch.signedIn ? "Signed in" : "Not signed in", value: itch.signedIn ? "Done" : "Optional", statusColor: itch.signedIn ? Theme.good : Theme.textDim)
-                ActionRow(id: "su-itch", symbol: "arrow.down.circle.fill", tint: .red, title: itch.signedIn ? "Open your itch.io library" : "Sign in to itch.io",
-                          info: "Download the games you bought, claimed or collected on itch.io. You make a personal API key on itch.io and paste it here; it stays in this device's Keychain.", chevron: false, prominent: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openItch() } }
-            }
-            SettingsGroup(title: "Amazon Games") {
-                ValueRow(id: "su-amazon-state", symbol: amazon.signedIn ? "checkmark.circle.fill" : "circle.dashed", title: amazon.signedIn ? "Signed in" : "Not signed in", value: amazon.signedIn ? "Done" : "Optional", statusColor: amazon.signedIn ? Theme.good : Theme.textDim)
-                ActionRow(id: "su-amazon", symbol: "arrow.down.circle.fill", tint: .orange, title: amazon.signedIn ? "Open your Amazon Games library" : "Sign in to Amazon Games",
-                          info: "Download the games you bought on Amazon or claimed with Prime Gaming. You sign in on Amazon's own page; Porthole never sees your password.", chevron: false, prominent: false) { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openAmazon() } }
+            SettingsGroup(title: "Stores") {
+                StoreSignInRow(id: "su-steam", store: .steam, signedIn: steam.signedIn, info: "Download the games you own on Steam straight to this device. Your password is encrypted before it leaves the device and is never saved.") { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openSteam() } }
+                StoreSignInRow(id: "su-epic", store: .epic, signedIn: epic.signedIn, info: "Download the games you own on Epic Games straight to this device. You sign in on Epic's own page; Porthole never sees your password.") { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openEpic() } }
+                StoreSignInRow(id: "su-gog", store: .gog, signedIn: gog.signedIn, info: "Download the games you own on GOG straight to this device. You sign in on GOG's own page; Porthole never sees your password.") { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openGog() } }
+                StoreSignInRow(id: "su-itch", store: .itch, signedIn: itch.signedIn, info: "Download the games you bought, claimed or collected on itch.io. You make a personal API key on itch.io and paste it here; it stays in this device's Keychain.") { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openItch() } }
+                StoreSignInRow(id: "su-amazon", store: .amazon, signedIn: amazon.signedIn, info: "Download the games you bought on Amazon or claimed with Prime Gaming. You sign in on Amazon's own page; Porthole never sees your password.") { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openAmazon() } }
+                StoreSignInRow(id: "su-ea", store: .ea, signedIn: ea.signedIn, info: "Download the PC games on your EA account. You sign in on EA's own page; Porthole never sees your password. Games with EA's kernel anti-cheat cannot run.") { dismiss(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { openEA() } }
             }
             SettingsGroup(title: "Files") {
                 ValueRow(id: "su-files-state", symbol: model.games.isEmpty ? "circle.dashed" : "checkmark.circle.fill", title: model.games.isEmpty ? "No games added yet" : "\(model.games.count) game\(model.games.count == 1 ? "" : "s") added", value: model.games.isEmpty ? "Optional" : "Done", statusColor: model.games.isEmpty ? Theme.textDim : Theme.good)
@@ -444,7 +404,7 @@ struct SetupGuideView: View {
             SettingsGroup {
                 summaryRow(.speed, jitReady && (!tunnelNeeded || tunnelAllowed) ? "Full speed: \(method.title)" : (jitReady ? "Private link not allowed" : "Full speed isn't set up"))
                 summaryRow(.downloads, runtimeReady ? "Windows components ready" : "Windows components missing")
-                summaryRow(.games, anyStore || !model.games.isEmpty ? "Games: \([steam.signedIn ? "Steam" : nil, epic.signedIn ? "Epic Games" : nil, gog.signedIn ? "GOG" : nil, itch.signedIn ? "itch.io" : nil, amazon.signedIn ? "Amazon Games" : nil, model.games.isEmpty ? nil : "\(model.games.count) imported"].compactMap { $0 }.joined(separator: ", "))" : "No games added yet")
+                summaryRow(.games, anyStore || !model.games.isEmpty ? "Games: \([steam.signedIn ? "Steam" : nil, epic.signedIn ? "Epic Games" : nil, gog.signedIn ? "GOG" : nil, itch.signedIn ? "itch.io" : nil, amazon.signedIn ? "Amazon Games" : nil, ea.signedIn ? "EA app" : nil, model.games.isEmpty ? nil : "\(model.games.count) imported"].compactMap { $0 }.joined(separator: ", "))" : "No games added yet")
             }
         }
     }

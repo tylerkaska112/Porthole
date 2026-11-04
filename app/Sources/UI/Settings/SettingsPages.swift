@@ -19,8 +19,8 @@ struct AppearancePage: View {
     }
 
     var body: some View {
-        PageScaffold(title: "Theme and colours", symbol: "paintpalette.fill") {
-            SettingsGroup(title: "Colour scheme") {
+        PageScaffold(title: "Appearance", symbol: "paintpalette.fill", subtitle: "Theme, colours and motion") {
+            SettingsGroup(title: "Colour scheme", note: "The colours of the whole app.") {
                 AdaptiveGrid(minWidth: 108, spacing: 12) {
                     ForEach(Palette.presets) { swatch($0) }
                     swatch(Palette.custom(accent: theme.customAccent))
@@ -35,7 +35,12 @@ struct AppearancePage: View {
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
             }
-            SettingsGroup(title: "Glow and motion") {
+            SettingsGroup(title: "Festive", note: "Holiday looks that appear by themselves around the day.") {
+                ToggleRow(id: "ap-festive", symbol: "moon.stars.fill", title: "Festive themes", subtitle: theme.activeSeason.map { "\($0.title) is on" },
+                          info: "Porthole dresses up for some holidays by the date. Turn this off to keep your own colours all year.",
+                          isOn: Binding(get: { theme.festive }, set: { theme.festive = $0 }))
+            }
+            SettingsGroup(title: "Glow and motion", note: "How lively the app looks. Turning these down saves a little battery.") {
                 ChoiceRow(id: "ap-glow", symbol: "sparkles", title: "Glow", info: "How strong the light around the selected thing is. Off turns the glow and the soft lights in the background down.",
                           options: GlowLevel.allCases.map { ($0, $0.title) }, selection: Binding(get: { theme.glow }, set: { theme.glow = $0 }))
                 ToggleRow(id: "ap-motion", symbol: "wind", title: "Moving background", info: "The soft coloured lights behind every screen drift slowly. Turn this off to save a little battery.",
@@ -72,7 +77,7 @@ struct DisplayPage: View {
 
     var body: some View {
         PageScaffold(title: "Display", symbol: "display") {
-            SettingsGroup(title: "Picture") {
+            SettingsGroup(title: "Picture", note: "What every game starts with. A game's own page can change it for that game.") {
                 ChoiceRow(id: "dp-res", symbol: "rectangle.expand.vertical", title: "Resolution",
                           info: "The size of the screen games see. Higher is sharper but needs more memory and a faster device; lower is faster. Games that pick their own resolution can choose any size up to this one, and the picture is scaled to your screen. Each game can have its own on its page. Applies the next time a game starts.",
                           options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: aspect)) },
@@ -95,19 +100,21 @@ struct PerformancePage: View {
 
     var body: some View {
         PageScaffold(title: "Performance", symbol: "speedometer") {
-            SettingsGroup(title: "Power") {
+            SettingsGroup(title: "Power", note: "How fast games run and what happens when the device gets hot.") {
                 ChoiceRow(id: "pf-power", symbol: "bolt.fill", title: "Power mode",
                           info: "\(power.detail). By default a game drops to Battery saver (30 FPS and Eco) by itself when the device gets hot. Each game can pick its own on its page.",
                           options: PowerMode.allCases.map { ($0, $0.title) }, selection: Binding(get: { power }, set: { power = $0; PowerManager.shared.set($0) }))
+                EngineChoiceRow(id: "pf-bgrun", key: "background-run", title: "Keep a game running in the background")
                 ToggleRow(id: "pf-hot", symbol: "thermometer.high", title: "Keep my mode when hot",
                           info: "Stops the automatic drop when the device gets hot. Eco mode puts the game on the slow cores, so loading can crawl; this keeps full speed instead, and the device may get hotter and drain faster.",
                           isOn: Binding(get: { keepWhenHot }, set: { keepWhenHot = $0; PowerManager.shared.setIgnoreHeat($0) }))
             }
             if advanced {
-                SettingsGroup(title: "Graphics") {
+                SettingsGroup(title: "Graphics", note: "Picture choices that cost speed.") {
                     ToggleRow(id: "pf-math", symbol: "function", title: "Precise shader math", info: "Exact lighting math instead of fast approximations. Off is faster.", isOn: $preciseMath)
+                    EngineChoiceRow(id: "pf-pso", key: "pso-archive", symbol: "archivebox.fill", title: "Keep compiled pipelines")
                 }
-                SettingsGroup(title: "Memory") {
+                SettingsGroup(title: "Memory", note: "For games that run out of memory. Most people never change these.") {
                     ChoiceRow(id: "pf-swap", symbol: "internaldrive.fill", title: "Swap",
                               info: "iOS has no swap and closes an app that uses too much memory. Swap keeps big chunks of game data in a file on the device's storage instead, where iOS doesn't count them, so a memory-hungry game can survive. It uses storage and can be slower.",
                               options: [(0, "Off"), (1024, "1 GB"), (2048, "2 GB"), (3072, "3 GB"), (4096, "4 GB")],
@@ -133,7 +140,7 @@ struct ControlsPage: View {
 
     var body: some View {
         PageScaffold(title: "Controls", symbol: "hand.tap.fill") {
-            SettingsGroup(title: "Controller") {
+            SettingsGroup(title: "Controller", note: "The controller connected to this device.") {
                 ValueRow(id: "ct-pad", symbol: "gamecontroller.fill", title: "Connected controller",
                          value: ControllerInput.shared.kind == .none ? "None" : ControllerInput.shared.kind.displayName,
                          statusColor: ControllerInput.shared.kind == .none ? Theme.textDim : Theme.good)
@@ -142,7 +149,7 @@ struct ControlsPage: View {
                      : "Buttons are named as printed on this controller (\(ControllerInput.shared.kind.glyph("A")) select, \(ControllerInput.shared.kind.glyph("B")) back, \(ControllerInput.shared.kind.glyph("LB")) \(ControllerInput.shared.kind.glyph("RB")) switch section). Hold \(ControllerInput.shared.kind.menuChordName) in a game to open Porthole's menu.")
                     .font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
             }
-            SettingsGroup(title: "First person") {
+            SettingsGroup(title: "First person", note: "Looking around by dragging on the screen.") {
                 SliderRow(id: "ct-look", symbol: "scope", title: "Look sensitivity",
                           info: "How fast dragging on the screen turns the view in first-person games. A game can set its own on its page, and the in-game Menu has quick Faster and Slower buttons.",
                           value: Binding(get: { look }, set: { look = $0; LaunchSettings.globalLookSensitivity = $0 }), range: LaunchSettings.lookRange, step: 0.1,
@@ -152,15 +159,31 @@ struct ControlsPage: View {
     }
 }
 
-struct SoundPage: View {
-    @AppStorage(SessionController.audioCushionKey) private var audioCushion = 80
+/// One engine option (Settings > Advanced > Engine options has them all) as a row of its own, wherever it fits best. Nothing is written until the person changes it.
+struct EngineChoiceRow: View {
+    let id: String
+    let key: String
+    var symbol: String?
+    let title: String
+    @State private var tick = 0
 
     var body: some View {
+        let option = EngineOptions.groups.flatMap(\.options).first { $0.key == key }
+        ChoiceRow(id: id, symbol: symbol ?? option?.symbol, title: title, info: option?.info, options: (option?.choices ?? []).map { ($0.value, $0.label) },
+                  selection: Binding(get: { _ = tick; return EngineOptions.value(key) }, set: { EngineOptions.set(key, $0); tick += 1 }))
+    }
+}
+
+struct SoundPage: View {
+    @AppStorage(SessionController.audioCushionKey) private var audioCushion = 80
+    var body: some View {
         PageScaffold(title: "Sound", symbol: "speaker.wave.2.fill") {
-            SettingsGroup(title: "Audio") {
+            SettingsGroup(title: "Audio", note: "Applies the next time a game starts.") {
                 ChoiceRow(id: "sd-buffer", symbol: "waveform", title: "Audio buffer",
                           info: "Extra buffered sound, in milliseconds. Bigger means fewer crackles but effects lag a little more. Applies on the next game start.",
                           options: [(0, "Off"), (40, "40 ms"), (80, "80 ms"), (160, "160 ms"), (300, "300 ms")], selection: $audioCushion)
+                EngineChoiceRow(id: "sd-volume", key: "env.MADEIRA_AUDIO_GAIN", symbol: "speaker.wave.3.fill", title: "Game volume")
+                EngineChoiceRow(id: "sd-resume", key: "env.MADEIRA_AUDIO_RESUME", symbol: "phone.arrow.down.left", title: "Bring sound back after a call")
             }
         }
     }
@@ -204,9 +227,9 @@ struct ConnectionPage: View {
     private let tunnel = TunnelManager.shared
 
     var body: some View {
-        PageScaffold(title: "JIT and tunnel", symbol: "bolt.horizontal.fill") {
+        PageScaffold(title: "JIT and connection", symbol: "bolt.horizontal.fill", subtitle: "What gives games full speed") {
             InstallCheckGroup()
-            SettingsGroup(title: "How JIT is switched on") {
+            SettingsGroup(title: "How JIT is switched on", note: "JIT lets the emulator run at full speed. It has to be switched on every time a game starts.") {
                 ChoiceRow(id: "cn-method", symbol: "bolt.fill", title: "JIT method", info: jitMethod.summary,
                           options: JITMethod.available.map { ($0, $0.title) }, selection: Binding(get: { jitMethod }, set: { jitMethod = $0; JITMethod.current = $0 }))
             }
@@ -222,12 +245,12 @@ struct ConnectionPage: View {
                 }
             }
             if InstallCheck.hasTunnel {
-            SettingsGroup(title: "Tunnel") {
+            SettingsGroup(title: "Tunnel", note: "The private connection the JIT helper uses to reach this device.") {
                 ToggleRow(id: "cn-localdev", symbol: "network", title: "Use LocalDevVPN instead",
                           info: "Does not start this app's own tunnel. LocalDevVPN (or another VPN with the same 10.7.0.x addresses) has to be switched on before you press Play; it keeps running while the game does. Turn this on if the app's own tunnel sometimes fails to come up. Off: the app starts and stops its own tunnel, which replaces any other VPN while it is on.",
                           isOn: $useLocalDevVPN)
             }
-            SettingsGroup(title: "Your own VPN") {
+            SettingsGroup(title: "Your own VPN", note: "iOS runs one VPN at a time, so yours is paused while JIT is switched on.") {
                 ToggleRow(id: "cn-vpn-ask", symbol: "questionmark.bubble.fill", title: "Ask before pausing it",
                           info: "iOS runs one VPN at a time, so Porthole's tunnel switches yours off while a game starts or an update installs. With this on, Porthole asks first.",
                           isOn: $vpnAsk)
@@ -244,7 +267,7 @@ struct ConnectionPage: View {
                     if let url = URL(string: "shortcuts://create-shortcut") { UIApplication.shared.open(url) }
                 }
             }
-            SettingsGroup(title: "Cellular data") {
+            SettingsGroup(title: "Cellular data", note: "The private connection does not work while cellular data is the network in use.") {
                 ToggleRow(id: "cn-cell-auto", symbol: "antenna.radiowaves.left.and.right", title: "Switch cellular data off when needed",
                           info: "Porthole's private connection (JIT, and installing an update on this device) does not work while cellular data is the network in use. It needs no internet, so with this on, Porthole asks, switches cellular data off for a few seconds with a Shortcut, and switches it back on as soon as it is done. On Wi-Fi nothing happens.",
                           isOn: $cellularAuto)
@@ -265,7 +288,7 @@ struct ConnectionPage: View {
             }
             }
             if InstallCheck.hasTunnel {
-            SettingsGroup(title: "Troubleshooting") {
+            SettingsGroup(title: "Troubleshooting", note: "If Play says the tunnel will not connect.") {
                 ActionRow(id: "cn-reset", symbol: "arrow.counterclockwise", title: "Reset the tunnel", detail: resetDone ? "Done" : nil,
                           info: "If Play says the tunnel won't connect, this deletes the app's VPN setting and makes a fresh one. Your games and settings are not touched. iOS asks you to allow the VPN again.") {
                     Task {
@@ -303,6 +326,7 @@ struct ConnectionPage: View {
 
 struct SteamSettingsPage: View {
     @ObservedObject private var steam = SteamStore.shared
+    @ObservedObject private var controllerLayer = SteamControllerLayer.shared
     @Environment(AppRouter.self) private var router
     @AppStorage(SessionController.dockDesktopKey) private var dockDesktop = true
     @AppStorage(SessionController.cloudDownloadKey) private var cloudDownload = true
@@ -311,11 +335,26 @@ struct SteamSettingsPage: View {
     @State private var clientBusy = false
     @State private var clientStatus: String?
     @State private var confirmSignOut = false
+    @EnvironmentObject private var session: SessionController
+    @AppStorage(SteamBigPicture.shownKey) private var bigPictureShown = false
+    @State private var bigPictureError: String?
     @ObservedObject private var storage = ExternalLibrary.shared
     @AppStorage(ExternalLibrary.newDownloadsKey) private var newToSSD = false
     @State private var pickingFolder = false
     @State private var storageBusy = false
     @State private var storageError: String?
+
+    private var bigPictureSubtitle: String {
+        if !SteamBigPicture.available { return "Download the Steam client first" }
+        return SteamBigPicture.clientDownloaded ? "Valve's client is ready" : "The first start downloads Valve's client"
+    }
+
+    private func startBigPicture() {
+        bigPictureError = nil
+        let prepared = SteamBigPicture.prepare()
+        if let error = prepared.error { bigPictureError = error; return }
+        session.start(prepared.game)
+    }
 
     private var storageState: String {
         if storage.checking { return "Checking\u{2026}" }
@@ -340,7 +379,17 @@ struct SteamSettingsPage: View {
                     ActionRow(id: "st-in", symbol: "person.badge.key.fill", title: "Sign in to Steam") { router.openSteam() }
                 }
             }
-            SettingsGroup(title: "Steam client") {
+            if bigPictureShown {
+                SettingsGroup(title: "Steam Big Picture", note: "Valve's own gamepad interface, running inside Porthole. An experiment: Madeira leaves it out of its releases because it is heavy and not finished.") {
+                    ActionRow(id: "st-bigpicture", symbol: "tv.fill", tint: Theme.warn, title: "Start Steam Big Picture", subtitle: bigPictureSubtitle, badge: "Experimental",
+                              info: "Starts Valve's real Steam client in Big Picture mode inside the Wine desktop, so you can browse Steam the way it looks on a console. It needs the Steam client above. The first start downloads Valve's client (a few hundred MB) from Valve into a folder of its own, and takes a few minutes. It uses a lot of memory (a 4 GB swap file and 4 GB of donor RAM are asked for), the screen can be slow and Steam may take a while to appear. Your games are not changed. Madeira itself calls this unfinished.", chevron: false) {
+                        startBigPicture()
+                    }
+                    .disabled(!MadeiraDock.enabled || session.isActive)
+                    if let bigPictureError { Text(bigPictureError).font(.footnote).foregroundStyle(Theme.warn).padding(.horizontal, 6) }
+                }
+            }
+            SettingsGroup(title: "Steam client", note: "Valve's own files, which start Steam games and check your licence.") {
                 ActionRow(id: "st-client", symbol: clientInstalled ? "checkmark.seal.fill" : "shield.lefthalf.filled", tint: clientInstalled ? Theme.good : Theme.warn,
                           title: "Steam client", subtitle: clientBusy ? (clientStatus ?? "Working\u{2026}") : (clientInstalled ? "Installed" : "Needed to start Steam games"),
                           detail: clientInstalled || clientBusy ? nil : "Download",
@@ -348,13 +397,20 @@ struct SteamSettingsPage: View {
                     if !clientInstalled && !clientBusy { downloadClient() }
                 }
                 .disabled(!MadeiraDock.enabled)
+                if controllerLayer.available || controllerLayer.installed {
+                    ActionRow(id: "st-controller", symbol: controllerLayer.installed ? "checkmark.seal.fill" : "gamecontroller.fill", tint: controllerLayer.installed ? Theme.good : Theme.warn,
+                              title: "Steam controller support", subtitle: controllerLayer.subtitle,
+                              detail: controllerLayer.busy ? nil : (controllerLayer.installed ? "Remove" : "Download"), info: SteamControllerLayer.info, chevron: false) {
+                        controllerLayer.toggle()
+                    }
+                }
             }
-            SettingsGroup(title: "Steam Cloud") {
+            SettingsGroup(title: "Steam Cloud", note: "Your game saves on Steam's servers.") {
                 ToggleRow(id: "st-cloud", symbol: "icloud.and.arrow.down.fill", title: "Download my cloud saves before a game starts",
                           info: "Before a game starts through Steam, Porthole downloads your own Steam Cloud files for it (such as world saves) if they are missing here. It only reads from Steam: nothing is uploaded, and a newer file on this device is never replaced.",
                           isOn: $cloudDownload)
             }
-            SettingsGroup(title: "Game storage") {
+            SettingsGroup(title: "Game storage", note: "Where Steam games are saved.") {
                 if let ssd = storage.external {
                     ValueRow(id: "st-ssd", symbol: "externaldrive.fill", title: ssd.name, value: storageState,
                              statusColor: storage.availability == .available ? Theme.good : Theme.warn)
@@ -376,9 +432,8 @@ struct SteamSettingsPage: View {
                 }
                 if let storageError { ValueRow(id: "st-ssd-err", symbol: "xmark.octagon.fill", title: "Problem", value: storageError, statusColor: Theme.warn) }
             }
-            EpicSettingsGroup()
             if advanced {
-                SettingsGroup(title: "Steam games window") {
+                SettingsGroup(title: "Steam games window", note: "How Steam games are drawn on the screen.") {
                     ToggleRow(id: "st-desktop", symbol: "macwindow", title: "Use Wine's desktop display",
                               info: "On (recommended): Steam games run on a Wine virtual desktop, and touch and rotation work. Off is an experiment that draws the game straight into the app's game view. Applies the next time a game starts.",
                               isOn: $dockDesktop)
@@ -441,7 +496,7 @@ struct GuidesPage: View {
     var body: some View {
         @Bindable var center = center
         PageScaffold(title: "Tips and guides", symbol: "lightbulb.fill") {
-            SettingsGroup(title: "Tips") {
+            SettingsGroup(title: "Tips", note: "Short explanations that appear the first time you open a screen.") {
                 ToggleRow(id: "gd-on", symbol: "lightbulb.fill", title: "Show tips",
                           info: "A short explanation appears the first time you open a screen, and when you start your first game. The question mark at the top of every screen opens it again.", isOn: $center.enabled)
                 ActionRow(id: "gd-reset", symbol: "arrow.counterclockwise", title: "Show all tips again",
@@ -457,77 +512,34 @@ struct GuidesPage: View {
     }
 }
 
-// MARK: - Advanced
-
-struct AdvancedPage: View {
-    @AppStorage("f4.advanced") private var advanced = false
-    @AppStorage("f4.dumpSurfaces") private var dumpSurfaces = false
-    @AppStorage("f4.wineDebug") private var wineDebug = ""
-    @AppStorage(ExecutableWindow.defaultsKey) private var releaseExeWindow = true
-    @AppStorage(ShortcutRouter.remoteKey) private var remoteLinks = false
-    @AppStorage(ShortcutRouter.confirmKey) private var confirmLinks = true
-    @State private var installer = VCRuntimeInstaller.shared
-
-    var body: some View {
-        PageScaffold(title: "Advanced", symbol: "wrench.and.screwdriver.fill") {
-            SettingsGroup(title: "Windows components") {
-                ActionRow(id: "ad-vc", symbol: installer.available ? "checkmark.seal.fill" : "shippingbox.fill", tint: installer.available ? Theme.good : Theme.warn,
-                          title: "Visual C++ runtime", subtitle: vcSubtitle, detail: !installer.available && !installer.busy ? "Download" : nil,
-                          info: "Microsoft's runtime that many games need. About 25 MB, downloaded from Microsoft's own installer and checked against a fixed fingerprint before anything is used. Without it some games won't start.", chevron: false) {
-                    if !installer.available && !installer.busy { Task { await installer.install() } }
-                }
-                if case .downloading(let fraction) = installer.state { ProgressView(value: fraction).tint(Theme.accent).padding(.horizontal, 8) }
-                if installer.installed {
-                    ActionRow(id: "ad-vc-remove", symbol: "trash", title: "Remove the downloaded copy", destructive: true, chevron: false) { installer.remove() }
-                }
-            }
-            SettingsGroup(title: "Options") {
-                ToggleRow(id: "ad-tech", symbol: "slider.horizontal.3", title: "Show technical options",
-                          info: "Shows swap and video memory, shader math, tunnel and JIT status, and technical readouts. Most people never need them.", isOn: $advanced)
-                ToggleRow(id: "ad-pool", symbol: "memorychip", title: "Bigger code pool when the game allows it",
-                          info: "The emulator keeps a stretch of memory free for the rare game that can only load at one fixed address. When none of a game's programs needs it, this gives it back so the code pool can be larger (fewer freezes in big games). Turn it off to go back to the previous behaviour if a game that started before no longer does.",
-                          isOn: $releaseExeWindow)
-            }
-            SettingsGroup(title: "Links") {
-                ToggleRow(id: "ad-confirm-link", symbol: "link.badge.plus", title: "Ask before a link starts a game",
-                          info: "A porthole://play link (a Home Screen shortcut, a web page, another app) starts a game that is in your library. With this on, Porthole asks first, so a link you did not expect cannot start one. Links from a computer you have paired are not asked.",
-                          isOn: $confirmLinks)
-            }
-            SettingsGroup(title: "Debugging") {
-                ToggleRow(id: "ad-remote", symbol: "antenna.radiowaves.left.and.right", title: "Allow remote-control links",
-                          info: "Lets porthole:// links stop an ended game, change one setting line of a game, or install the newest update. For testing from a computer (tools/ipad.sh). Leave off normally: any app or web page that can open a link could use them.",
-                          isOn: $remoteLinks)
-                ToggleRow(id: "ad-pics", symbol: "photo.on.rectangle", title: "Save window pictures",
-                          info: "Saves a picture of every Windows window about every 2 seconds to Files > Porthole > surfdump. Use them to report a window that looks wrong. Leave off normally.", isOn: $dumpSurfaces)
-                TextFieldRow(id: "ad-debug", symbol: "terminal.fill", title: "Wine debug channels", placeholder: "for example +msg",
-                             info: "Advanced: records extra Wine messages in the log (for example +msg for window messages). Leave empty normally.", monospaced: true, text: $wineDebug)
-            }
-        }
-    }
-
-    private var vcSubtitle: String {
-        switch installer.state {
-        case .downloading(let f): return "Downloading \(Int(f * 100))%"
-        case .unpacking: return "Checking and unpacking\u{2026}"
-        case .failed(let message): return message
-        case .idle: return installer.installed ? "Installed" : (installer.available ? "Included with this app" : "Not installed")
-        }
-    }
-}
-
 // MARK: - About
 
 struct AboutPage: View {
     @State private var licences = false
+    /// Seven taps on the version reveal a way to look at a holiday out of season (for testing). It is not listed anywhere, so a holiday look is a surprise when its week comes.
+    @State private var versionTaps = 0
+    @AppStorage(SteamBigPicture.shownKey) private var bigPictureShown = false
     private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
     private var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?" }
 
     var body: some View {
         PageScaffold(title: "About and credits", symbol: "info.circle.fill") {
-            SettingsGroup(title: "About Porthole") {
-                ValueRow(id: "ab-version", symbol: "app.badge.fill", title: "Version", value: "\(version) (\(build))")
+            SettingsGroup(title: "About Porthole", note: "Which version this is and what it is made of.") {
+                ValueRow(id: "ab-version", symbol: "app.badge.fill", title: "Version", value: "\(version) (\(build))") { versionTaps += 1 }
                 ValueRow(id: "ab-bundle", symbol: "shippingbox.fill", title: "Bundle", value: Bundle.main.bundleIdentifier ?? "?")
                 ActionRow(id: "ab-licences", symbol: "doc.plaintext.fill", title: "Licences and source code", subtitle: "Free software, GPL-3.0-or-later") { licences = true }
+            }
+            if versionTaps >= 7 {
+                SettingsGroup(title: "Experiments", note: "Not listed anywhere else.") {
+                    ToggleRow(id: "ab-bigpicture", symbol: "tv.fill", title: "Show Steam Big Picture", info: "Adds a Start Steam Big Picture row to Settings > Stores > Steam. It starts Valve's real client in Big Picture, which has been seen to run its web helper into a crash on the first click. Experimental.", isOn: $bigPictureShown)
+                }
+                SettingsGroup(title: "Look at a holiday") {
+                    ForEach(Season.allCases) { season in
+                        ActionRow(id: "ab-season-\(season.id)", symbol: season.symbol, title: ThemeStore.shared.previewSeason == season ? "Stop previewing \(season.title)" : "Preview \(season.title)", chevron: false) {
+                            ThemeStore.shared.previewSeason = ThemeStore.shared.previewSeason == season ? nil : season
+                        }
+                    }
+                }
             }
             SettingsGroup(title: "Built on other people's work") {
                 credit("madeira", "Madeira", "https://github.com/willfaust/Madeira", "The Windows-on-iPhone runtime this app is built on: Wine, FEX-Emu and DXMT, and Madeira Dock.")

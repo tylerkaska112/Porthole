@@ -1,0 +1,61 @@
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -344,7 +344,7 @@
+ 
+           // Madvise the entries that we are dropping. Gives the memory back to the OS.
+           LookupCacheEntry* FirstZeroL1Entry = &reinterpret_cast<LookupCacheEntry*>(L1Pointer)[CurrentL1Entries];
+-          size_t ZeroMemorySize = (MAX_L1_ENTRIES_HOT - CurrentL1Entries) * sizeof(LookupCacheEntry);
++          size_t ZeroMemorySize = (MaxL1Entries() - CurrentL1Entries) * sizeof(LookupCacheEntry);
+           FEXCore::Allocator::VirtualDontNeed(FirstZeroL1Entry, ZeroMemorySize, false);
+ 
+           // Update the thread's L1 pointer mask to increase how much cache it uses.
+@@ -605,7 +605,10 @@
+   constexpr static size_t CODE_SIZE = 128 * 1024 * 1024;
+ #endif
+   constexpr static size_t SIZE_PER_PAGE = FEXCore::Utils::FEX_PAGE_SIZE * sizeof(LookupCacheEntry);
+-  constexpr static size_t MAX_L1_SIZE = MAX_L1_ENTRIES_HOT * sizeof(LookupCacheEntry);
++  /* Porthole 0168: the reservation follows MADEIRA_FEX_HOTL1. With the hot-thread growth off (=0) no thread's L1 passes MAX_L1_ENTRIES (128K entries, 2 MB), so
++   * reserve 2 MB instead of 8 MB per thread: with ~300 threads that is 1.8 GB of the emulator's 15 GB address range. Default unchanged (hot growth on). */
++  static size_t MaxL1Entries() { return HotL1On() ? MAX_L1_ENTRIES_HOT : MAX_L1_ENTRIES; }
++  static size_t MaxL1Size() { return MaxL1Entries() * sizeof(LookupCacheEntry); }
+ 
+   size_t AllocateOffset {};
+ 
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -47,7 +47,7 @@
+   L2Enabled = !DisableL2Cache();
+ 
+   const size_t L2TableSize = ctx->Config.VirtualMemSize / FEXCore::Utils::FEX_PAGE_SIZE * 8;
+-  TotalCacheSize = L2TableSize + CODE_SIZE + MAX_L1_SIZE;
++  TotalCacheSize = L2TableSize + CODE_SIZE + MaxL1Size();
+ 
+   // Block cache ends up looking like this
+   // PageMemoryMap[VirtualMemoryRegion >> 12]
+@@ -64,7 +64,7 @@
+   if (!L2Enabled) {
+     // ml606: L1-ONLY. Skip the 16MB L2 table and the 32MB backing arena
+     // entirely — with DisableL2Cache the JIT never emits a lookup against them.
+-    AllocationSize = MAX_L1_SIZE;
++    AllocationSize = MaxL1Size();
+ #ifdef FEX_IOS_HOST
+     AllocationBase = reinterpret_cast<uintptr_t>(FEXCore::Allocator::VirtualAlloc(AllocationSize, false, true));
+ #else
+@@ -115,7 +115,7 @@
+     // ml606: the allocation IS the L1 array.
+     L1Pointer = AllocationBase;
+   }
+-  FEXCore::Allocator::VirtualName("FEXMem_Lookup_L1", reinterpret_cast<void*>(L1Pointer), MAX_L1_SIZE);
++  FEXCore::Allocator::VirtualName("FEXMem_Lookup_L1", reinterpret_cast<void*>(L1Pointer), MaxL1Size());
+ 
+   {
+     const uint64_t Live = LookupCacheLive.fetch_add(1, std::memory_order_relaxed) + 1;
+@@ -146,7 +146,7 @@
+    * shared zero page, no footprint) and memsets only stale pages. The stale
+    * counts double as the probe for whether the hazard still exists at all. */
+   size_t StaleL2 = L2Enabled ? FEXCore::Allocator::ZeroScrub(reinterpret_cast<void*>(PageMemory), L2TableSize) : 0;
+-  size_t StaleL1 = FEXCore::Allocator::ZeroScrub(reinterpret_cast<void*>(L1Pointer), MAX_L1_SIZE);
++  size_t StaleL1 = FEXCore::Allocator::ZeroScrub(reinterpret_cast<void*>(L1Pointer), MaxL1Size());
+   LogMan::Msg::EFmt("[TI-IC] zero-scrub rev=ml606 l2-stale=0x{:x} l1-stale=0x{:x}", StaleL2, StaleL1);
+ #endif
+ }

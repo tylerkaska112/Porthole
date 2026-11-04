@@ -13,6 +13,8 @@ struct HomeScreen: View {
     @ObservedObject private var gogInstaller = GogInstaller.shared
     @ObservedObject private var itchInstaller = ItchInstaller.shared
     @ObservedObject private var amazonInstaller = AmazonInstaller.shared
+    @ObservedObject private var eaInstaller = EAInstaller.shared
+    @ObservedObject private var mono = WineMonoModel.shared
     @ObservedObject private var problemTracker = ProblemTracker.shared
     @ObservedObject private var epicLibrary = EpicLibrary.shared
     @ObservedObject private var compat = CompatStore.shared
@@ -27,6 +29,9 @@ struct HomeScreen: View {
     @ObservedObject private var restarting = RestartCoordinator.shared
     @State private var showFriends = false
     @State private var friendsScope = FocusScope()
+    @Environment(\.verticalSizeClass) private var vSize
+    /// A phone held sideways: the page is sized to the screen with about 30 points to spare, so a row of notices of its own would squeeze the games' shelf.
+    private var sideways: Bool { vSize == .compact }
 
     /// Most recently played first.
     private var sortedGames: [Game] {
@@ -39,7 +44,7 @@ struct HomeScreen: View {
     var body: some View {
         @Bindable var router = router
         NavigationStack(path: $router.homePath) {
-            HomeView(notices: notices, games: sortedGames.map(card), featuredPlaying: preparingFeatured,
+            HomeView(notices: sideways ? [] : notices, games: sortedGames.map(card), featuredPlaying: preparingFeatured,
                      act: act, dismiss: dismissNotice, open: { router.homePath.append($0.id) }, play: { card in
                          if let game = model.games.first(where: { $0.id == card.id }) { session.start(game) }
                      }, add: { router.showAdd = true },
@@ -72,11 +77,12 @@ struct HomeScreen: View {
 
     /// The Friends button: on the Home Screen only (a game's page is a different screen on the stack), always there, above everything else.
     private var friendsBar: some View {
-        HStack {
-            Spacer(minLength: 0)
-            PillButton(id: "home-friends", title: friendsTitle, symbol: "person.2.fill", style: .glass) { showFriends = true }
+        HStack(spacing: 12) {
+            // Held sideways the notices sit here, beside the Friends button, instead of in a row of their own above the hero (which pushed the shelf out of shape).
+            if sideways, !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismissNotice, compact: true) } else { Spacer(minLength: 0) }
+            PillButton(id: "home-friends", title: friendsTitle, symbol: "person.2.fill", style: .glass) { showFriends = true }.fixedSize()
         }
-        .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 4)
+        .padding(.leading, sideways ? 14 : 28).padding(.trailing, 28).padding(.top, 8).padding(.bottom, 4)   // sideways the notices start where the page's own content does
     }
 
     /// "Friends", with how many are on Steam right now once the list has loaded.
@@ -130,6 +136,13 @@ struct HomeScreen: View {
         if !setupDone {
             list.append(NoticeData(id: "setup", symbol: "checklist", title: "Finish setting up", detail: "A few quick steps before games can run.", actionTitle: "Continue", dismissKey: "setup"))
         }
+        if let name = session.monoNeededFor, !WineMonoModel.available || mono.busy {
+            var detail = "\(name) is a .NET Framework game. Wine Mono, the open-source .NET runtime Wine uses, is about 42 MB from WineHQ and checked before use."
+            if mono.busy { detail = mono.status }
+            if let error = mono.error { detail = error }
+            list.append(NoticeData(id: "mono", symbol: "shippingbox.fill", title: mono.busy ? "Downloading .NET support" : ".NET support needed", detail: detail, tint: Theme.warn,
+                                   actionTitle: mono.busy ? nil : "Download", spinner: mono.busy))
+        }
         let runtime = VCRuntimeInstaller.shared
         if setupDone, !runtime.available {
             var detail = "Many games need Microsoft's C++ runtime. About 25 MB, from Microsoft, checked before use."
@@ -147,8 +160,10 @@ struct HomeScreen: View {
         }
         if VPNGuard.shared.paused, !session.isActive {
             let shortcut = VPNGuard.shared.hasShortcut
-            list.append(NoticeData(id: "vpn", symbol: "lock.open.fill", title: "Your VPN is paused", detail: "Porthole switched it off to turn on JIT or install an update. Turn it back on in Settings \u{203A} VPN, or make a shortcut that does it for you (Settings \u{203A} JIT and tunnel). This goes away by itself once a VPN is on.",
-                                   tint: Theme.warn, actionTitle: shortcut ? "Turn on" : "Got it"))
+            list.append(NoticeData(id: "vpn", symbol: "lock.open.fill", title: "Your VPN is paused",
+                                   detail: shortcut ? "Porthole switched it off to turn on JIT or install an update. Turn it back on here, or in Settings \u{203A} VPN. This goes away by itself once a VPN is on."
+                                                    : "Porthole switched it off to turn on JIT or install an update. iOS only lets a Shortcut turn it back on, so Porthole cannot do it by itself yet: set one up once (Settings \u{203A} JIT and connection \u{203A} Your own VPN) and it comes back after every launch.",
+                                   tint: Theme.warn, actionTitle: shortcut ? "Turn on" : "Set up", dismissKey: shortcut ? nil : "vpn-setup"))
         }
         if CellularGuard.shared.paused, !session.isActive, !CellularGuard.shared.busy {
             list.append(NoticeData(id: "cellular", symbol: "antenna.radiowaves.left.and.right.slash", title: "Cellular data is off", detail: "Porthole switched it off to turn on JIT or install an update and could not switch it back on. Tap Turn on to run the shortcut, or turn it on in Settings.",
@@ -182,6 +197,9 @@ struct HomeScreen: View {
         }
         if let (id, install) = amazonInstaller.installs.first(where: { $0.value.state == .active }), let game = amazonInstaller.game(for: id) {
             list.append(NoticeData(id: "download-amazon", symbol: "arrow.down.to.line", title: "\(game.title) \(Int(install.progress.fraction * 100))%", detail: "Downloading from Amazon Games. Tap to see all downloads.", actionTitle: "Open"))
+        }
+        if let (id, install) = eaInstaller.installs.first(where: { $0.value.state == .active }), let title = eaInstaller.title(for: id) {
+            list.append(NoticeData(id: "download-ea", symbol: "arrow.down.to.line", title: "\(title) \(Int(install.progress.fraction * 100))%", detail: "Downloading from the EA app. Tap to see all downloads.", actionTitle: "Open"))
         }
         // The maintainer answered a problem report: the status changed, or a note was added.
         let answered = problemTracker.answered
@@ -221,13 +239,14 @@ struct HomeScreen: View {
         case "restart-pending": RestartCoordinator.shared.cancel()
         case "setup": router.showSetup = true
         case "runtime": Task { await VCRuntimeInstaller.shared.install() }
+        case "mono": mono.install()
         case "cellular": Task { await CellularGuard.shared.restoreNow() }
-        case "vpn": if VPNGuard.shared.hasShortcut { VPNGuard.shared.runShortcut() } else { VPNGuard.shared.forget() }
+        case "vpn": if VPNGuard.shared.hasShortcut { VPNGuard.shared.runShortcut() } else { router.openSettings(.jit) }
         case "update": router.openSettings(.updates)
-        case "install": router.openSettings(.accounts)
+        case "install": router.openSettings(.jit)
         case "installer": UserDefaults.standard.removeObject(forKey: "f4.installerRan"); installerRan = nil; router.showAdd = true
         case "steam-update": router.openSteam()
-        case "download", "download-epic", "download-gog", "download-itch", "download-amazon": router.openDownloads()
+        case "download", "download-epic", "download-gog", "download-itch", "download-amazon", "download-ea": router.openDownloads()
         case "problem": router.openSettings(.report)
         case "compat": if let prompt = compat.prompt { reportGame = model.games.first { $0.id == prompt.gameID } }
         default: break
@@ -237,6 +256,7 @@ struct HomeScreen: View {
     @ViewBuilder private func menu(for card: GameCardData) -> some View {
         if let game = model.games.first(where: { $0.id == card.id }) {
             Button { session.start(game) } label: { Label("Play", systemImage: "play.fill") }.disabled(session.isActive)
+            Button { router.homePath.append(game.id) } label: { Label("Details", systemImage: "info.circle") }
             if game.dockAppID != nil {
                 let direct = game.launchDirect == true
                 Button { model.setLaunchDirect(!direct, for: game) } label: {

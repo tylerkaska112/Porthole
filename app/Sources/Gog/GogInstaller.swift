@@ -27,6 +27,8 @@ struct GogInstalledGame: Codable {
     var args: String
     /// The GOG build it was installed from (depot installs only), so a newer build can be told apart later.
     var build: String?
+    /// The game's own Galaxy client identity, from its build's manifest (see GogGalaxy); nil for a game installed before it was read, or whose build has none.
+    var galaxy: GOGGalaxyClient?
 }
 
 @MainActor final class GogInstaller: ObservableObject {
@@ -95,6 +97,12 @@ struct GogInstalledGame: Codable {
     func isInstalled(_ id: Int) -> Bool { installs[id]?.state == .installed }
     var activeID: Int? { active?.id }
     func record(_ id: Int) -> GogInstalledGame? { installed[id] }
+    /// Remembers a game's Galaxy client once it has been read for a game installed before.
+    func setGalaxy(_ client: GOGGalaxyClient, for id: Int) {
+        guard installed[id] != nil else { return }
+        installed[id]?.galaxy = client
+        persist()
+    }
     func game(for id: Int) -> GogGame? { pending[id] ?? installed[id]?.game }
     /// The game as the library holds it once installed (reports and settings are about that program).
     func entry(_ id: Int) -> Game? { installed[id] == nil ? nil : AppModel.shared.games.first { $0.gogID == id } }
@@ -668,6 +676,7 @@ private actor GogInstallWorker {
 
         var record = try finish(game)
         record.build = build.id
+        record.galaxy = meta.galaxy
         return record
     }
 

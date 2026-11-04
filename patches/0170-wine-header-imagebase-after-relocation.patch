@@ -1,0 +1,177 @@
+--- a/build/ntdll-unix/virtual_ios.c
++++ b/build/ntdll-unix/virtual_ios.c
+@@ -25720,6 +25720,29 @@
+         NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, protect_old[i], &protect_old[i] );
+     }
+     free( protect_old );
++    {
++        /* Porthole 0170: Windows writes the new load address into the mapped header's ImageBase after it relocates an image
++         * (Wine already does so for ASLR images, virtual.c "relocate to dynamic base"); this path left the preferred base there.
++         * Protection code that walks its own PE header (Black Ops III's Arxan) sees a module that was never relocated.
++         * Off unless MADEIRA_FIX_IMAGEBASE=1. */
++        static int fix_imagebase = -1;
++        if (fix_imagebase < 0) { const char *e = getenv( "MADEIRA_FIX_IMAGEBASE" ); fix_imagebase = e && e[0] == '1'; }
++        if (fix_imagebase)
++        {
++            void *haddr = module;
++            SIZE_T hsize = page_size;
++            ULONG hold;
++            if (!NtProtectVirtualMemory( NtCurrentProcess(), &haddr, &hsize, PAGE_READWRITE, &hold ))
++            {
++                if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
++                    ((IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.ImageBase = target_base;
++                else
++                    ((IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.ImageBase = (ULONG)target_base;
++                NtProtectVirtualMemory( NtCurrentProcess(), &haddr, &hsize, hold, &hold );
++                ERR( "[imagebase] 0170: header ImageBase %p -> %p\n", (void *)image_base, (void *)target_base );
++            }
++        }
++    }
+     return STATUS_SUCCESS;
+ }
+ 
+--- a/build/ntdll-unix/server_ios.c
++++ b/build/ntdll-unix/server_ios.c
+@@ -6241,6 +6241,46 @@
+ /***********************************************************************
+  *           server_init_process_done
+  */
++/* Porthole 0170 diagnostics: where does the main exe's big .data (BSS plus a little file data) become non-zero as the game unpacks itself?
++ * Every few seconds log the runs of non-zero 4 KB pages (rva, length, first 8 bytes). Only started for the exe named in MADEIRA_FIX_IMAGEBASE. */
++static struct { const unsigned char *base; unsigned int rva, size; } ios_data_watch;
++
++static void *ios_data_watch_thread( void *arg )
++{
++    static const unsigned int delays[] = { 3, 5, 6, 6, 6, 6 };
++    unsigned int round;
++    for (round = 0; round < sizeof(delays) / sizeof(delays[0]); round++)
++    {
++        unsigned int off, runs = 0, run_start = 0, in_run = 0, nz_pages = 0;
++        sleep( delays[round] );
++        for (off = 0; off <= ios_data_watch.size; off += 0x1000)
++        {
++            int nz = 0;
++            if (off < ios_data_watch.size)
++            {
++                const unsigned long long *q = (const unsigned long long *)(ios_data_watch.base + ios_data_watch.rva + off);
++                unsigned int i;
++                for (i = 0; i < 512; i++) if (q[i]) { nz = 1; break; }
++            }
++            if (nz) nz_pages++;
++            if (nz && !in_run) { in_run = 1; run_start = off; }
++            else if (!nz && in_run)
++            {
++                in_run = 0;
++                if (runs < 60)
++                {
++                    const unsigned char *m = ios_data_watch.base + ios_data_watch.rva + run_start;
++                    fprintf( stderr, "[data-watch] round %u: .data+%#x (rva %#x) len %#x first8 %02x%02x%02x%02x%02x%02x%02x%02x\n", round, run_start,
++                             ios_data_watch.rva + run_start, off - run_start, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7] );
++                }
++                runs++;
++            }
++        }
++        fprintf( stderr, "[data-watch] round %u: %u non-zero runs, %u non-zero pages of %u\n", round, runs, nz_pages, ios_data_watch.size / 0x1000 );
++    }
++    return NULL;
++}
++
+ void server_init_process_done(void)
+ {
+     void *teb;
+@@ -6291,6 +6331,95 @@
+     SERVER_END_REQ;
+ 
+     assert( !status );
++    {
++        /* Porthole 0170: the PE-side loader relocated the main exe (perform_relocations) but left the preferred base in its header's
++         * ImageBase; Windows writes the load address there. Done here, after the loader and before the first guest instruction.
++         * Off unless MADEIRA_FIX_IMAGEBASE=<exe file name>. */
++        const char *e = getenv( "MADEIRA_FIX_IMAGEBASE" );
++        /* the value is the exe's file name (the environment reaches every process of the game, Steam's own included: the first
++         * version of this, value 1, broke the Steam client's sign-in) */
++        BOOL match = FALSE;
++        if (e && e[0] && NtCurrentTeb()->Peb && NtCurrentTeb()->Peb->ProcessParameters)
++        {
++            const UNICODE_STRING *path = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
++            size_t n = strlen( e ), len = path->Length / sizeof(WCHAR), i;
++            if (len >= n)
++            {
++                match = TRUE;
++                for (i = 0; i < n; i++)
++                {
++                    WCHAR a = path->Buffer[len - n + i], b = (unsigned char)e[i];
++                    if (a >= 'A' && a <= 'Z') a += 32;
++                    if (b >= 'A' && b <= 'Z') b += 32;
++                    if (a != b) { match = FALSE; break; }
++                }
++                if (match && len > n && path->Buffer[len - n - 1] != '\\' && path->Buffer[len - n - 1] != '/') match = FALSE;
++            }
++        }
++        if (match)
++        {
++            void *exe = NtCurrentTeb()->Peb ? NtCurrentTeb()->Peb->ImageBaseAddress : NULL;
++            IMAGE_DOS_HEADER *dos = exe;
++            if (exe && dos->e_magic == IMAGE_DOS_SIGNATURE)
++            {
++                IMAGE_NT_HEADERS64 *nt64 = (IMAGE_NT_HEADERS64 *)((char *)exe + dos->e_lfanew);
++                if (nt64->Signature == IMAGE_NT_SIGNATURE && nt64->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
++                    nt64->OptionalHeader.ImageBase != (ULONG_PTR)exe)
++                {
++                    void *haddr = exe;
++                    SIZE_T hsize = 0x1000;
++                    ULONG hold;
++                    ULONG_PTR old = nt64->OptionalHeader.ImageBase;
++                    if (!NtProtectVirtualMemory( NtCurrentProcess(), &haddr, &hsize, PAGE_READWRITE, &hold ))
++                    {
++                        nt64->OptionalHeader.ImageBase = (ULONG_PTR)exe;
++                        NtProtectVirtualMemory( NtCurrentProcess(), &haddr, &hsize, hold, &hold );
++                        fprintf( stderr, "[imagebase] 0170: main exe header ImageBase %#llx -> %p\n", (unsigned long long)old, exe );
++                        {
++                            /* sections as the file declares them, with a few bytes of what memory holds now: tells a file-backed section from BSS */
++                            IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION( (IMAGE_NT_HEADERS *)nt64 );
++                            unsigned int k, b;
++                            for (k = 0; k < nt64->FileHeader.NumberOfSections; k++)
++                            {
++                                const unsigned char *m = (const unsigned char *)exe + sec[k].VirtualAddress;
++                                char hex[3 * 16 + 1];
++                                for (b = 0; b < 16; b++) sprintf( hex + b * 3, "%02x ", m[b] );
++                                fprintf( stderr, "[imagebase] 0170: section %.8s va=%#x vsize=%#x raw=%#x at file %#x chars=%#x first16: %s\n",
++                                         (const char *)sec[k].Name, (unsigned)sec[k].VirtualAddress, (unsigned)sec[k].Misc.VirtualSize,
++                                         (unsigned)sec[k].SizeOfRawData, (unsigned)sec[k].PointerToRawData, (unsigned)sec[k].Characteristics, hex );
++                            }
++                            {
++                                /* the address the 1.2.41 run jumped into and found zeros (exe+0x14deaea1), and the page around it */
++                                static const unsigned int probe[] = { 0x14dea000, 0x14deaea1, 0x14ded5b1, 0x10000000, 0x5000000, 0x1a000000 };
++                                for (k = 0; k < sizeof(probe) / sizeof(probe[0]); k++)
++                                {
++                                    const unsigned char *m = (const unsigned char *)exe + probe[k];
++                                    char hex[3 * 16 + 1];
++                                    if (probe[k] >= nt64->OptionalHeader.SizeOfImage) continue;
++                                    for (b = 0; b < 16; b++) sprintf( hex + b * 3, "%02x ", m[b] );
++                                    fprintf( stderr, "[imagebase] 0170: probe rva %#x: %s\n", probe[k], hex );
++                                }
++                            }
++                            {
++                                unsigned int best = 0, bsz = 0;
++                                for (k = 0; k < nt64->FileHeader.NumberOfSections; k++)
++                                    if (sec[k].Misc.VirtualSize > bsz && !(sec[k].Characteristics & 0x20)) { best = k; bsz = sec[k].Misc.VirtualSize; }
++                                if (bsz)
++                                {
++                                    pthread_t th;
++                                    ios_data_watch.base = exe;
++                                    ios_data_watch.rva = sec[best].VirtualAddress;
++                                    ios_data_watch.size = bsz & ~0xfffu;
++                                    if (!pthread_create( &th, NULL, ios_data_watch_thread, NULL )) pthread_detach( th );
++                                }
++                            }
++                        }
++                    }
++                    else fprintf( stderr, "[imagebase] 0170: could not make the header of %p writable\n", exe );
++                }
++            }
++        }
++    }
+ #ifdef WINE_IOS
+     /* On iOS, the parent's PE code (CreateProcessInternalW) should call
+      * NtResumeThread to unsuspend the child. But since we use thread-based

@@ -40,6 +40,13 @@ final class PadInput: @unchecked Sendable {
     private var releaseMask = PadReleaseMask()
     private var lastButtons: UInt16 = 0
     private var remap: PadRemap?                           // this game's button remap (nil = none)
+    /// Gyro aim and turbo (PadAssist.swift): this game's choices, nil when off. Set on `queue`.
+    private var assist: PadAssistSettings?
+    private var turboState = TurboState()
+    private var gyroMouseCarry = MotionCarry()
+    private var gyroMouseAt: UInt64 = 0
+    @MainActor private var controllerGyro = false
+    @MainActor private var lastAssistRequest: PadAssistSettings?
     /// The DualSense identity exists for this session (MADEIRA_HIDPAD was exported before the wineserver started; it cannot appear or go away later). Whether the game is shown
     /// the DualSense can still be switched while it runs, by publishing or withdrawing its reports. `autoHID`: what Automatic means this session.
     private var hidAvailable = false, autoHID = false
@@ -102,6 +109,9 @@ final class PadInput: @unchecked Sendable {
         if binds != nil { LogStore.shared.log("[pad] controller as keyboard and mouse for this game" + (game?.activeBindSet?.pad != nil ? " (bind set \"\(game?.activeBindSet?.name ?? "")\")" : "")) }
         PadRumble.shared.configure(scale: PadRumble.scale(from: EngineOptions.value("env.PORTHOLE_RUMBLE")))
         inSession = true
+        let assistNow = Self.liveAssist(game?.engine?.padAssist)
+        lastAssistRequest = assistNow
+        applyAssistSensors(assistNow)
         observe()
         refreshControllers()
         // Automatic mode: the game's controller mode is not set, nothing else decides, and keyboard and mouse is available.
@@ -122,6 +132,7 @@ final class PadInput: @unchecked Sendable {
         if let first { Self.announceChord(mask: menuMask, kind: ControllerKind.detect(first)) }
         queue.async { [self] in
             chordMask = menuMask; chord = PadChord(); captured = false; releaseMask = PadReleaseMask(); lastButtons = 0; remap = remapNow
+            assist = assistNow; turboState.reset(); gyroMouseCarry.reset(); gyroMouseAt = 0
             hidActive = hid; hidKeepsXInput = keepXInput; keyboardMouse = startBinds; mouseVertical = vertical
             hidAvailable = hid; autoHID = autoHIDNow
             hidReadyLock.lock(); hidReadyValue = hid; hidReadyLock.unlock()
@@ -129,6 +140,63 @@ final class PadInput: @unchecked Sendable {
             active = true; readLogAt = 0
             updateTimer(); sample()
         }
+    }
+
+    // MARK: Gyro aim and turbo (PadAssist.swift, from Madeira)
+
+    /// The choices that do something (nil = both off).
+    static func liveAssist(_ settings: PadAssistSettings?) -> PadAssistSettings? { settings.flatMap { $0.isOff ? nil : $0 } }
+
+    /// Switches the controller's and the device's motion sensors on or off to match what gyro aim may use.
+    @MainActor private func applyAssistSensors(_ live: PadAssistSettings?) {
+        let gyro = live?.gyro == true
+        controllerGyro = gyro && live?.source != .device
+        PadAssistSensors.setControllerGyro(controllerGyro)
+        PadAssistSensors.shared.setDeviceGyro(gyro && live?.source != .controller)
+    }
+
+    /// Gyro aim's rotation in the player's view, from the source the game's choices allow (queue).
+    private func gyroRates(_ assist: PadAssistSettings) -> (turn: Double, pitch: Double)? {
+        if assist.source != .device, let motion = controllers[0]?.motion, motion.hasRotationRate {
+            let r = motion.rotationRate
+            return GyroAim.controllerRates(x: r.x, y: r.y, z: r.z, turn: assist.turn)
+        }
+        return assist.source != .controller ? PadAssistSensors.shared.rates(turn: assist.turn) : nil
+    }
+
+    /// Whether gyro aim moves the mouse for this sample: chosen, or (automatic) while the game gets no controller from the pad (keyboard and mouse mode, or no pad at all).
+    private func gyroMouse(padPresent: Bool) -> Bool {
+        guard let assist, assist.gyro else { return false }
+        switch assist.output {
+        case .mouse: return true
+        case .stick: return false
+        case .auto: return keyboardMouse != nil || !padPresent
+        }
+    }
+
+    /// Gyro aim as relative mouse motion, by the time since the last sample (queue).
+    private func gyroToMouse(_ assist: PadAssistSettings, held: Bool) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let dt = gyroMouseAt == 0 ? 0 : min(Double(now &- gyroMouseAt) / 1e9, 1.0 / 15)
+        gyroMouseAt = now
+        guard held, !captured, !paused, let rates = gyroRates(assist) else { gyroMouseCarry.reset(); return }
+        let m = GyroAim.mouse(turn: rates.turn, pitch: rates.pitch, dt: dt, settings: assist)
+        let d = gyroMouseCarry.add(m.dx, m.dy, gain: 1)
+        if d.dx != 0 || d.dy != 0 { PadPointer.shared.move(dx: d.dx, dy: d.dy) }
+    }
+
+    /// Player 1's sample through gyro aim and turbo (queue). `mouse`: gyro aim moves the mouse instead of the right stick.
+    private func applyAssist(_ state: inout winios_gamepad, mouse: Bool) {
+        guard let assist else { return }
+        var pad = AssistPad(buttons: state.buttons, lt: state.left_trigger, rt: state.right_trigger, rx: state.rx, ry: state.ry)
+        if mouse && assist.gyro { gyroToMouse(assist, held: GyroAim.held(pad, assist.when)) }
+        var stickOnly = assist
+        if mouse { stickOnly.gyro = false }
+        let rates = stickOnly.gyro ? gyroRates(assist) : nil
+        applyPadAssist(&pad, settings: stickOnly, rates: rates, turbo: &turboState, now: DispatchTime.now().uptimeNanoseconds)
+        state.buttons = pad.buttons
+        state.left_trigger = pad.lt; state.right_trigger = pad.rt
+        state.rx = pad.rx; state.ry = pad.ry
     }
 
     /// The game reads Xbox gamepads only (a known game, or Rewired's Windows.Gaming.Input plugin): Automatic keeps the Xbox pad instead of showing a PlayStation controller as a DualSense.
@@ -190,8 +258,17 @@ final class PadInput: @unchecked Sendable {
         let keysForAuto = PadActions.bindings(game?.engine?.binds)
         let remapNow = Self.remap(of: game)
         let mode = game?.engine?.controllerMode
+        let assistNow = Self.liveAssist(game?.engine?.padAssist)
+        if assistNow != lastAssistRequest { lastAssistRequest = assistNow; applyAssistSensors(assistNow) }
         queue.async { [self] in
             remap = remapNow
+            if assist != assistNow {
+                let gyroText = assistNow.map { $0.gyro ? "\($0.source.rawValue)/\($0.when.rawValue)/\($0.turn.rawValue)/\($0.output.rawValue)" : "off" } ?? "off"
+                let turbo = assistNow.map { $0.turbo.joined(separator: "+") } ?? ""
+                LogStore.shared.log("[pad-assist] gyro=\(gyroText) sensitivity=\(assistNow?.sensitivity ?? 0) anti-dead-zone=\(assistNow?.antiDeadzone ?? 0) turbo=\(turbo.isEmpty ? "off" : turbo) rate=\(assistNow?.turboRate ?? 0)")
+                assist = assistNow; turboState.reset(); gyroMouseCarry.reset()
+                updateTimer()
+            }
             // The DualSense identity: shown for "DualSense and Xbox", hidden for the other explicit choices, and what Automatic means this session otherwise.
             if hidAvailable {
                 // "dinput" only adds the DirectInput joystick: it leaves the DualSense as the session started it (as Automatic does).
@@ -219,7 +296,9 @@ final class PadInput: @unchecked Sendable {
         inSession = false
         setSystemGestures(.enabled)
         PadRumble.shared.stopAll(); PadPointer.shared.reset()
+        applyAssistSensors(nil); lastAssistRequest = nil
         queue.async { [self] in
+            assist = nil; turboState.reset(); gyroMouseCarry.reset()
             active = false; captured = false; chord = PadChord(); releaseMask = PadReleaseMask()
             hidAvailable = false; autoHID = false
             hidReadyLock.lock(); hidReadyValue = false; hidReadyLock.unlock()
@@ -271,6 +350,7 @@ final class PadInput: @unchecked Sendable {
     /// The live profiles are captured on the main thread: fetching extendedGamepad on the polling queue gave stale axes on some devices.
     @MainActor private func refreshControllers() {
         if inSession { setSystemGestures(.disabled) }
+        if controllerGyro { PadAssistSensors.setControllerGyro(true) }   // a pad that connects mid-session gets its sensors switched on too
         let live = GCController.controllers().compactMap { c -> (GCController, GCExtendedGamepad)? in c.extendedGamepad.map { (c, $0) } }
         queue.async { [self] in
             for i in controllers.indices {
@@ -290,7 +370,9 @@ final class PadInput: @unchecked Sendable {
     }
 
     private func updateTimer() {
-        let needed = active && profiles.contains { $0 != nil }
+        // Gyro aim moving the mouse needs the poll even with no controller (the device's own gyro).
+        let mouseGyro = assist.map { $0.gyro && $0.output != .stick } ?? false
+        let needed = active && (profiles.contains { $0 != nil } || mouseGyro)
         if !needed { timer?.cancel(); timer = nil; return }
         guard timer == nil else { return }
         let source = DispatchSource.makeTimerSource(queue: queue)
@@ -302,7 +384,55 @@ final class PadInput: @unchecked Sendable {
 
     // MARK: Sampling
 
-    private func clearPad(_ i: Int) { if published[i] { winios_gamepad_set_state(Int32(i), nil); published[i] = false } }
+    private func clearPad(_ i: Int) { if published[i] { winios_gamepad_set_state(Int32(i), nil); published[i] = false }; clearBattery(i) }
+
+    // MARK: Battery (XInputGetBatteryInformation, XINPUT_CAPS_WIRELESS)
+
+    /// When each slot's battery is read next (uptime ns); 0 = at once.
+    private var batteryNextRead = [UInt64](repeating: 0, count: 4)
+    private var batteryLogs = 0
+    /// env.MADEIRA_XINPUT_BATTERY = 0 publishes nothing: XInput keeps reporting an unknown battery.
+    private static var batteryEnabled: Bool { getenv("MADEIRA_XINPUT_BATTERY").map { String(cString: $0) != "0" } ?? true }
+
+    /// GameController's battery as XInput reports one. Charging or full means a cable is in, which Windows shows as a wired pad (wired, full). On its battery the level is
+    /// bucketed at 5/20/70 % (SDL's reverse mapping). No battery object or an unknown state: unknown type at full, so a game does not warn about a level nobody can read.
+    static func xinputBattery(level: Float?, state: GCDeviceBattery.State?) -> (type: UInt8, level: UInt8) {
+        switch state {
+        case .charging?, .full?:
+            return (UInt8(WINIOS_BATTERY_TYPE_WIRED), UInt8(WINIOS_BATTERY_LEVEL_FULL))
+        case .discharging?:
+            let fraction = level.map { $0.isFinite ? max(0, min(1, $0)) : 1 } ?? 1
+            let bucket = fraction <= 0.05 ? WINIOS_BATTERY_LEVEL_EMPTY
+                : fraction <= 0.20 ? WINIOS_BATTERY_LEVEL_LOW
+                : fraction <= 0.70 ? WINIOS_BATTERY_LEVEL_MEDIUM : WINIOS_BATTERY_LEVEL_FULL
+            return (UInt8(WINIOS_BATTERY_TYPE_NIMH), UInt8(bucket))
+        default:
+            return (UInt8(WINIOS_BATTERY_TYPE_UNKNOWN), UInt8(WINIOS_BATTERY_LEVEL_FULL))
+        }
+    }
+
+    /// Slot i's battery, read at most once a second.
+    private func publishBattery(_ i: Int, pad: GCExtendedGamepad) {
+        guard Self.batteryEnabled else { return }
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now >= batteryNextRead[i] else { return }
+        batteryNextRead[i] = now + 1_000_000_000
+        let battery = pad.controller?.battery
+        let mapped = Self.xinputBattery(level: battery?.batteryLevel, state: battery?.batteryState)
+        var value = winios_gamepad_battery()
+        value.valid = 1; value.type = mapped.type; value.level = mapped.level
+        if winios_gamepad_set_battery(Int32(i), &value) != 0, batteryLogs < 32 {
+            batteryLogs += 1
+            LogStore.shared.log("[xinput] slot=\(i) battery type=\(value.type) level=\(value.level)")
+        }
+    }
+
+    /// The slot has no pad, so its battery is withdrawn.
+    private func clearBattery(_ i: Int) {
+        guard batteryNextRead[i] != 0 else { return }
+        batteryNextRead[i] = 0
+        _ = winios_gamepad_set_battery(Int32(i), nil)
+    }
     private func clearHID() { if hidPublished { winios_hidpad_set_state(nil); hidPublished = false } }
 
     private static func axis(_ v: Float) -> Int16 {
@@ -395,6 +525,8 @@ final class PadInput: @unchecked Sendable {
         for i in 0..<4 {
             guard active, !paused, let pad = profiles[i] else {
                 if i == 0, keyboardMouse != nil { releaseAll() }
+                // No controller for the game: gyro aim can still move the mouse (with nothing to hold, only "Always" does).
+                if i == 0, active, !paused, let assist, gyroMouse(padPresent: false) { gyroToMouse(assist, held: assist.when == .always) }
                 clearPad(i)
                 if i == 0 { clearHID() }
                 continue
@@ -431,11 +563,13 @@ final class PadInput: @unchecked Sendable {
                     publishHID(neutral, pad: pad)
                     if !hidKeepsXInput { clearPad(0); continue }
                 }
+                publishBattery(i, pad: pad)
                 winios_gamepad_set_state(Int32(i), &neutral); published[i] = true
                 continue
             }
             if i == 0, let binds = keyboardMouse {
                 // Keyboard and mouse: the pad is not an Xbox pad for this game.
+                applyAssist(&state, mouse: gyroMouse(padPresent: true))
                 feed(state, binds: binds)
                 clearPad(0); clearHID()
                 continue
@@ -444,10 +578,12 @@ final class PadInput: @unchecked Sendable {
                 let out = r.apply(buttons: state.buttons, lt: state.left_trigger, rt: state.right_trigger)
                 state.buttons = out.buttons; state.left_trigger = out.lt; state.right_trigger = out.rt
             }
+            if i == 0 { applyAssist(&state, mouse: gyroMouse(padPresent: true)) }
             if i == 0, hidActive {
                 publishHID(state, pad: pad)
                 if !hidKeepsXInput { clearPad(0); continue }
             }
+            publishBattery(i, pad: pad)
             winios_gamepad_set_state(Int32(i), &state); published[i] = true
         }
     }

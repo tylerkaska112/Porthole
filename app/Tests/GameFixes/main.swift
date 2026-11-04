@@ -30,6 +30,9 @@ let escape = GameFixes.Fix(steamAppID: 1, title: "x", hide: ["../outside.dll"], 
 try! Data("x".utf8).write(to: tmp.deletingLastPathComponent().appendingPathComponent("outside.dll"))
 check(GameFixes.hide(escape, in: tmp).first?.hasPrefix("refused") == true && fm.fileExists(atPath: tmp.deletingLastPathComponent().appendingPathComponent("outside.dll").path), "a path that leaves the game folder is refused")
 try? fm.removeItem(at: tmp.deletingLastPathComponent().appendingPathComponent("outside.dll"))
+check(GameFixes.fix(forSteamAppID: 3259780)?.configLines == ["env.MADEIRA_VCRT_ARM64_KEY = 1", "env.MADEIRA_X64_IMAGE_NOCOPY = 1", "pool-split = 1"] && GameFixes.fix(forSteamAppID: 3259780)?.hide.isEmpty == true && GameFixes.fix(forSteamAppID: 3259780)?.alwaysDirect == false, "Final Fantasy Resonance: the ARM64 runtime marker, the x64 image line and the split pool, nothing hidden, still started through Steam")
+check(GameFixes.fix(forSteamAppID: 4474710)?.configLines == GameFixes.fix(forSteamAppID: 3259780)?.configLines, "the demo gets the same lines as the full game")
+
 try? fm.removeItem(at: tmp)
 let ac = GameFixes.fix(forSteamAppID: 244210)!
 check(ac.alwaysDirect && ac.directProgram == "acs.exe" && ac.hide.isEmpty && ac.overridesValue.isEmpty, "Assetto Corsa: start acs.exe directly, hide nothing")

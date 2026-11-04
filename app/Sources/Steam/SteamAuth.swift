@@ -30,8 +30,11 @@ struct SteamAPIError: Error, Equatable, CustomStringConvertible {
 
     /// Steam refused the token itself (expired, revoked, or not valid for this call).
     var isTokenRefusal: Bool { http == 401 || http == 403 || eresult == 15 || eresult == 21 }
-    /// The refresh token can no longer be used at all, so the account has to sign in again.
-    var isSessionOver: Bool { isTokenRefusal || eresult == 27 || eresult == 8 }
+    /// Steam itself answered, with a number, that the refresh token can no longer be used. A bare HTTP 401/403 does not count: VPNs, firewalls,
+    /// captive portals and content filters answer with those too, and one of them used to delete a perfectly good sign-in ("Steam signs me out at random").
+    var isSessionOver: Bool { eresult == 15 || eresult == 21 || eresult == 27 || eresult == 8 }
+    /// Text for the log: what was refused, never a token.
+    var logText: String { "HTTP \(http.map(String.init) ?? "-"), eresult \(eresult.map(String.init) ?? "-")" }
 
     static func message(forEResult code: Int) -> String {
         switch code {
@@ -465,15 +468,43 @@ struct SteamGame: Codable, Equatable, Identifiable {
 final class SteamAccount {
     let api: SteamAPI
     private let store: SteamSessionStore
-    private(set) var session: SteamAccountSession?
+    private var kept: SteamAccountSession?
+    /// Set by an explicit sign-out; until then a failed Keychain read is tried again instead of staying "signed out" for the whole run.
+    private var forgotten = false
+    /// A refusal from Steam is only believed when it repeats (see `confirmedRefusal`).
+    private var firstRefusal: Date?
+    static let refusalRetryDelay: TimeInterval = 3
 
-    init(api: SteamAPI, store: SteamSessionStore) { self.api = api; self.store = store; session = store.load() }
+    init(api: SteamAPI, store: SteamSessionStore) { self.api = api; self.store = store; kept = store.load() }
+
+    /// The saved sign-in. The Keychain can be unreadable at one moment (the device not yet unlocked after a restart, while the app was started in
+    /// the background); that must not look like a sign-out, so a missing session is read again each time until the person signs out.
+    private(set) var session: SteamAccountSession? {
+        get {
+            if kept == nil, !forgotten { kept = store.load() }
+            return kept
+        }
+        set { kept = newValue }
+    }
 
     var isSignedIn: Bool { session != nil }
     var displayName: String? { session?.accountName }
 
-    func adopt(_ session: SteamAccountSession) { self.session = session; store.save(session) }
-    func signOut() { session = nil; store.clear() }
+    func adopt(_ session: SteamAccountSession) { forgotten = false; firstRefusal = nil; self.session = session; store.save(session) }
+    func signOut() { forgotten = true; firstRefusal = nil; session = nil; store.clear() }
+
+    /// Steam refused the saved sign-in with a numbered answer. The first time only counts; the second one, a few seconds later, is believed.
+    /// Returns true when the sign-in should be forgotten now.
+    func confirmedRefusal(_ error: SteamAPIError, now: Date = Date()) -> Bool {
+        guard error.isSessionOver else { return false }
+        if let first = firstRefusal, now.timeIntervalSince(first) >= Self.refusalRetryDelay * 0.9, now.timeIntervalSince(first) < 600 {
+            SteamLog.event("Steam: the saved sign-in was refused again (\(error.logText)); signing out.")
+            return true
+        }
+        firstRefusal = now
+        SteamLog.event("Steam: the saved sign-in was refused (\(error.logText)); keeping it and asking once more.")
+        return false
+    }
 
     /// A working access token: the one we hold if it has time left, otherwise a new one made from the refresh token.
     func accessToken(forceRefresh: Bool, completion: @escaping (Result<String, SteamAPIError>) -> Void) {
@@ -484,12 +515,21 @@ final class SteamAccount {
             guard let self else { return }
             switch result {
             case .failure(let error):
-                if error.isSessionOver { SteamLog.event("Steam: the saved sign-in is no longer accepted; signing out."); self.signOut() }
+                if error.isSessionOver {
+                    if self.confirmedRefusal(error) { self.signOut(); completion(.failure(error)) }
+                    else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + Self.refusalRetryDelay) { [weak self] in
+                            self?.accessToken(forceRefresh: true, completion: completion)
+                        }
+                    }
+                    return
+                }
                 completion(.failure(error))
             case .success(let reply):
                 guard let token = SteamJSON.string(reply["access_token"]), !token.isEmpty else {
                     completion(.failure(.unexpected("Steam did not give a new access token."))); return
                 }
+                self.firstRefusal = nil
                 current.accessToken = token
                 if let renewed = SteamJSON.string(reply["refresh_token"]), !renewed.isEmpty { current.refreshToken = renewed }
                 self.session = current; self.store.save(current)

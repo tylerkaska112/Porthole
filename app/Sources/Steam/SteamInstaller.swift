@@ -65,6 +65,13 @@ final class SteamInstaller {
     private var remaining: [Int: Int] = [:]
     private var progressTimer: Timer?
     private var total: UInt64 = 0
+    /// For each install path (compared as Windows does), the index of the last depot that lists it. Valve's client keeps the copy from the depot mounted later, so that depot alone writes
+    /// the file (from Madeira, PR 524: both copies written to one path made every repair flip the file between them).
+    private var lastOwner: [String: Int] = [:]
+    /// What the transfer is measured in for the person: the compressed bytes that cross the network (the same figure the Install button showed), not the bytes the files take on disk.
+    /// `networkTotal` is every chunk's compressed size, `networkAlreadyDone` the part of it a resumed download had already fetched.
+    private var networkTotal: UInt64 = 0
+    private var networkAlreadyDone: UInt64 = 0
 
     private struct Item { var depot: Int; var file: Int; var chunk: Int; var global: UInt32 }
     private var manifests: [SteamManifest] = []
@@ -108,7 +115,7 @@ final class SteamInstaller {
     func start() {
         guard state == .idle || state.isFinal else { return }
         token += 1
-        lock.lock(); cancelled = false; failure = nil; written = 0; networkBytes = 0; rejected = 0; lastPerfLog = Date(); samples = []; pendingDone = []; descriptors = [:]; remaining = [:]; lock.unlock()
+        lock.lock(); cancelled = false; failure = nil; written = 0; networkBytes = 0; networkTotal = 0; networkAlreadyDone = 0; rejected = 0; lastPerfLog = Date(); samples = []; pendingDone = []; descriptors = [:]; remaining = [:]; lock.unlock()
         state = .preparing("Asking Steam about \(name)…")
         if let workshop {
             SteamLog.event("Steam download: starting Workshop item \(workshop.item) of app \(appid).")
@@ -301,7 +308,13 @@ final class SteamInstaller {
             progressFolder = Self.progressFolder(appID: appid, steamApps: steamApps)
         }
         // What will actually be written: no folders, no links, and not Steam's redistributable installers.
-        total = manifests.reduce(0) { sum, manifest in sum + manifest.files.reduce(0) { $0 + (Self.isWanted($1) ? $1.size : 0) } }
+        lastOwner = [:]
+        for (depotIndex, manifest) in manifests.enumerated() {
+            for file in manifest.files where Self.isWanted(file) { lastOwner[Self.overlapKey(file.path)] = depotIndex }
+        }
+        total = manifests.enumerated().reduce(0) { sum, entry in
+            sum + entry.element.files.reduce(0) { $0 + (Self.isWanted($1) && lastOwner[Self.overlapKey($1.path)] == entry.offset ? $1.size : 0) }
+        }
 
         // Room for it? Keep half a gigabyte free for the system.
         let need = Int64(total) + 512 << 20
@@ -355,11 +368,12 @@ final class SteamInstaller {
         var jobs: [Job] = []
         var global: UInt32 = 0
         var totalBytes: UInt64 = 0
-        for manifest in manifests {
+        for (depotIndex, manifest) in manifests.enumerated() {
             for file in manifest.files {
-                // The same numbering as the layout: directories count nothing, links and redistributables count their chunks, empty files nothing.
+                // The same numbering as the layout: directories count nothing, links, redistributables and files a later depot overrides count their chunks, empty files nothing.
                 if Self.isRedistributable(file.path) || file.isSymlink { global += UInt32(file.chunks.count); continue }
                 if file.isDirectory { continue }
+                if lastOwner[Self.overlapKey(file.path)] != depotIndex { global += UInt32(file.chunks.count); continue }
                 if file.chunks.isEmpty || file.size == 0 { continue }
                 let path = gameFolder.appendingPathComponent(file.path).path
                 var info = stat()
@@ -412,13 +426,16 @@ final class SteamInstaller {
         var items: [Item] = []
         var global: UInt32 = 0
         var doneBytes: UInt64 = 0
+        var netTotal: UInt64 = 0, netDone: UInt64 = 0
         remaining = [:]
+        var overridden = 0
         for (depotIndex, manifest) in manifests.enumerated() {
             for (fileIndex, file) in manifest.files.enumerated() {
                 if Self.isRedistributable(file.path) { global += UInt32(file.chunks.count); continue }
                 let target = gameFolder.appendingPathComponent(file.path)
                 if file.isDirectory { try? fm.createDirectory(at: target, withIntermediateDirectories: true); continue }
                 if file.isSymlink { global += UInt32(file.chunks.count); continue }
+                if lastOwner[Self.overlapKey(file.path)] != depotIndex { global += UInt32(file.chunks.count); overridden += 1; continue }
                 try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 if file.chunks.isEmpty || file.size == 0 {
                     if !fm.fileExists(atPath: target.path) { fm.createFile(atPath: target.path, contents: nil) }
@@ -426,7 +443,8 @@ final class SteamInstaller {
                 }
                 var left = 0
                 for (chunkIndex, chunk) in file.chunks.enumerated() {
-                    if done.contains(global) { doneBytes += UInt64(chunk.originalSize) }
+                    netTotal += UInt64(chunk.compressedSize)
+                    if done.contains(global) { doneBytes += UInt64(chunk.originalSize); netDone += UInt64(chunk.compressedSize) }
                     else { items.append(Item(depot: depotIndex, file: fileIndex, chunk: chunkIndex, global: global)); left += 1 }
                     global += 1
                 }
@@ -438,9 +456,10 @@ final class SteamInstaller {
                 }
             }
         }
-        lock.lock(); written = doneBytes; lock.unlock()
-        SteamLog.event("Steam download: \(items.count) chunk(s) to fetch, \(Self.size(Int64(total))) in total.")
-        state = .downloading(SteamDownloadProgress(doneBytes: doneBytes, totalBytes: total, bytesPerSecond: 0))
+        lock.lock(); written = doneBytes; networkTotal = netTotal; networkAlreadyDone = netDone; lock.unlock()
+        if overridden > 0 { SteamLog.event("[steam-depot] overlap files=\(overridden) (a later depot's copy is installed, as Valve's client does)") }
+        SteamLog.event("Steam download: \(items.count) chunk(s) to fetch, \(Self.size(Int64(netTotal))) to download (\(Self.size(Int64(total))) on disk).")
+        state = .downloading(netTotal > 0 ? SteamDownloadProgress(doneBytes: netDone, totalBytes: netTotal, bytesPerSecond: 0) : SteamDownloadProgress(doneBytes: doneBytes, totalBytes: total, bytesPerSecond: 0))
         progressTimer?.invalidate()
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
 
@@ -448,7 +467,7 @@ final class SteamInstaller {
         let fixed = parallelChunks
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            var controller = ConcurrencyController(start: max(1, fixed), floor: max(1, min(fixed, 8)), ceiling: self.adaptive ? 64 : max(1, fixed))
+            var controller = ConcurrencyController(start: max(1, fixed), floor: max(1, min(fixed, 8)), ceiling: self.adaptive ? 96 : max(1, fixed))
             let gate = NSCondition()
             var inFlight = 0
             for item in items {
@@ -479,6 +498,8 @@ final class SteamInstaller {
         path.split(separator: "/").contains { $0.caseInsensitiveCompare("_CommonRedist") == .orderedSame }
     }
     private static func isWanted(_ file: SteamManifestFile) -> Bool { !file.isDirectory && !file.isSymlink && !isRedistributable(file.path) }
+    /// One install path, compared as Windows compares names: any case, either slash.
+    private static func overlapKey(_ path: String) -> String { path.replacingOccurrences(of: "\\", with: "/").lowercased() }
 
     private func fileKey(_ depot: Int, _ file: Int) -> Int { depot << 32 | file }
 
@@ -588,6 +609,7 @@ final class SteamInstaller {
         samples.append((now, networkBytes)); samples.removeAll { now.timeIntervalSince($0.time) > 4 }
         let speed: Double = samples.count >= 2 ? Double(networkBytes - samples[0].bytes) / max(0.5, now.timeIntervalSince(samples[0].time)) : 0
         let done = written
+        let netTotal = networkTotal, netDone = min(networkTotal, networkAlreadyDone + networkBytes)
         let target = currentTarget, refused = rejected
         let logNow = now.timeIntervalSince(lastPerfLog) >= 10
         var times = (chunks: 0, net: 0.0, decode: 0.0, write: 0.0)
@@ -599,7 +621,8 @@ final class SteamInstaller {
                                   speed / 1_048_576, Double(done) / 1_048_576, Double(total) / 1_048_576, target, refused,
                                   times.net / n * 1000, times.decode / n * 1000, times.write / n * 1000, times.chunks, hostBook.summary()))
         }
-        state = .downloading(SteamDownloadProgress(doneBytes: done, totalBytes: total, bytesPerSecond: speed))
+        // The bar, "x of y" and the time left all use network bytes, the unit the speed is measured in (the disk size is 2 to 3 times larger for most games, which made the time left too long).
+        state = .downloading(netTotal > 0 ? SteamDownloadProgress(doneBytes: netDone, totalBytes: netTotal, bytesPerSecond: speed) : SteamDownloadProgress(doneBytes: done, totalBytes: total, bytesPerSecond: speed))
     }
 
     private func transferEnded(_ id: Int) {

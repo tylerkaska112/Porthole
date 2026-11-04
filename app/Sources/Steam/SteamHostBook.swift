@@ -19,6 +19,7 @@ final class SteamHostBook: @unchecked Sendable {
     private let hosts: [SteamCDNServer]
     private var entries: [String: Entry] = [:]
     private var active: Int
+    private var chooses = 0
 
     /// `hosts` come best first (the directory's own order of priority and load).
     init(hosts: [SteamCDNServer], startWith: Int = 6) {
@@ -60,7 +61,17 @@ final class SteamHostBook: @unchecked Sendable {
         // More servers once the ones in use each have plenty waiting.
         let waiting = hosts.reduce(0) { $0 + (entries[$1.host]?.inFlight ?? 0) }
         if active < hosts.count, waiting > active * 6 { active += 1 }
-        let pool = Array(hosts.prefix(active))
+        // The directory's order is a guess about this network: once it listed only six slow, busy servers of one far-off site first and the nearer ones, which were ten times
+        // faster for the same device a day later, never got a turn. So now and then (often at the start, seldom later) one request goes to a server outside the ones in
+        // use that has not been tried; once it has shown its speed it competes with the rest on that speed.
+        chooses += 1
+        let probeEvery = chooses < 600 ? 40 : 200
+        if chooses % probeEvery == 0,
+           let outsider = hosts.dropFirst(active).first(where: { (entries[$0.host]?.requests ?? 0) == 0 && (entries[$0.host]?.sitOutUntil ?? .distantPast) <= now }) {
+            entries[outsider.host, default: Entry()].inFlight += 1
+            return outsider
+        }
+        let pool = Array(hosts.prefix(active)) + hosts.dropFirst(active).filter { (entries[$0.host]?.speed ?? 0) > 0 }
         var usable = pool.filter { (entries[$0.host]?.sitOutUntil ?? .distantPast) <= now }
         if usable.isEmpty { usable = hosts.filter { (entries[$0.host]?.sitOutUntil ?? .distantPast) <= now } }
         if usable.isEmpty { usable = pool }

@@ -15,8 +15,19 @@ final class SteamStore: ObservableObject {
         var name: String
         var installDir: String
         var buildID: Int
+        /// What the install downloads (compressed, with the DLC the account owns minus the ones turned off): the figure on the Install button.
         var sizeBytes: UInt64
+        /// What the files take on the device once installed. nil in a list saved before this was recorded.
+        var diskBytes: UInt64? = nil
         var launches: [SteamLaunchOption]
+        /// "demo", "beta" or "application" for an app that is not a full game; nil for a game (and in a list saved before this was recorded).
+        var kind: String? = nil
+        /// What the tile says about it, when it is not a full game.
+        var kindLabel: String? {
+            switch kind { case "demo"?: "Demo"; case "beta"?: "Beta"; case "application"?: "Software"; default: nil }
+        }
+        /// What has to be free before installing: the size on disk (the download size when only that is known), and a little more for the files being written.
+        var spaceNeeded: UInt64 { UInt64(Double(diskBytes ?? sizeBytes) * 1.15) }
         var folderName: String { SteamInstallFiles.safeFolderName(installDir.isEmpty ? "app_\(id)" : installDir) }
     }
 
@@ -67,7 +78,9 @@ final class SteamStore: ObservableObject {
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("steam-library.json")
     }
-    private struct Cache: Codable { var account: String; var updated: Date; var games: [Owned] }
+    /// 2: the list also holds demos, beta apps and software. A list saved before that (no number) is refreshed at the next start.
+    private static let libraryFormat = 2
+    private struct Cache: Codable { var account: String; var updated: Date; var games: [Owned]; var format: Int? = nil }
     private var updated: Date?
 
     private static func key(_ account: String?) -> String {
@@ -110,12 +123,13 @@ final class SteamStore: ObservableObject {
     private func loadCache() {
         guard signedIn, let data = try? Data(contentsOf: Self.cacheURL), data.count < 64 << 20,
               let cache = try? JSONDecoder().decode(Cache.self, from: data), cache.account == Self.key(accountName) else { return }
-        owned = cache.games; updated = cache.updated
+        owned = cache.games
+        updated = cache.format == Self.libraryFormat ? cache.updated : nil
     }
 
     private func saveCache() {
         guard let updated else { return }
-        try? JSONEncoder().encode(Cache(account: Self.key(accountName), updated: updated, games: owned)).write(to: Self.cacheURL, options: .atomic)
+        try? JSONEncoder().encode(Cache(account: Self.key(accountName), updated: updated, games: owned, format: Self.libraryFormat)).write(to: Self.cacheURL, options: .atomic)
     }
 
     // MARK: Library
@@ -126,10 +140,13 @@ final class SteamStore: ObservableObject {
         guard NetworkStatus.shared.isOnline else { SteamLog.event("[steam-library] offline: keeping the saved list"); return }
         refreshing = true; defer { refreshing = false }
         do {
-            let apps = try await service.ownedApps()
-            owned = apps.map {
-                Owned(id: $0.appid, name: $0.name, installDir: $0.installDirectory ?? "", buildID: Int($0.buildID ?? "") ?? 0,
-                      sizeBytes: SteamDepotPlanner.sizes(app: $0).download, launches: $0.launches)
+            let library = try await service.ownedLibrary()
+            owned = library.apps.map { app in
+                // The size of what an install really fetches: the DLC the account owns is included (as an install does by default) minus what the person turned off.
+                let selection = SteamInstallSelection(dlc: .allExcept(choice(app.appid).disabledDLC))
+                let size = SteamDepotPlanner.sizes(app: app, selection: selection, ownedDepots: library.depots)
+                return Owned(id: app.appid, name: app.name, installDir: app.installDirectory ?? "", buildID: Int(app.buildID ?? "") ?? 0,
+                             sizeBytes: size.download, diskBytes: size.disk, launches: app.launches, kind: app.type == "game" ? nil : app.type)
             }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             updated = Date(); saveCache(); error = nil
             SteamLog.event("[steam-library] windows-installable=\(owned.count)")

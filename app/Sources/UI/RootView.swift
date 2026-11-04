@@ -54,7 +54,6 @@ struct RootView: View {
         .onAppear {
             guides.blocked = coverUp
             guides.autoShow(tabGuide)
-            scope.defaultFocus = "hero-play"
             scope.onSection = { step in
                 let i = Self.tabOrder.firstIndex(of: router.tab) ?? 0
                 router.tab = Self.tabOrder[(i + step + Self.tabOrder.count) % Self.tabOrder.count]
@@ -69,7 +68,7 @@ struct RootView: View {
         // While the app updates itself nothing else can be used, and the person is told to stay.
         .overlay { UpdateProgressOverlay() }
         .sheet(isPresented: $router.showAdd) {
-            AddGameFlow(onSteam: { router.openSteam() }, onEpic: { router.openStore(.epic) }, onGog: { router.openStore(.gog) }, onItch: { router.openStore(.itch) }, onAmazon: { router.openStore(.amazon) }, onInstaller: { router.pickInstaller = true })
+            AddGameFlow(onSteam: { router.openSteam() }, onEpic: { router.openStore(.epic) }, onGog: { router.openStore(.gog) }, onItch: { router.openStore(.itch) }, onAmazon: { router.openStore(.amazon) }, onEA: { router.openStore(.ea) }, onInstaller: { router.pickInstaller = true })
                 .environmentObject(model).environment(router).preferredColorScheme(Theme.scheme)
         }
         // The setup guide covers the whole screen, on iPhone and iPad.
@@ -84,7 +83,8 @@ struct RootView: View {
         .onChange(of: session.isActive) { _, running in
             SteamStore.shared.gameRunning(running)
             if !running { GogInstaller.shared.sessionEnded(); ItchInstaller.shared.sessionEnded() }          // a GOG setup that was running has finished: look for what it installed
-            if !running { VPNGuard.shared.restoreIfPaused(); CellularGuard.shared.restoreIfPaused() }       // the game ended or never started: bring the person's own VPN and cellular data back
+            // The game ended or never started: bring the person's own VPN and cellular data back. After a failed launch they wait until its message is dismissed (SessionController.dismiss).
+            if !running, !session.failureOnScreen { VPNGuard.shared.restoreIfPaused(); CellularGuard.shared.restoreIfPaused() }
         }
         // Compatibility badges: when the app opens, when the game list changes, and when the app comes back to the front. (The Library used to do this itself.)
         .task { await Task.detached(priority: .utility) { SteamClientTraces.scrub(); SecretFiles.sweep() }.value; StoreNetwork.purgeOldCache() }
@@ -103,6 +103,7 @@ struct RootView: View {
             CrashEvidence.captureIfNeeded()
             _ = NetworkStatus.shared          // start watching the network, so screens know early whether it is there
             CellularGuard.warmUp()
+            BackgroundRun.shared.start()        // does nothing unless Settings > Play > Performance keeps a game running in the background
             ControllerInput.shared.start()
             SteamStore.shared.onInstalled = { [weak model] game, exe in
                 guard let model else { return }
@@ -137,7 +138,7 @@ struct RootView: View {
     }
 
     private var setupGuide: some View {
-        SetupGuideView(openAdd: { router.showAdd = true }, openSteam: { router.openSteam() }, openEpic: { router.openStore(.epic) }, openGog: { router.openStore(.gog) }, openItch: { router.openStore(.itch) }, openAmazon: { router.openStore(.amazon) }).environmentObject(model).environment(updates)
+        SetupGuideView(openAdd: { router.showAdd = true }, openSteam: { router.openSteam() }, openEpic: { router.openStore(.epic) }, openGog: { router.openStore(.gog) }, openItch: { router.openStore(.itch) }, openAmazon: { router.openStore(.amazon) }, openEA: { router.openStore(.ea) }).environmentObject(model).environment(updates)
     }
 
     /// A guide step's button: close the guide, then go where it says.

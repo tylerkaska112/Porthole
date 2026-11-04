@@ -13,6 +13,7 @@ struct SteamGamePage: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var session: SessionController
     @Environment(AppRouter.self) private var router
+    @Environment(\.verticalSizeClass) private var vSize
     @ObservedObject private var compat = CompatStore.shared
 
     @State private var page: SteamStorePage?
@@ -48,21 +49,32 @@ struct SteamGamePage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            hero
-            VStack(alignment: .leading, spacing: 0) {
-                HStack { PillButton(id: "sp-back", title: backTitle, symbol: "chevron.left", action: back); Spacer() }.padding(.horizontal, 24).padding(.top, 8)
-                FocusScroll {
-                    VStack(alignment: .leading, spacing: 22) {
-                        titleBlock.padding(.top, 70)
-                        actions
-                        if let page, !page.media.isEmpty { mediaStrip(page.media) }
-                        about
-                        doors
-                        if loading && page == nil { ProgressView().tint(Theme.accent).frame(maxWidth: .infinity).padding() }
-                        else if page == nil { Text("The Steam page couldn't be loaded. Check the connection and open this again.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
+            backdrop
+            GeometryReader { geo in
+                let wide = geo.size.width > geo.size.height * 1.05
+                if wide {
+                    // Wide (an iPad, a phone held sideways): the game on the left, what Steam says about it scrolling on the right.
+                    HStack(alignment: .top, spacing: 0) {
+                        FocusScroll { hero(back: true).padding(.horizontal, 20).padding(.vertical, vSize == .compact ? 8 : 14) }
+                            .frame(width: min(vSize == .compact ? 340 : 420, geo.size.width * 0.42))
+                        FocusScroll {
+                            VStack(alignment: .leading, spacing: 20) { pageContent }
+                                .padding(.horizontal, 20).padding(.vertical, vSize == .compact ? 8 : 14)
+                                .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+                        }
                     }
-                    .padding(.horizontal, 24).padding(.bottom, 30)
-                    .frame(maxWidth: 900).frame(maxWidth: .infinity)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack { PillButton(id: "sp-back", title: backTitle, symbol: "chevron.left", action: back); Spacer() }.padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 6)
+                        FocusScroll {
+                            VStack(alignment: .leading, spacing: 20) {
+                                hero(back: false)
+                                pageContent
+                            }
+                            .padding(.horizontal, 24).padding(.bottom, 30)
+                            .frame(maxWidth: 900).frame(maxWidth: .infinity)
+                        }
+                    }
                 }
             }
         }
@@ -105,33 +117,61 @@ struct SteamGamePage: View {
 
     // MARK: Pieces
 
-    private var hero: some View {
-        Color.clear.frame(height: 320)
-            .overlay { AsyncImage(url: URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(game.id)/library_hero.jpg")) { $0.resizable().scaledToFill() } placeholder: {
-                AsyncImage(url: page?.headerURL) { $0.resizable().scaledToFill().blur(radius: 6) } placeholder: { Theme.panelHigh }
-            } }
-            .clipped()
-            .overlay { LinearGradient(colors: [Theme.backgroundTop.opacity(0.1), Theme.backgroundTop.opacity(0.75), Theme.backgroundTop], startPoint: .top, endPoint: .bottom) }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .ignoresSafeArea()
-            .background(Theme.background.ignoresSafeArea())
+    /// The game's wide picture softened and darkened behind the whole page. A picture only: it reaches up under the top bar, so it must not take the taps meant for the sections there.
+    private var backdrop: some View {
+        ZStack {
+            AmbientBackdrop(animated: false)
+            Color.clear
+                .overlay { AsyncImage(url: URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(game.id)/library_hero.jpg")) { $0.resizable().scaledToFill() } placeholder: {
+                    AsyncImage(url: page?.headerURL) { $0.resizable().scaledToFill() } placeholder: { Color.clear }
+                } }
+                .blur(radius: 8).scaleEffect(1.08).clipped()
+                .overlay { Color.black.opacity(0.4) }
+                .overlay { LinearGradient(colors: [.clear, Theme.backgroundBottom.opacity(0.55), Theme.backgroundBottom.opacity(0.92)], startPoint: .top, endPoint: .bottom) }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(game.name).font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(Theme.text).shadow(color: .black.opacity(0.5), radius: 8)
-            if let page, !(page.developers + page.publishers).isEmpty {
-                Text(([page.developers.first, page.released].compactMap { $0 }).joined(separator: " \u{00B7} ")).font(.subheadline).foregroundStyle(Theme.text.opacity(0.8))
+    private func hero(back showBack: Bool) -> some View {
+        StoreHero(name: game.name, subtitle: heroSubtitle, stats: statTiles, back: showBack ? back : nil, backTitle: backTitle, compact: vSize == .compact) {
+            AsyncImage(url: URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(game.id)/library_hero.jpg")) { $0.resizable().scaledToFill() } placeholder: {
+                AsyncImage(url: page?.headerURL) { $0.resizable().scaledToFill() } placeholder: { Theme.panelHigh }
             }
-            FlowLayout(spacing: 8) {
+        } chips: { chipsContent } actions: { actions }
+    }
+
+    private var heroSubtitle: String? {
+        guard let page, !(page.developers + page.publishers).isEmpty else { return nil }
+        return ([page.developers.first, page.released].compactMap { $0 }).joined(separator: " \u{00B7} ")
+    }
+
+    /// What Steam says about the game: the media, the description and the rows that open the rest.
+    @ViewBuilder private var pageContent: some View {
+        if let page, !page.media.isEmpty { mediaStrip(page.media) }
+        about
+        doors
+        if loading && page == nil { ProgressView().tint(Theme.accent).frame(maxWidth: .infinity).padding() }
+        else if page == nil { Text("The Steam page couldn't be loaded. Check the connection and open this again.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
+    }
+
+    /// The numbers that matter before pressing Install: what it downloads, what it takes on the device, and when it came out.
+    private var statTiles: [GameHeroStat] {
+        var out: [GameHeroStat] = []
+        if game.sizeBytes > 0 { out.append(GameHeroStat(symbol: "arrow.down.circle.fill", title: "Download", value: SteamGameTile.size(game.sizeBytes))) }
+        if let disk = game.diskBytes, disk > 0 { out.append(GameHeroStat(symbol: "internaldrive.fill", title: "On this device", value: SteamGameTile.size(disk))) }
+        if let released = page?.released, !released.isEmpty { out.append(GameHeroStat(symbol: "calendar", title: "Released", value: released)) }
+        return out
+    }
+
+    @ViewBuilder private var chipsContent: some View {
+                StoreChip(store: .steam)
                 compatPill
                 if let level = SteamControllers.shared.level(for: game.id) { ControllerPillButton(level: level) }
                 if let r = page?.reviewSummary { chip("hand.thumbsup.fill", "\(r.label) \u{00B7} \(r.percent)%", r.percent >= 70 ? Theme.good : r.percent >= 40 ? Theme.warn : Theme.bad) }
                 if installed { chip(store.updateAvailable(game) ? "arrow.triangle.2.circlepath.circle.fill" : "checkmark.circle.fill", store.updateAvailable(game) ? "Update available" : "Installed", store.updateAvailable(game) ? Theme.accent : Theme.good) }
                 if let deck = infoStore.info(for: game.id)?.deck, deck != .unknown { chip("gamecontroller", deck.title, deck == .verified ? Theme.good : (deck == .playable ? Theme.warn : Theme.textDim)) }
                 if let m = page?.metacritic { chip("star.fill", "Metacritic \(m)", Theme.textDim) }
-            }
-        }
     }
 
     @ViewBuilder private var compatPill: some View {
@@ -172,9 +212,9 @@ struct SteamGamePage: View {
             }
             if let d = download {
                 switch d.state {
-                case .active: ProgressView(value: d.progress.fraction).tint(Theme.accent); Text(progressText(d.progress)).font(.caption).foregroundStyle(Theme.textDim)
+                case .active: TileProgress(value: d.progress.fraction); Text(progressText(d.progress)).font(.caption).foregroundStyle(Theme.textDim)
                 case .queued: Text("Waiting\u{2026}").font(.caption).foregroundStyle(Theme.textDim)
-                case .paused: ProgressView(value: d.progress.fraction).tint(Theme.textDim); Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
+                case .paused: TileProgress(value: d.progress.fraction, paused: true); Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
                 case .failed(let why): Text(why).font(.caption).foregroundStyle(Theme.bad)
                 }
             }
@@ -192,10 +232,11 @@ struct SteamGamePage: View {
                             Color.clear.frame(width: 260, height: 146)
                                 .overlay { AsyncImage(url: item.thumb) { $0.resizable().scaledToFill() } placeholder: { Theme.panelHigh } }
                                 .overlay { if item.isVideo { Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundStyle(.white).shadow(radius: 6) } }
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.16), lineWidth: 1))
+                                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(TilePress())
                         .focusTarget("sp-media-\(item.id)", radius: 14, scale: 1.06) { viewing = i }
                         .padding(.vertical, 8)
                     }
@@ -223,7 +264,7 @@ struct SteamGamePage: View {
     }
 
     private var doors: some View {
-        SettingsGroup {
+        SettingsGroup(title: "Explore") {
             ActionRow(id: "sp-door-compat", symbol: "checkmark.seal.fill", title: "How it runs on Porthole", subtitle: compatSummary) { door = .compat }
             if let r = page?.reviewSummary {
                 ActionRow(id: "sp-door-reviews", symbol: "hand.thumbsup.fill", title: "Steam reviews", subtitle: "\(r.label) \u{00B7} \(r.percent)%") { door = .reviews }
@@ -287,7 +328,8 @@ struct SteamGamePage: View {
                 if !page.publishers.isEmpty, page.publishers != page.developers { ValueRow(id: "sp-d-pub", symbol: "building.2.fill", title: "Publisher", value: page.publishers.joined(separator: ", ")) }
                 if let r = page.released { ValueRow(id: "sp-d-rel", symbol: "calendar", title: "Released", value: r) }
             }
-            if game.sizeBytes > 0 { ValueRow(id: "sp-d-size", symbol: "externaldrive.fill", title: "Download size", value: SteamGameTile.size(game.sizeBytes)) }
+            if game.sizeBytes > 0 { ValueRow(id: "sp-d-size", symbol: "arrow.down.circle", title: "Download size", value: SteamGameTile.size(game.sizeBytes)) }
+            if let disk = game.diskBytes, disk > 0 { ValueRow(id: "sp-d-disk", symbol: "externaldrive.fill", title: "Size on this device", value: SteamGameTile.size(disk)) }
             ValueRow(id: "sp-d-ver", symbol: "number", title: "Latest version", value: "Build \(game.buildID)")
             if let have = store.installedBuild(game.id) {
                 ValueRow(id: "sp-d-have", symbol: "checkmark.circle.fill", title: "Installed version", value: "Build \(have)", statusColor: have < game.buildID ? Theme.warn : Theme.good)
@@ -322,8 +364,8 @@ struct SteamGamePage: View {
 
     private func start() {
         notice = nil
-        if game.sizeBytes > 0, let free = SteamGameTile.freeSpace(), free < Int64(Double(game.sizeBytes) * 1.15) + 500_000_000 {
-            notice = "Not enough free space: it needs about \(SteamGameTile.size(game.sizeBytes)) and the device has \(SteamGameTile.size(UInt64(free)))."
+        if game.sizeBytes > 0, let free = SteamGameTile.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
+            notice = "Not enough free space: it needs about \(SteamGameTile.size(game.diskBytes ?? game.sizeBytes)) on the device and it has \(SteamGameTile.size(UInt64(free)))."
             return
         }
         store.install(game.id)

@@ -7,26 +7,36 @@ import Foundation
 extension SteamCMBackend {
     /// The installable Windows games this account owns, with their product information (name, install folder, build, launch options, depots).
     func ownedApps(completion: @escaping (Result<[SteamAppInfo], SteamContentError>) -> Void) {
+        ownedLibrary { completion($0.map(\.apps)) }
+    }
+
+    /// The same, with every depot the account's packages list (what decides which DLC depots an install can really fetch, so the size shown matches the install).
+    func ownedLibrary(completion: @escaping (Result<(apps: [SteamAppInfo], depots: Set<Int>), SteamContentError>) -> Void) {
         start { [weak self] started in
             guard let self else { return }
             if case .failure(let error) = started { completion(.failure(error)); return }
             self.waitForLicenses { licenses in
                 guard let licenses else { completion(.failure(SteamContentError(message: "Steam did not send the list of your games. Try again."))); return }
                 SteamLog.event("[steam-library] licences=\(licenses.count)")
-                self.installableApps(for: licenses, completion: completion)
+                self.installableLibrary(for: licenses, completion: completion)
             }
         }
     }
 
     /// The installable Windows games the given licences lead to (packages -> apps -> product information). The connection must be logged on.
     func installableApps(for licenses: [SteamLicense], completion: @escaping (Result<[SteamAppInfo], SteamContentError>) -> Void) {
+        installableLibrary(for: licenses) { completion($0.map(\.apps)) }
+    }
+
+    func installableLibrary(for licenses: [SteamLicense], completion: @escaping (Result<(apps: [SteamAppInfo], depots: Set<Int>), SteamContentError>) -> Void) {
         packageInfo(licenses) { packages in
             let appIDs = Array(Set(packages.flatMap(\.appIDs))).sorted()
-            SteamLog.event("[steam-library] packages=\(packages.count) apps=\(appIDs.count)")
+            let depotIDs = Set(packages.flatMap(\.depotIDs))
+            SteamLog.event("[steam-library] packages=\(packages.count) apps=\(appIDs.count) depots=\(depotIDs.count)")
             self.appInfos(appIDs) { infos in
                 let games = infos.filter { SteamDepotPlanner.isInstallableGame($0) }
                 SteamLog.event("[steam-library] app-info=\(infos.count) installable=\(games.count)")
-                completion(.success(games))
+                completion(.success((games, depotIDs)))
             }
         }
     }

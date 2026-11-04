@@ -1,0 +1,997 @@
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index 8884ec0..3adbeca 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -2211,6 +2211,48 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+     FEXCore::Utils::WritePriorityMutex::IosAdjustUnpublishedCompileDepth(-1);
+   }
+ #endif
++  /* Porthole 0169: MADEIRA_COMPILE_LOG=1 logs the guest address, block length and first bytes (up to 512; blocks that start with 32 zero bytes are logged only 3 times) of each block compiled at a user-space address
++   * (0x7000000000-0x71f0000000: the game exe and its data, not Wine's DLLs), up to MADEIRA_COMPILE_LOG_LIMIT lines (default 10000). Used to
++   * disassemble a copy-protection loop offline. Reads only inside the range the compiler itself has just read. */
++  {
++    static const bool CompileLogOn = [] { const char* V = getenv("MADEIRA_COMPILE_LOG"); return V && V[0] == '1'; }();
++    if (CompileLogOn && GuestRIP >= 0x7000000000ull && GuestRIP < 0x71f0000000ull) {
++      static const long CompileLogLimit = [] { const char* V = getenv("MADEIRA_COMPILE_LOG_LIMIT"); return V ? atol(V) : 10000L; }();
++      static std::atomic<long> CompileLogCount {0};
++      if (CompileLogCount.fetch_add(1, std::memory_order_relaxed) < CompileLogLimit) {
++        const uint64_t End = StartAddr + Length;
++        uint64_t N = (GuestRIP >= StartAddr && GuestRIP < End) ? End - GuestRIP : 0;
++        if (N > 512) {
++          N = 512;
++        }
++        char Hex[512 * 2 + 1];
++        bool Zero = N >= 32;
++        for (uint64_t i = 0; i < N; ++i) {
++          const uint8_t B = reinterpret_cast<const uint8_t*>(GuestRIP)[i];
++          if (i < 32 && B) {
++            Zero = false;
++          }
++          snprintf(Hex + i * 2, 3, "%02x", B);
++        }
++        Hex[N * 2] = 0;
++        static std::atomic<long> ZeroLogged {0};
++        if (!Zero || ZeroLogged.fetch_add(1, std::memory_order_relaxed) < 3) {
++          // Wine's debug output buffer is 1 KB per message (an overlong one raises STATUS_BUFFER_OVERFLOW in the game): at most 192 bytes (384 hex digits) per line.
++          for (uint64_t Off = 0; Off == 0 || Off < N; Off += 192) {
++            const uint64_t Chunk = (N - Off > 192) ? 192 : (N > Off ? N - Off : 0);
++            char Piece[192 * 2 + 1];
++            memcpy(Piece, Hex + Off * 2, Chunk * 2);
++            Piece[Chunk * 2] = 0;
++            if (Off == 0) {
++              LogMan::Msg::EFmt("[cblog] rip=0x{:x} start=0x{:x} len={} bytes={}", GuestRIP, StartAddr, Length, Piece);
++            } else {
++              LogMan::Msg::EFmt("[cblog+] rip=0x{:x} off={} bytes={}", GuestRIP, Off, Piece);
++            }
++          }
++        }
++      }
++    }
++  }
+   auto CodePtr = CompiledCode.EntryPoints[GuestRIP];
+   /* iOS-Madeira diag (Thumper desktop ILL 2026-07-06): three crashes branched
+    * to BlockTail+0x18 instead of a code entry — the published entry itself
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+index 21eadbe..1ee4574 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+@@ -742,13 +742,23 @@ void Dispatcher::EmitDispatcher() {
+     // writing the sentinel into JIT code memory.
+     if (CallRetStackUsed()) {
+       ARMEmitter::ForwardLabel l_callret_ok;
+-      ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-      sub(ARMEmitter::Size::i64Bit, TMP1, REG_CALLRET_SP, TMP1);
+-      lsr(ARMEmitter::Size::i64Bit, TMP1, TMP1, 23);   /* madeira-bcd: 8 MiB call-return stack: the reservation is 2^23 */
+-      (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &l_callret_ok);
+-      ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-      add(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000);
+-      (void)Bind(&l_callret_ok);
++      static const bool LeanCallRet = [] { const char* E = getenv("MADEIRA_FEX_LEAN"); return !(E && E[0] == '0'); }();
++      if (LeanCallRet) {
++        /* 0.50.339: same bit test as Arm64JITCore::EmitCallRetGuard (the stack's base is 8MB-aligned). */
++        eor(ARMEmitter::Size::i64Bit, TMP1, REG_CALLRET_SP, REG_CALLRET_SP, ARMEmitter::ShiftType::LSR, 1);
++        (void)tbnz(TMP1, 21, &l_callret_ok);
++        and_(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, ~0x7FFFFFULL);
++        orr(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000ULL);
++        (void)Bind(&l_callret_ok);
++      } else {
++        ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
++        sub(ARMEmitter::Size::i64Bit, TMP1, REG_CALLRET_SP, TMP1);
++        lsr(ARMEmitter::Size::i64Bit, TMP1, TMP1, 23);   /* 8 MiB call-return stack: the reservation is 2^23 */
++        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &l_callret_ok);
++        ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
++        add(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000);
++        (void)Bind(&l_callret_ok);
++      }
+     }
+ #endif
+     if (CallRetStackUsed()) {
+diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+index 6a0d498..56b2d2e 100644
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -20,6 +20,46 @@ $end_info$
+ 
+ namespace FEXCore::CPU {
+ 
++
++/* 0.50.339 (MADEIRA_FEX_LEAN=1): the call-ret stack guard in 2 instructions instead of 5-6.
++ *
++ * The stack is allowed to move inside a 4MB window, [base+2MB, base+6MB), and is put back at base+4MB when it leaves it. The old guard loaded
++ * State.callret_sp_base, added 2MB, subtracted, shifted and tested: an ldr and four ALU instructions on every guest CALL and RET. With the stack's base
++ * 8MB-aligned (CallRetStack::InitializeThread places it there now) the window is a pattern of the address itself: bits 22:21 of sp are 01 or 10 exactly
++ * inside it, so the test is `bit21 ^ bit22` -- one eor (x ^ x>>1) and one tbnz; the (rare) reset needs no load either: the 8MB block of the stack is sp rounded down.
++ * Without MADEIRA_FEX_LEAN the old sequence is emitted unchanged. */
++bool Arm64JITCore::LeanCallRetEnabled() {
++  static const bool Enabled = [] {
++    const char* E = getenv("MADEIRA_FEX_LEAN");
++    /* 0.50.341: on unless MADEIRA_FEX_LEAN=0. */
++    const bool On = !(E && E[0] == '0');
++    LogMan::Msg::EFmt("[lean] MADEIRA_FEX_LEAN={} -> lean call/return code {}", E ? E : "(unset)", On ? "ON" : "off");
++    return On;
++  }();
++  return Enabled;
++}
++
++void Arm64JITCore::EmitCallRetGuard(ARMEmitter::XRegister Tmp) {
++  ARMEmitter::ForwardLabel l_callret_ok;
++  if (LeanCallRetEnabled()) {
++    eor(ARMEmitter::Size::i64Bit, Tmp, REG_CALLRET_SP, REG_CALLRET_SP, ARMEmitter::ShiftType::LSR, 1);
++    (void)tbnz(Tmp, 21, &l_callret_ok);
++    and_(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, ~0x7FFFFFULL);
++    orr(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000ULL);
++    (void)Bind(&l_callret_ok);
++    return;
++  }
++  /* iOS-Madeira ml263: tightened to a 4MB window [base+2MB, base+6MB). */
++  ldr(Tmp, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
++  add(ARMEmitter::Size::i64Bit, Tmp, Tmp, 0x200000);
++  sub(ARMEmitter::Size::i64Bit, Tmp, REG_CALLRET_SP, Tmp);
++  lsr(ARMEmitter::Size::i64Bit, Tmp, Tmp, 22);
++  (void)cbz(ARMEmitter::Size::i64Bit, Tmp, &l_callret_ok);
++  ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
++  add(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000);
++  (void)Bind(&l_callret_ok);
++}
++
+ DEF_OP(CallbackReturn) {
+   // spill back to CTX
+   SpillStaticRegs(TMP1);
+@@ -216,33 +256,7 @@ DEF_OP(ExitFunction) {
+           // SEH-driven HandleAccessViolation never resets the stack on
+           // underflow. Detect-and-reset inline before the `stp` to keep stack
+           // pointer in-range. Uses TMP1 as scratch; adr below re-initializes it.
+-          ARMEmitter::ForwardLabel l_callret_ok;
+-          /* iOS-Madeira ml263: the >>24 test only fires when the pointer leaves the
+-           * ENTIRE 16MB region, so a large-but-in-range leak sails straight through.
+-           * Measured on the CEF webhelper thread:
+-           *   tid 0098 sp-base=0x2c8c40 -> 1.1MB pushed  (~36,000 nested calls)
+-           *   tid 0078 sp-base=0x132900 -> 2.75MB pushed (~90,000 nested calls)
+-           * while those threads' GUEST stacks had used only 2,264 and 10,008 bytes. 36,000
+-           * nested calls cannot exist in 2.2KB of stack (every x86 CALL pushes >=8 bytes),
+-           * so entries are pushed and never popped -- non-local exits (SEH unwind, C++
+-           * throw) skip the guest RETs, and CEF init throws constantly.
+-           *
+-           * Bound it to a 4MB window CENTRED on DefaultLocation (base + 4MB): test
+-           * (sp - (base + 2MB)) >> 22, so sp-base must stay in [2MB, 6MB). Caps pushes at
+-           * ~131,072 entries (~65,536 nested calls), far beyond any real program.
+-           *
+-           * Resetting is SAFE, not a papering-over: this stack is purely a return-address
+-           * PREDICTOR. A stale or missing entry fails the `sub TMP1, TMP1, RipReg` compare
+-           * and falls through to the L1 lookup, which is always correct. A reset costs
+-           * mispredictions, nothing else. */
+-          ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-          add(ARMEmitter::Size::i64Bit, TMP1, TMP1, 0x200000);
+-          sub(ARMEmitter::Size::i64Bit, TMP1, REG_CALLRET_SP, TMP1);
+-          lsr(ARMEmitter::Size::i64Bit, TMP1, TMP1, 22);
+-          (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &l_callret_ok);
+-          ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-          add(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000);
+-          (void)Bind(&l_callret_ok);
++          EmitCallRetGuard(TMP1);   // 0.50.339: see Arm64JITCore::EmitCallRetGuard (lean unless MADEIRA_FEX_LEAN=0)
+         }
+ #endif
+         if (!CallRetStackUsed()) {
+@@ -303,18 +317,7 @@ DEF_OP(ExitFunction) {
+       ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp));
+       // iOS-Madeira 2026-05-18: inline bounds-guard (Tier-2) — see CALL push
+       // site for rationale. Reset to DefaultLocation if OOB before ldp.
+-      {
+-        ARMEmitter::ForwardLabel l_callret_ok;
+-        /* iOS-Madeira ml263: tightened to a 4MB window -- see the first CALL push site. */
+-        ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-        add(ARMEmitter::Size::i64Bit, TMP1, TMP1, 0x200000);
+-        sub(ARMEmitter::Size::i64Bit, TMP1, REG_CALLRET_SP, TMP1);
+-        lsr(ARMEmitter::Size::i64Bit, TMP1, TMP1, 22);
+-        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &l_callret_ok);
+-        ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-        add(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000);
+-        (void)Bind(&l_callret_ok);
+-      }
++      EmitCallRetGuard(TMP1);   // 0.50.339: see Arm64JITCore::EmitCallRetGuard
+ #endif
+       ldp<ARMEmitter::IndexType::POST>(TMP1, TMP2, REG_CALLRET_SP, 0x10);
+ #ifdef ARCHITECTURE_arm64ec
+@@ -385,16 +388,7 @@ DEF_OP(ExitFunction) {
+         ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp));
+         // iOS-Madeira 2026-05-18: inline bounds-guard (Tier-2). Same as
+         // linked-path CALL push.
+-        ARMEmitter::ForwardLabel l_callret_ok;
+-        /* iOS-Madeira ml263: tightened to a 4MB window -- see the first CALL push site. */
+-        ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-        add(ARMEmitter::Size::i64Bit, TMP1, TMP1, 0x200000);
+-        sub(ARMEmitter::Size::i64Bit, TMP1, REG_CALLRET_SP, TMP1);
+-        lsr(ARMEmitter::Size::i64Bit, TMP1, TMP1, 22);
+-        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &l_callret_ok);
+-        ldr(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp_base));
+-        add(ARMEmitter::Size::i64Bit, REG_CALLRET_SP, REG_CALLRET_SP, 0x400000);
+-        (void)Bind(&l_callret_ok);
++        EmitCallRetGuard(TMP1);   // 0.50.339: see Arm64JITCore::EmitCallRetGuard (lean unless MADEIRA_FEX_LEAN=0)
+       }
+ #endif
+       if (!CallRetStackUsed()) {
+diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+index 24b4b1d..199a0b2 100644
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -919,7 +919,7 @@ void Arm64JITCore::EmitSuspendInterruptCheck() {
+ #endif
+ }
+ 
+-void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool CheckTF) {
++void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool CheckTF, bool SkipSuspendCheck) {
+   // Get the address of the JITCodeHeader and store in to the core state.
+   // Two instruction cost, each 1 cycle.
+   adr_OrRestart(TMP1, &HeaderLabel);
+@@ -963,7 +963,11 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
+     }
+   }
+ 
+-  EmitSuspendInterruptCheck();
++  /* 0.50.339 (MADEIRA_FEX_LEAN=1): the doorbell check is left out at the point a CALL returns to. Everything that can run for long still has one: every
++   * function entry (this same code, reached by the call), every backward branch (the loop check in the block loop). */
++  if (!SkipSuspendCheck) {
++    EmitSuspendInterruptCheck();
++  }
+ }
+ 
+ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size, bool SingleInst, const FEXCore::IR::IRListView* IR,
+@@ -1095,6 +1099,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+           // If we just emitted a call, but the block we're now emitting is not the return block so don't fallthrough.
+           b_OrRestart(PendingCallReturnTargetLabel);
+         }
++        const bool IsCallReturnFallthrough = PendingCallReturnTargetLabel == &IsReturnTarget->second && !PendingTargetLabel;
+         PendingCallReturnTargetLabel = nullptr;
+ 
+         BindOrRestart(&IsReturnTarget->second);
+@@ -1104,7 +1109,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+         /* ml1206: the high 16 bits carry the bytes left in this translation from the block start, so the
+          * dump can print the whole block (guest addresses stay below 2^48). */
+         IosRingEntryRIP = BlockStartRIP | (std::min<uint64_t>(Entry + Size - BlockStartRIP, 0xffff) << 48);   /* ml1205 */
+-        EmitEntryPoint(JITCodeHeaderLabel, CheckTF);
++        EmitEntryPoint(JITCodeHeaderLabel, CheckTF, IsCallReturnFallthrough && LeanCallRetEnabled());
+         // [iOS-Madeira] verbose EmitEntryPoint-done log suppressed
+       }
+ 
+diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
+index dbdb492..a8749d9 100644
+--- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
++++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
+@@ -696,8 +696,10 @@ private:
+   void EmitTFCheck();
+ 
+   void EmitSuspendInterruptCheck();
++  void EmitCallRetGuard(ARMEmitter::XRegister Tmp);
++  static bool LeanCallRetEnabled();
+ 
+-  void EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool CheckTF);
++  void EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool CheckTF, bool SkipSuspendCheck = false);
+ 
+ #define DEF_OP(x) void Op_##x(IR::IROp_Header const* IROp, IR::Ref Node)
+ 
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
+index 1b93edb..af6ad65 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -47,7 +47,7 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+   L2Enabled = !DisableL2Cache();
+ 
+   const size_t L2TableSize = ctx->Config.VirtualMemSize / FEXCore::Utils::FEX_PAGE_SIZE * 8;
+-  TotalCacheSize = L2TableSize + CODE_SIZE + MAX_L1_SIZE;
++  TotalCacheSize = L2TableSize + CODE_SIZE + MaxL1Size();
+ 
+   // Block cache ends up looking like this
+   // PageMemoryMap[VirtualMemoryRegion >> 12]
+@@ -64,7 +64,7 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+   if (!L2Enabled) {
+     // ml606: L1-ONLY. Skip the 16MB L2 table and the 32MB backing arena
+     // entirely — with DisableL2Cache the JIT never emits a lookup against them.
+-    AllocationSize = MAX_L1_SIZE;
++    AllocationSize = MaxL1Size();
+ #ifdef FEX_IOS_HOST
+     AllocationBase = reinterpret_cast<uintptr_t>(FEXCore::Allocator::VirtualAlloc(AllocationSize, false, true));
+ #else
+@@ -115,7 +115,7 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+     // ml606: the allocation IS the L1 array.
+     L1Pointer = AllocationBase;
+   }
+-  FEXCore::Allocator::VirtualName("FEXMem_Lookup_L1", reinterpret_cast<void*>(L1Pointer), MAX_L1_SIZE);
++  FEXCore::Allocator::VirtualName("FEXMem_Lookup_L1", reinterpret_cast<void*>(L1Pointer), MaxL1Size());
+ 
+   {
+     const uint64_t Live = LookupCacheLive.fetch_add(1, std::memory_order_relaxed) + 1;
+@@ -146,7 +146,7 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+    * shared zero page, no footprint) and memsets only stale pages. The stale
+    * counts double as the probe for whether the hazard still exists at all. */
+   size_t StaleL2 = L2Enabled ? FEXCore::Allocator::ZeroScrub(reinterpret_cast<void*>(PageMemory), L2TableSize) : 0;
+-  size_t StaleL1 = FEXCore::Allocator::ZeroScrub(reinterpret_cast<void*>(L1Pointer), MAX_L1_SIZE);
++  size_t StaleL1 = FEXCore::Allocator::ZeroScrub(reinterpret_cast<void*>(L1Pointer), MaxL1Size());
+   LogMan::Msg::EFmt("[TI-IC] zero-scrub rev=ml606 l2-stale=0x{:x} l1-stale=0x{:x}", StaleL2, StaleL1);
+ #endif
+ }
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
+index 3a43785..85a8bf9 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: MIT
+ #pragma once
++#include <cstdlib>
+ #include <atomic>
+ #include <chrono>
+ #include "Interface/Context/Context.h"
+@@ -180,6 +181,42 @@ struct GuestToHostMap {
+   void ClearCache(const LookupCacheWriteLockToken&);
+ };
+ 
++#ifdef FEX_IOS_HOST
++/* 0.50.345: who misses in the L1 lookup cache. A profile of The Forest showed 7 % of the main thread in LookupCache::CacheBlockMapping and its hash maps and 75-95K L1 misses
++ * a second. Counts misses where the slot held another block (a conflict: the cache is direct-mapped on the low 17 bits of the guest address) against an empty slot (cold or
++ * invalidated), and keeps the heaviest missing addresses (every 16th miss, Misra-Gries in 4096 hashed slots); written with the [l1-miss] line. */
++struct IosL1MissNotes {
++  std::atomic<uint64_t> Empty {0}, Conflict {0}, Seq {0};
++  struct Slot { std::atomic<uint64_t> Key {0}; std::atomic<uint32_t> Count {0}; };
++  Slot Tab[4096];
++  void Note(uint64_t Address, uint64_t Resident) {
++    (Resident ? Conflict : Empty).fetch_add(1, std::memory_order_relaxed);
++    if (Seq.fetch_add(1, std::memory_order_relaxed) & 15) return;
++    Slot& E = Tab[(Address * 0x9E3779B97F4A7C15ULL) >> 52];
++    if (E.Key.load(std::memory_order_relaxed) == Address) E.Count.fetch_add(1, std::memory_order_relaxed);
++    else if (E.Count.load(std::memory_order_relaxed) == 0) { E.Key.store(Address, std::memory_order_relaxed); E.Count.store(1, std::memory_order_relaxed); }
++    else E.Count.fetch_sub(1, std::memory_order_relaxed);
++  }
++  void Dump() {
++    uint64_t Key[8] = {}; uint32_t Cnt[8] = {};
++    for (auto& S : Tab) {
++      const uint32_t C = S.Count.load(std::memory_order_relaxed);
++      if (!C) continue;
++      for (int i = 0; i < 8; i++) if (C > Cnt[i]) { for (int j = 7; j > i; j--) { Key[j] = Key[j - 1]; Cnt[j] = Cnt[j - 1]; } Key[i] = S.Key.load(std::memory_order_relaxed); Cnt[i] = C; break; }
++    }
++    LogMan::Msg::EFmt("[l1-miss] slot was empty: {}, held another block: {}; heaviest missing addresses (x16): {:#x}:{} {:#x}:{} {:#x}:{} {:#x}:{} {:#x}:{} {:#x}:{} {:#x}:{} {:#x}:{}",
++                      Empty.load(), Conflict.load(), Key[0], Cnt[0], Key[1], Cnt[1], Key[2], Cnt[2], Key[3], Cnt[3], Key[4], Cnt[4], Key[5], Cnt[5], Key[6], Cnt[6], Key[7], Cnt[7]);
++  }
++};
++inline IosL1MissNotes& IosL1Notes() { static IosL1MissNotes N; return N; }
++
++/* 0.50.358: MADEIRA_FEX_HOTL1=0 keeps every thread's L1 at 128K entries (the size before 0.50.346): a kill switch for the hot-thread growth to 512K. Read once. */
++inline bool IosHotL1Enabled() {
++  static const bool On = [] { const char* V = getenv("MADEIRA_FEX_HOTL1"); return !(V && V[0] == '0'); }();
++  return On;
++}
++#endif
++
+ class LookupCache {
+ public:
+   struct LookupCacheEntry {
+@@ -203,6 +240,9 @@ public:
+     if (L1Entry.GuestCode == Address) {
+       return L1Entry.HostCode;
+     }
++#ifdef FEX_IOS_HOST
++    IosL1Notes().Note(Address, L1Entry.GuestCode);
++#endif
+ 
+     // L2 and L3 need to be locked
+     uintptr_t HostPtr {};
+@@ -265,6 +305,7 @@ public:
+         const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+         const int64_t Last = IosL1LastNs.exchange(Now, std::memory_order_relaxed);
+         if (Last) LogMan::Msg::EFmt("[l1-miss] ml1124 {} L1 misses total, {:.0f}/s over the last 2^20", M, 1048576.0 * 1e9 / double(Now - Last));
++        IosL1Notes().Dump();
+       }
+     }
+ #endif
+@@ -288,7 +329,7 @@ public:
+                                       static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(Period).count()) * 1000.0;
+ 
+       if (AveragePerSecond >= DynamicL1CacheIncreaseCountHeuristic()) {
+-        if (CurrentL1Entries < MAX_L1_ENTRIES) {
++        if (CurrentL1Entries < MAX_L1_ENTRIES || (AveragePerSecond >= HOT_L1_MISS_RATE && HotL1On() && CurrentL1Entries < MAX_L1_ENTRIES_HOT)) {
+           CurrentL1Entries <<= 1;
+           L1PointerMask = CurrentL1Entries - 1;
+ 
+@@ -303,7 +344,7 @@ public:
+ 
+           // Madvise the entries that we are dropping. Gives the memory back to the OS.
+           LookupCacheEntry* FirstZeroL1Entry = &reinterpret_cast<LookupCacheEntry*>(L1Pointer)[CurrentL1Entries];
+-          size_t ZeroMemorySize = (MAX_L1_ENTRIES - CurrentL1Entries) * sizeof(LookupCacheEntry);
++          size_t ZeroMemorySize = (MaxL1Entries() - CurrentL1Entries) * sizeof(LookupCacheEntry);
+           FEXCore::Allocator::VirtualDontNeed(FirstZeroL1Entry, ZeroMemorySize, false);
+ 
+           // Update the thread's L1 pointer mask to increase how much cache it uses.
+@@ -547,8 +588,17 @@ private:
+    * 14MB ([TI-IC] lookupcache-alloc size drops 0x6000000 → 0x5200000, which
+    * doubles as the deploy marker). */
+   constexpr static size_t MAX_L1_ENTRIES = 128 * 1024; // Must be a power of 2
++  /* 0.50.346: the L1 census of The Forest (2026-10-14 23:39) found 97 % of the 75-95K L1 misses a second were conflicts (the slot held another block): the main thread's
++   * working set of block entries is larger than 128K slots. A thread whose lookups keep missing (>= HOT_L1_MISS_RATE a second reach the shared map) may grow to
++   * 512K entries (8MB); every other thread stays at 128K. Only the pages of the array a thread touches are resident. */
++  constexpr static size_t MAX_L1_ENTRIES_HOT = 512 * 1024;
++  static bool HotL1On() { return IosHotL1Enabled(); }
++  constexpr static double HOT_L1_MISS_RATE = 20000.0;
+ #else
+   constexpr static size_t MAX_L1_ENTRIES = 1 * 1024 * 1024; // Must be a power of 2
++  constexpr static size_t MAX_L1_ENTRIES_HOT = MAX_L1_ENTRIES;
++  static bool HotL1On() { return true; }
++  constexpr static double HOT_L1_MISS_RATE = 0.0;
+ #endif
+ 
+ #ifdef FEX_IOS_HOST
+@@ -567,7 +617,10 @@ private:
+   constexpr static size_t CODE_SIZE = 128 * 1024 * 1024;
+ #endif
+   constexpr static size_t SIZE_PER_PAGE = FEXCore::Utils::FEX_PAGE_SIZE * sizeof(LookupCacheEntry);
+-  constexpr static size_t MAX_L1_SIZE = MAX_L1_ENTRIES * sizeof(LookupCacheEntry);
++  /* Porthole 0168: the reservation follows MADEIRA_FEX_HOTL1. With the hot-thread growth off (=0) no thread's L1 passes MAX_L1_ENTRIES (128K entries, 2 MB), so
++   * reserve 2 MB instead of 8 MB per thread: with ~300 threads that is 1.8 GB of the emulator's 15 GB address range. Default unchanged (hot growth on). */
++  static size_t MaxL1Entries() { return HotL1On() ? MAX_L1_ENTRIES_HOT : MAX_L1_ENTRIES; }
++  static size_t MaxL1Size() { return MaxL1Entries() * sizeof(LookupCacheEntry); }
+ 
+   size_t AllocateOffset {};
+ 
+diff --git a/FEXCore/include/FEXCore/Debug/InternalThreadState.h b/FEXCore/include/FEXCore/Debug/InternalThreadState.h
+index edad382..675a9ba 100644
+--- a/FEXCore/include/FEXCore/Debug/InternalThreadState.h
++++ b/FEXCore/include/FEXCore/Debug/InternalThreadState.h
+@@ -153,6 +153,9 @@ struct alignas(FEXCore::Utils::FEX_PAGE_SIZE) InternalThreadState : public FEXCo
+ 
+   // The low address of the call-ret stack allocation (not including guard pages)
+   void* CallRetStackBase {};
++  // 0.50.339: the start of the reservation CallRetStackBase lies in (CallRetStackBase is moved up to an 8MB boundary inside it, see Windows/Common/CallRetStack.h);
++  // what has to be released when the thread ends. nullptr = the old layout (base = reservation + one guard page).
++  void* CallRetStackReservation {};
+ 
+   uintptr_t JITGuardPage {};
+   uint64_t JITGuardOverflowArgument {};
+diff --git a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+index 1c0c8b8..cd9ef3d 100644
+--- a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
++++ b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+@@ -15,6 +15,33 @@
+ #include <optional>
+ #include <type_traits>
+ 
++/* iOS-Madeira pns2 (pool null-safety): a failed pooled claim recovers or ends the process with a clear
++ * message; it never hands out a buffer whose Ptr is NULL.
++ *
++ * In the iOS ARM64EC module FEXCore::Allocator::VirtualAlloc returns nullptr once the host-only FEX
++ * arena is exhausted (AllocatorHooks.h, ml799), and ClaimBufferImpl recorded that nullptr as a claimed
++ * buffer. DualIntrusiveAllocatorThreadPool then set List = nullptr + 8 MiB and
++ * IREmitter::ResetWorkingList stored to 0x800010 (AV at libarm64ecfex.dll+0xfe770). The Frontend
++ * decoder buffer and the JIT temp buffer take the same unchecked path.
++ *
++ * On by default only in the iOS ARM64EC module. -DFEX_IOS_POOL_NULL_SAFETY=0 opts out; =1 opts another
++ * build in. With it off, this header compiles to exactly the code it had before. */
++#ifndef FEX_IOS_POOL_NULL_SAFETY
++#if defined(FEX_IOS_HOST) && defined(ARCHITECTURE_arm64ec)
++#define FEX_IOS_POOL_NULL_SAFETY 1
++#else
++#define FEX_IOS_POOL_NULL_SAFETY 0
++#endif
++#endif
++
++#if FEX_IOS_POOL_NULL_SAFETY
++#include <thread>
++#if defined(FEX_IOS_HOST) && defined(_WIN32)
++// The same declaration as JIT.cpp's ml460 one (JIT.cpp includes this header, so it must match exactly).
++extern "C" int32_t NtTerminateProcess(void* ProcessHandle, int32_t ExitStatus);
++#endif
++#endif
++
+ namespace FEXCore::Utils {
+ /**
+  * @brief An intrusive thread pool allocator
+@@ -113,6 +140,11 @@ public:
+   ContainerType::iterator ClaimBuffer(size_t Size, BufferOwnedFlag* CurrentClientFlag) {
+     std::unique_lock lk {AllocationMutex};
+     auto Buffer = ClaimBufferImpl(Size);
++#if FEX_IOS_POOL_NULL_SAFETY
++    if (Buffer == ClaimedBuffers.end()) {
++      Buffer = ClaimBufferAfterAllocFailure(lk, Size);
++    }
++#endif
+     (*Buffer)->CurrentClientOwnedFlag = CurrentClientFlag;
+     CurrentClientFlag->store(ClientFlags::FLAG_OWNED);
+     return Buffer;
+@@ -204,7 +236,17 @@ public:
+   constexpr static std::chrono::duration DURATION {std::chrono::seconds(5)};
+ 
+ protected:
++#if FEX_IOS_POOL_NULL_SAFETY
++  IntrusivePooledAllocator() {
++    // One line per process, so a device log shows that this build carries pns2.
++    static std::atomic<bool> Announced {};
++    if (!Announced.exchange(true, std::memory_order_relaxed)) {
++      LogMan::Msg::IFmt("[pool-null] armed: a failed pool claim reclaims, retries, then ends the process rev=pns2");
++    }
++  }
++#else
+   IntrusivePooledAllocator() = default;
++#endif
+ 
+   ContainerType::iterator ClaimBufferImpl(size_t Size) {
+     auto BuffersEnd = UnclaimedBuffers.end();
+@@ -292,9 +334,132 @@ protected:
+ 
+     // Need to allocate a new buffer, couldn't fit
+     auto Data = Alloc(Size);
++#if FEX_IOS_POOL_NULL_SAFETY
++    if (!Data) {
++      // Never record a NULL buffer. Take back what idle clients hold, then try the allocation once more.
++      if (auto Reclaimed = EmergencyReclaimLocked(Size); Reclaimed != ClaimedBuffers.end()) {
++        static std::atomic<uint32_t> Reuses {};
++        const uint32_t Reuse = Reuses.fetch_add(1, std::memory_order_relaxed) + 1;
++        if (Reuse <= 8 || (Reuse % 1024) == 0) {
++          LogMan::Msg::EFmt("[pool-null] {} allocation of {:#x} bytes failed; reusing an idle thread's buffer (reuse {}) rev=pns2",
++                            PoolName(), Size, Reuse);
++        }
++        return Reclaimed;
++      }
++      Data = Alloc(Size);
++      if (!Data) {
++        return ClaimedBuffers.end();
++      }
++    }
++#endif
+     return ClaimedBuffers.emplace(ClaimedBuffers.end(), new MemoryBuffer {Data, Size, ClockType::now()});
+   }
+ 
++#if FEX_IOS_POOL_NULL_SAFETY
++  /**
++   * @brief Called with AllocationMutex held after Alloc(Size) failed: take back every buffer no client is using
++   *
++   * The expiry pass in ClaimBufferImpl only takes disowned buffers that have been idle for DURATION. That wait
++   * is a reuse heuristic, not a safety requirement: the DISOWNED -> FREE compare-exchange below is the same
++   * handshake, so a client that re-owns first keeps its buffer, and one that loses sees FLAG_FREE and claims anew.
++   *
++   * @return A claimed buffer of at least Size. Otherwise ClaimedBuffers.end(), after every unclaimed buffer
++   * has been released so that its address space can satisfy the next allocation.
++   */
++  ContainerType::iterator EmergencyReclaimLocked(size_t Size) {
++    for (auto it = ClaimedBuffers.begin(); it != ClaimedBuffers.end();) {
++      ClientFlags Expected = ClientFlags::FLAG_DISOWNED;
++      if ((*it)->CurrentClientOwnedFlag->compare_exchange_strong(Expected, ClientFlags::FLAG_FREE)) {
++        (*it)->CurrentClientOwnedFlag = nullptr;
++        UnclaimedBuffers.emplace_back(*it);
++        it = ClaimedBuffers.erase(it);
++        continue;
++      }
++      ++it;
++    }
++
++    // Smallest unclaimed buffer that fits.
++    auto Fit = UnclaimedBuffers.end();
++    for (auto it = UnclaimedBuffers.begin(); it != UnclaimedBuffers.end(); ++it) {
++      if ((*it)->Size >= Size && (Fit == UnclaimedBuffers.end() || (*it)->Size < (*Fit)->Size)) {
++        Fit = it;
++      }
++    }
++
++    if (Fit != UnclaimedBuffers.end()) {
++      MemoryBuffer* Buffer = *Fit;
++      UnclaimedBuffers.erase(Fit);
++      return ClaimedBuffers.emplace(ClaimedBuffers.end(), Buffer);
++    }
++
++    // Nothing fits: release them all.
++    for (auto it : UnclaimedBuffers) {
++      Free(it->Ptr, it->Size);
++      delete it;
++    }
++    UnclaimedBuffers.clear();
++    return ClaimedBuffers.end();
++  }
++
++  /**
++   * @brief Called with AllocationMutex held (through lk) when ClaimBufferImpl could not produce a buffer
++   *
++   * Sleeps with the mutex released so other threads can finish with, disown, unclaim or free their buffers,
++   * and retries for a little longer than DURATION. If that fails, it logs and terminates the process rather
++   * than return a buffer that would be written through at NULL.
++   *
++   * @return A claimed buffer, with lk locked again. Never returns ClaimedBuffers.end().
++   */
++  ContainerType::iterator ClaimBufferAfterAllocFailure(std::unique_lock<std::mutex>& lk, size_t Size) {
++    constexpr auto RetrySleep = std::chrono::milliseconds(50);
++    constexpr auto RetryWindow = std::chrono::duration_cast<std::chrono::milliseconds>(DURATION + std::chrono::seconds(1));
++
++    // Bound the log under a storm of failing threads; the fatal line below is always written.
++    static std::atomic<uint32_t> Events {};
++    const uint32_t Event = Events.fetch_add(1, std::memory_order_relaxed) + 1;
++    const bool Report = Event <= 32 || (Event % 256) == 0;
++    if (Report) {
++      LogMan::Msg::EFmt("[pool-null] {} claim of {:#x} bytes failed: the allocation returned NULL and no idle buffer "
++                        "fits; retrying for up to {} ms (event {}) rev=pns2",
++                        PoolName(), Size, RetryWindow.count(), Event);
++    }
++
++    const auto Start = ClockType::now();
++    uint32_t Attempts {};
++    do {
++      lk.unlock();
++      std::this_thread::sleep_for(RetrySleep);
++      lk.lock();
++      ++Attempts;
++      auto Buffer = ClaimBufferImpl(Size);
++      if (Buffer != ClaimedBuffers.end()) {
++        if (Report) {
++          LogMan::Msg::EFmt("[pool-null] {} claim of {:#x} bytes recovered after {} retries (event {}) rev=pns2", PoolName(), Size,
++                            Attempts, Event);
++        }
++        return Buffer;
++      }
++    } while (ClockType::now() - Start < RetryWindow);
++
++    // Let the other threads of this process keep using the pool while this one dies.
++    lk.unlock();
++    LogMan::Msg::EFmt("[pool-null] FATAL: {} could not get {:#x} bytes after {} retries over {} ms; the FEX host arena is "
++                      "exhausted. Terminating the process (STATUS_NO_MEMORY) instead of writing through a NULL buffer "
++                      "(event {}) rev=pns2",
++                      PoolName(), Size, Attempts, RetryWindow.count(), Event);
++#if defined(FEX_IOS_HOST) && defined(_WIN32)
++    /* Not an exception. One raised here (ForcedAssert's hlt, as ERROR_AND_DIE does) is delivered to the guest
++     * while this thread still holds the shared CodeInvalidationMutex: the guest's vectored handlers run, their
++     * code is compiled under delivery (UNPUB-COMPILE), that compile needs this same exhausted pool, and the
++     * thread recurses into this wait again, 6 s per level, with the process's JIT frozen. This is the ml460
++     * situation (JIT.cpp, IosCountUnpubBailOrTerminate): at exhaustion the process cannot deliver its own
++     * exception, so end it. */
++    NtTerminateProcess(reinterpret_cast<void*>(-1), static_cast<int32_t>(0xC0000017)); // STATUS_NO_MEMORY
++#endif
++    ERROR_AND_DIE_FMT("[pool-null] {} exhausted ({:#x} bytes) rev=pns2", PoolName(), Size);
++  }
++#endif
++
+   void UnclaimBufferImpl(ContainerType::iterator Buffer) {
+     (*Buffer)->CurrentClientOwnedFlag = nullptr;
+     UnclaimedBuffers.emplace_back(*Buffer);
+@@ -331,7 +496,29 @@ protected:
+    */
+   std::mutex AllocationMutex;
+ 
++#if FEX_IOS_POOL_NULL_SAFETY
++  /**
++   * @brief VirtualAlloc reports failure as nullptr on Windows and as MAP_FAILED elsewhere
++   */
++  static bool VirtualAllocFailed(const void* Ptr) {
++#ifdef _WIN32
++    return Ptr == nullptr;
++#else
++    return Ptr == nullptr || Ptr == MAP_FAILED;
++#endif
++  }
++#endif
++
+ private:
++#if FEX_IOS_POOL_NULL_SAFETY
++  /**
++   * @brief Name used in the pns2 diagnostics
++   */
++  virtual const char* PoolName() const {
++    return "FEXMem_pool";
++  }
++#endif
++
+   /**
+    * @brief Allocates the buffer
+    *
+@@ -384,8 +571,19 @@ public:
+   }
+ 
+ private:
++#if FEX_IOS_POOL_NULL_SAFETY
++  const char* PoolName() const override {
++    return Name ? Name : "FEXMem_pool";
++  }
++#endif
++
+   void* Alloc(size_t Size) override {
+     auto Result = FEXCore::Allocator::VirtualAlloc(Size);
++#if FEX_IOS_POOL_NULL_SAFETY
++    if (VirtualAllocFailed(Result)) {
++      return nullptr;
++    }
++#endif
+     if (Name) {
+       FEXCore::Allocator::VirtualName(Name, Result, Size);
+     }
+@@ -415,8 +613,20 @@ public:
+   }
+ 
+ private:
++#if FEX_IOS_POOL_NULL_SAFETY
++  const char* PoolName() const override {
++    return Name ? Name : "FEXMem_pool";
++  }
++#endif
++
+   void* Alloc(size_t Size) override {
+     auto Ptr = FEXCore::Allocator::VirtualAlloc(Size);
++#if FEX_IOS_POOL_NULL_SAFETY
++    // Without this, the guard page below would be set at NULL + Size, on whatever happens to be mapped there.
++    if (VirtualAllocFailed(Ptr)) {
++      return nullptr;
++    }
++#endif
+     uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+     if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE,
+                                             FEXCore::Allocator::ProtectOptions::None)) {
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index 2a76ec2..1f82899 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -479,6 +479,18 @@ void QueuePendingImageMap(uint64_t Address) {
+   }
+ }
+ 
++/* Porthole 1.2.48: a view unmapped before ProcessInit must leave the queue. Merge r27 made kernelbase load and free tzres.dll (the time-zone
++ * name resource) while FEX was starting; the queued address was replayed after the unmap and HandleImageMap read an MZ header from unmapped
++ * memory, so every x64 game died in its first thread (Factorio: "Factorio not launching"). */
++void DropPendingImageMap(uint64_t Address) {
++  for (size_t i = 0; i < PendingImageMapCount; i++) {
++    if (PendingImageMaps[i] == Address) {
++      PendingImageMaps[i] = PendingImageMaps[--PendingImageMapCount];
++      return;
++    }
++  }
++}
++
+ void HandleImageUnmap(uint64_t Address, uint64_t Size) {
+   ImageTracker->HandleImageUnmap(Address, Size);
+ }
+@@ -1198,6 +1210,18 @@ NTSTATUS ProcessInit() {
+     const char* CallRetOpt = getenv("MADEIRA_FEX_CALLRET_ELIDE");
+     IosCallRetStackElided = !(CallRetOpt && strcmp(CallRetOpt, "0") == 0);
+     LogMan::Msg::IFmt("FEX: callret-elide-v1 madeira-bcd enabled={}", IosCallRetStackElided != 0);
++    /* callret-skip-reserve v1: with the stack elided nothing ever reads or writes its memory, so ThreadInit
++     * does not reserve it (CALLRET_STACK_SIZE + 2 guard pages of FEX band per thread). Encoded as
++     * IosCallRetStackElided == 2 ("elided, but still reserve") instead of a new word in this file (see
++     * IosTebTsdImportFound); CallRetStackUsed() only tests != 0, so 1 and 2 emit the same JIT code.
++     * MADEIRA_FEX_CALLRET_SKIP_RESERVE=0 keeps the reservation. */
++    if (IosCallRetStackElided) {
++      const char* CallRetSkipOpt = getenv("MADEIRA_FEX_CALLRET_SKIP_RESERVE");
++      if (CallRetSkipOpt && strcmp(CallRetSkipOpt, "0") == 0) {
++        IosCallRetStackElided = 2;
++      }
++    }
++    LogMan::Msg::IFmt("FEX: callret-skip-reserve-v1 madeira enabled={}", IosCallRetStackElided == 1);
+   }
+ #endif
+   CTX->InitCore();
+@@ -1239,6 +1263,12 @@ NTSTATUS ProcessInit() {
+ 
+   /* ml190: replay any image maps that arrived before the trackers existed. */
+   for (size_t i = 0; i < PendingImageMapCount; i++) {
++    /* Porthole 1.2.48: the view may have been freed since it was queued; reading its header would fault. */
++    MEMORY_BASIC_INFORMATION Mbi {};
++    if (::VirtualQuery(reinterpret_cast<void*>(PendingImageMaps[i]), &Mbi, sizeof(Mbi)) != sizeof(Mbi) || Mbi.State == MEM_FREE) {
++      LogMan::Msg::EFmt("[img-map] 1.2.48 queued view {} is gone, not replayed", reinterpret_cast<void*>(PendingImageMaps[i]));
++      continue;
++    }
+     HandleImageMap(PendingImageMaps[i]);
+   }
+   PendingImageMapCount = 0;
+@@ -1313,6 +1343,22 @@ NTSTATUS ProcessInit() {
+   return STATUS_SUCCESS;
+ }
+ 
++/* iOS-Madeira ml1110: the context can be gone while memory notifications still arrive.
++ *
++ * Factorio started by Steam's client (a child process) called ExitProcess, and Wine's exit then unmaps the
++ * process's memory. Every unmap reports to the invalidation tracker, which calls into the FEXCore context.
++ * By then the context object had been destroyed and its memory zeroed, so the tracker's virtual call through
++ * the context's (now null) vtable read address 0xf0 and faulted (libarm64ecfex.dll+0x12b9e8,
++ * InvalidationTracker::InvalidateIntervalInternal). Nothing handled it, the process never finished exiting,
++ * and Valve's client never saw the game end.
++ *
++ * Nothing needs invalidating once the context is gone: there is no translated code left to protect. Check the
++ * global pointer (null after the unique_ptr was destroyed) and the object's first word (the vtable, zero once
++ * the memory was recycled) before handing anything to the tracker. */
++static bool ContextIsAlive() {
++  return CTX && *reinterpret_cast<void* const*>(CTX.get()) != nullptr;
++}
++
+ void ProcessTerm(HANDLE Handle, BOOL After, NTSTATUS Status) {
+   if (!After) {
+     ProcessTerminating.store(true, std::memory_order_relaxed);
+@@ -1374,7 +1420,8 @@ bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* E
+   if (Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+     const auto FaultAddress = static_cast<uint64_t>(Exception->ExceptionInformation[1]);
+ 
+-    if (FEX::Windows::CallRetStack::HandleAccessViolation(Thread, FaultAddress, NativeContext->X17)) {
++    // No call-ret stack was reserved (callret-skip-reserve, see ThreadInit): there is no range to claim.
++    if (Thread->CallRetStackBase && FEX::Windows::CallRetStack::HandleAccessViolation(Thread, FaultAddress, NativeContext->X17)) {
+       if (IosDeferAvLog) IosLogAv();
+       return true;
+     }
+@@ -1636,7 +1683,7 @@ NTSTATUS ResetToConsistentState(EXCEPTION_RECORD* Exception, CONTEXT* GuestConte
+  * required for its correctness. Drop the BEFORE/AFTER mutex entirely
+  * and just call into the tracker directly on AFTER. */
+ void NotifyMemoryAlloc(void* Address, SIZE_T Size, ULONG Type, ULONG Prot, BOOL After, NTSTATUS Status) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -1649,7 +1696,7 @@ void NotifyMemoryAlloc(void* Address, SIZE_T Size, ULONG Type, ULONG Prot, BOOL
+ }
+ 
+ void NotifyMemoryFree(void* Address, SIZE_T Size, ULONG FreeType, BOOL After, NTSTATUS Status) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -1661,7 +1708,7 @@ void NotifyMemoryFree(void* Address, SIZE_T Size, ULONG FreeType, BOOL After, NT
+ }
+ 
+ void NotifyMemoryProtect(void* Address, SIZE_T Size, ULONG NewProt, BOOL After, NTSTATUS Status) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -1787,7 +1834,10 @@ NTSTATUS NotifyMapViewOfSection(void* Unk1, void* Address, void* Unk2, SIZE_T Si
+ }
+ 
+ void NotifyUnmapViewOfSection(void* Address, BOOL After, NTSTATUS Status) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!After && PendingImageMapCount) {
++    DropPendingImageMap(reinterpret_cast<uint64_t>(Address));
++  }
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -1803,7 +1853,7 @@ void NotifyUnmapViewOfSection(void* Address, BOOL After, NTSTATUS Status) {
+ }
+ 
+ void FlushInstructionCacheHeavy(const void* Address, SIZE_T Size) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -1812,7 +1862,7 @@ void FlushInstructionCacheHeavy(const void* Address, SIZE_T Size) {
+ }
+ 
+ void BTCpu64FlushInstructionCache(const void* Address, SIZE_T Size) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -1821,7 +1871,7 @@ void BTCpu64FlushInstructionCache(const void* Address, SIZE_T Size) {
+ }
+ 
+ void BTCpu64NotifyMemoryDirty(void* Address, SIZE_T Size) {
+-  if (!InvalidationTracker || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
++  if (!InvalidationTracker || !ContextIsAlive() || ProcessTerminating.load(std::memory_order_relaxed) || !GetCPUArea().ThreadState()) {
+     return;
+   }
+ 
+@@ -2135,7 +2185,23 @@ NTSTATUS ThreadInit() {
+   }
+ #endif
+ 
+-  if (!FEX::Windows::CallRetStack::InitializeThread(Thread)) {
++#ifdef FEX_IOS_HOST
++  /* callret-skip-reserve v1 (see ProcessInit). IosCallRetStackElided == 1: the dispatcher and every block are
++   * emitted with CallRetStackUsed() false, so nothing loads, stores or bounds-checks the shadow stack and it
++   * is not reserved. CallRetStackBase stays nullptr and State.callret_sp/callret_sp_base stay 0, which every
++   * reader treats as "no stack": ResetCallRetStack returns early on a null base, the CompileBlock OOB reset
++   * and the [callret-chain]/[JITPOOL_RIP] probes require a non-zero base/sp, and HandleAccessViolation and
++   * DestroyThread are skipped for a null base in this file. */
++  const bool IosCallRetSkipReserve = IosCallRetStackElided == 1;
++  if (IosCallRetSkipReserve) {
++    Thread->CallRetStackBase = nullptr;
++    Thread->CurrentFrame->State.callret_sp = 0;
++    Thread->CurrentFrame->State.callret_sp_base = 0;
++  }
++#else
++  constexpr bool IosCallRetSkipReserve = false;
++#endif
++  if (!IosCallRetSkipReserve && !FEX::Windows::CallRetStack::InitializeThread(Thread)) {
+     /* Unwind everything this function built for this thread, in reverse.
+      *
+      * Returning early without unwinding leaves the CPU area pointing at a
+@@ -2527,7 +2593,9 @@ NTSTATUS ThreadTerm(HANDLE Thread, LONG ExitCode) {
+   // GDT and LDT are mirrored, only free one.
+   delete[] ThreadState->CurrentFrame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT];
+ 
+-  FEX::Windows::CallRetStack::DestroyThread(ThreadState);
++  if (ThreadState->CallRetStackBase) { // null when ThreadInit skipped the reservation (callret-skip-reserve)
++    FEX::Windows::CallRetStack::DestroyThread(ThreadState);
++  }
+   CTX->DestroyThread(ThreadState);
+   ::VirtualFree(reinterpret_cast<void*>(CPUArea.EmulatorStackLimit()), 0, MEM_RELEASE);
+   if (ThreadTID == GetCurrentThreadId()) {
+diff --git a/Source/Windows/Common/CallRetStack.h b/Source/Windows/Common/CallRetStack.h
+index 30613ed..e47f5fe 100644
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -23,11 +23,15 @@ struct CallRetStackInfo {
+ 
+ CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
+   uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
++  uint64_t Allocation = Thread->CallRetStackReservation ? reinterpret_cast<uint64_t>(Thread->CallRetStackReservation) : Base - FEXCore::Utils::FEX_PAGE_SIZE;
+   // Leave some room from the base for the default location to allow for underflows without constant exceptions
+-  return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
++  return {Allocation, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
+           Base + FEXCore::Core::InternalThreadState::CALLRET_DEFAULT_OFFSET};
+ }
+ 
++/* 0.50.339: the base of every call-ret stack is a multiple of this. The JIT's lean guard (MADEIRA_FEX_LEAN) reads the window off the address itself. */
++static constexpr uint64_t CALLRET_BASE_ALIGNMENT = 0x800000;
++
+ /* Returns false if the call-ret stack could not be placed.
+  *
+  * This region has no unconstrained fallback ON PURPOSE (see below), so failure
+@@ -88,7 +92,18 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+ #endif
+ 
+   // Allocate the call-ret stack with guard pages on both sides
+-  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
++  /* 0.50.339: CALLRET_BASE_ALIGNMENT extra address space (only reserved, not touched) so that the base can be moved up to an 8MB boundary. */
++  /* Porthole 0165/0166: on iOS the reservation is exactly CALLRET_STACK_SIZE (8 MB) and the emulator band hands it out 8 MB ALIGNED
++   * (MEM_ADDRESS_REQUIREMENTS.Alignment), so the base needs no slack. Before it reserved CALLRET_STACK_SIZE + 2 guard pages + CALLRET_BASE_ALIGNMENT
++   * (16 MB + 8 KB) and rounded the base up inside it: half of every thread's reservation was padding (about 1.6 GB with 200 threads), and the 8 KB
++   * made it miss the 16 MB holes that freed allocator spans leave (a log of RDR2 through Rockstar's launcher had 1.45 GB free in 688 holes, the
++   * largest exactly 0x1000000, and new threads failed with "call-ret stack unavailable"). The guard pages were never enforced on iOS (see below);
++   * the JIT's inline bounds check keeps the stack inside its window. Other hosts keep the padded reservation. */
++#ifdef FEX_IOS_HOST
++  size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
++#else
++  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE + CALLRET_BASE_ALIGNMENT;
++#endif
+   const void* CallRetStackAlloc = nullptr;
+ #ifdef FEX_IOS_HOST
+   /* iOS-Madeira ml324: steer the call-ret stack out of the guest VA band.
+@@ -108,6 +123,7 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+     /* ml706: follow the band rpmalloc selected, do not hardcode it. */
+     AddrReq.LowestStartingAddress = reinterpret_cast<void*>(ios_fex_band_base);
+     AddrReq.HighestEndingAddress = reinterpret_cast<void*>(ios_fex_band_end);
++    AddrReq.Alignment = CALLRET_BASE_ALIGNMENT;   /* Porthole 0166 */
+     AddrParam.Type = MemExtendedParameterAddressRequirements;
+     AddrParam.Pointer = &AddrReq;
+       if (InjectReserve) {
+@@ -115,6 +131,14 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+                           "containment path", ThisCall);
+       } else if (ios_fex_band_base) {
+       CallRetStackAlloc = ::VirtualAlloc2(nullptr, nullptr, CallRetStackAllocSize, MEM_RESERVE, PAGE_NOACCESS, &AddrParam, 1);
++      if (CallRetStackAlloc && (reinterpret_cast<uintptr_t>(CallRetStackAlloc) & (CALLRET_BASE_ALIGNMENT - 1))) {
++        /* Porthole 0166: the alignment was not honoured; the base cannot be rounded up inside an exact-size block. Take the old padded reservation. */
++        LogMan::Msg::EFmt("[callret] 0166: reservation {} is not {:#x}-aligned -- retrying with the padded size", CallRetStackAlloc, (unsigned long long)CALLRET_BASE_ALIGNMENT);
++        ::VirtualFree(const_cast<void*>(CallRetStackAlloc), 0, MEM_RELEASE);
++        CallRetStackAllocSize += 2 * FEXCore::Utils::FEX_PAGE_SIZE + CALLRET_BASE_ALIGNMENT;
++        AddrReq.Alignment = 0;
++        CallRetStackAlloc = ::VirtualAlloc2(nullptr, nullptr, CallRetStackAllocSize, MEM_RESERVE, PAGE_NOACCESS, &AddrParam, 1);
++      }
+     }
+   }
+   /* ml706: NO unconstrained fallback here. Each 16-byte frame holds a HOST
+@@ -143,12 +167,12 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+     return false;
+   }
+ 
+-  FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
+-                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
+-  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
+-                                        FEXCore::Allocator::THPControl::Disable);
++  FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc, CallRetStackAllocSize);
++  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, CallRetStackAllocSize, FEXCore::Allocator::THPControl::Disable);
+ 
+-  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
++  Thread->CallRetStackReservation = const_cast<void*>(CallRetStackAlloc);
++  Thread->CallRetStackBase = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(CallRetStackAlloc) + CALLRET_BASE_ALIGNMENT - 1) &
++                                                    ~(uintptr_t)(CALLRET_BASE_ALIGNMENT - 1));
+   /* The COMMIT can fail on its own: the reservation only claims addresses.
+    * Hand the reservation back rather than leaking a 16MB hole in a band that
+    * is already too small to satisfy the next thread. */
+@@ -169,6 +193,7 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+                       Thread->CallRetStackBase);
+     ::VirtualFree(const_cast<void*>(CallRetStackAlloc), 0, MEM_RELEASE);
+     Thread->CallRetStackBase = nullptr;
++    Thread->CallRetStackReservation = nullptr;
+     return false;
+   }
+ 

@@ -125,6 +125,9 @@ import Foundation
         case ("amazon", .pause): AmazonInstaller.shared.pauseAll()
         case ("amazon", .resume): AmazonInstaller.shared.resumeAll()
         case ("amazon", .cancel): AmazonInstaller.shared.cancelCurrent()
+        case ("ea", .pause): EAInstaller.shared.pauseAll()
+        case ("ea", .resume): EAInstaller.shared.resumeAll()
+        case ("ea", .cancel): EAInstaller.shared.cancelCurrent()
         default: break
         }
         if action == .pause, let card = cards[store] { paused(store: store, name: card.state.title) }
