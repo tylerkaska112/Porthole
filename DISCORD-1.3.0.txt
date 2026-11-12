@@ -1,0 +1,64 @@
+@everyone Porthole 1.3.0 "Full Sail" is out ⛵
+
+A big one: **Porthole** can now upscale and add frames, sync your Steam Cloud saves, suggest fixes for problems, and the touch controls and Settings have been rebuilt.
+
+**What's new in 1.3.0**
+• **Upscaling and frame generation:** MetalFX upscaling, plus Lossless Scaling's frame generation and upscalers if you own it (Direct3D 11 and 12), switchable from the in-game menu while you play
+• **Steam Cloud saves:** upload and download a game's saves from its page, with a list of what will move first
+• **Fixes that ask first:** Porthole suggests one setting to change when a run ends with a known cause. Nothing changes until you tap Apply
+• **Touch controls, much better:** trackpad mode, a full PC keyboard, mixed layouts, floating sticks, and an on-screen game controller
+• **External drive downloads:** pick the device or the SSD when you press Download
+• **Blender** joins as the first program in a new Software section
+• **Settings, organised:** 17 short pages and a Controls page with every control setting
+• **Docs on the website**, and "What does this mean?" buttons on errors
+
+Details in the next few messages 👇
+
+--------8<--------
+
+**🖼️ Picture and speed**
+• **Upscaling (MetalFX):** 1.5x, 2x or "To the screen", which enlarges the game to your screen's own pixels. Set the game's Resolution lower (say 1280x720) and it runs faster while the picture stays sharp
+• **Switch it while you play:** the in-game menu has an Upscaling card (Off, To the screen, 1.5x, 2x) that changes at once, no restart
+• **Lossless Scaling frame generation:** adds 1 to 3 frames between the game's own, for Direct3D 11 and 12 games. Direct3D 12 is experimental and needs more memory
+• **Lossless Scaling's own upscalers** (LS1 and LS1 performance) with a sharpness setting
+• **It needs your own copy of Lossless Scaling.** Porthole ships none of it: Stores > Software checks your Steam purchase first and keeps only the one file it needs, sealed on your device
+• **More resolutions:** games that ask for the screen's resolutions through DXGI now see the whole list, not just one
+• **Experimental:** Vulkan (DXVK and vkd3d-proton, with MoltenVK or KosmicKrisp) as an opt-in route per game for ones that render wrongly. Off unless a game asks
+
+--------8<--------
+
+**🎮 Controls**
+• **Trackpad mode:** slide to move the cursor, tap to click, two-finger tap for right click, two fingers to scroll
+• **Full PC keyboard** over the game, with Shift, Ctrl and Alt that hold for the next key (tap twice to lock)
+• **Mixed layouts:** gamepad buttons next to keys and mouse buttons in one layout, plus a Gamepad preset
+• **Floating sticks** that appear where your thumb lands, and **controls that fade** when you're not touching them
+• **Layout options:** opacity, tap feedback, combos (Shift+Space, Ctrl+C), lock positions, and a shape and colour for each key
+• **On-screen game controller** for games that need a pad, in Xbox, PlayStation, Nintendo Switch and Super Nintendo styles. The game sees an ordinary Xbox pad
+• **Smart suggestion:** if a game ignores the on-screen controller, Porthole offers touch controls for keyboard and mouse instead
+• **Blender** gets touch controls for its 3D view: pan, pinch to zoom, orbit
+• **Settings > Controls:** controller, keyboard, mouse and touch settings all on one page
+
+--------8<--------
+
+**☁️ Steam, stores and storage**
+• **Steam Cloud:** upload and download saves from a game's page, with the files and sizes listed first. A save changed on both sides is never overwritten
+• **Offline play** row on a Steam game's page, so you can see if it's ready
+• **Blocked depots:** a Steam download that hits a depot Steam blocks for your region now skips it, installs the rest and tells you which one
+• **External drives:** choose the device or the SSD when you press Download, with a drive speed test. Slow drives are written to gently, fast ones at full speed
+• **Hide stores you don't use:** long-press a store on the Stores tab. Nothing is signed out or deleted
+• **Software section:** Blender is first, downloaded from the Stores tab, with GPU rendering kernels built for your device where one exists
+• **Keep other apps' sound playing** next to a game is a new switch in Settings > Sound
+• **Home** can show your library as a shelf, a grid or a list
+
+--------8<--------
+
+**🛠️ Fixes and help**
+• **Fixes that ask first:** a game that needs AVX, ran out of memory, or filled its memory pool gets a suggested setting change on Home. You tap Apply, there's an Undo, and the next run is judged. Saying no leaves the game alone
+• **A "Last time" card** on a game's page says in plain words how its last run ended and lets you share that game's own log
+• **Clearer errors:** system errors say what happened and what to do, and "What does this mean?" opens the website's docs for it
+• **Docs:** every setting, engine line and message at portholehq.site/docs
+• **Epic games** can run their own prerequisite setup on request
+• **Games we worked on:** Supermarket Simulator, PAYDAY 3, GTA V (Legacy and Enhanced), BeamNG, Steep, Subliminal, Persona 5 Royal, Schedule I, Final Fantasy IX's Memoria patcher and more
+• **Known limits:** GTA V (Legacy) and Black Ops Cold War aren't known to work yet. Blender GPU rendering needs a kernel pack for your GPU and iOS version
+
+⚠️ **Heads up:** compatibility badges are tied to the engine, so every game starts at "Not yet tested" again until people have played it on this version. Reports help!

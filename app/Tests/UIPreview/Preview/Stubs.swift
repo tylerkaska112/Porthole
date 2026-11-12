@@ -1,5 +1,6 @@
 // Stand-ins for app types the UI kit's focus code reaches, so the preview app builds without the rest of the app.
 import SwiftUI
+import GameController
 
 enum LogEntryLevelStub { case info, error, success }
 final class LogStore { nonisolated(unsafe) static let shared = LogStore(); func log(_ message: String, level: LogEntryLevelStub = .info) {} }
@@ -20,3 +21,29 @@ enum GameStore: String, CaseIterable, Identifiable, Hashable {
         }
     }
 }
+
+/// Stand-in for Core/DocsLink.swift (the website's documentation links): the preview has no website to open.
+enum DocsLink {
+    static func open(_ message: String) {}
+    static func documented(_ title: String) -> Bool { false }
+    static func url(forSetting title: String) -> URL? { nil }
+}
+
+/// Stand-in for Core/HardwareInput.swift (the keyboard and mouse): the preview has neither.
+@MainActor
+final class HardwareInput {
+    static let shared = HardwareInput()
+    var navKey: ((GCKeyCode) -> Void)?
+    var mouseConnected = false
+    func start() {}
+    func noteSystemScroll(dyPoints: Double) {}
+}
+
+/// Stand-in for the keyboard and mouse settings (Core/InputSettings.swift).
+final class InputSettings {
+    nonisolated(unsafe) static let shared = InputSettings()
+    var scrollSign = 1
+}
+
+/// Stand-in for the row of store buttons (UI/StoresScreen.swift).
+struct StoreSwitcher: View { var body: some View { EmptyView() } }

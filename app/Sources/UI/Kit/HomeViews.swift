@@ -95,6 +95,8 @@ struct NoticeData: Identifiable, Equatable {
     var spinner = false
     /// Set for a chip the person may hide (a small x appears on it). The key says which one, so a new one of the same kind (a newer update) shows again.
     var dismissKey: String?
+    /// For an error: its text, so the (i) pop-up can offer to look it up in the website's documentation.
+    var helpMessage: String?
 }
 
 /// A game's picture, with a colourful placeholder (made from its name) until the artwork arrives.
@@ -120,14 +122,34 @@ struct GameArtView: View {
         .accessibilityHidden(true)
     }
 
+    /// What a game without a picture gets: a gradient and soft light made from its name (the same every launch), and its first letter large and faint behind everything.
     private struct Placeholder: View {
         let name: String
         let titled: Bool
         let plain: Bool
+
+        /// FNV-1a: the same number for the same name on every launch (String.hashValue is seeded per run, so the colours would change each time the app opens).
+        private static func stableHash(_ text: String) -> UInt64 {
+            var h: UInt64 = 0xcbf29ce484222325
+            for byte in text.lowercased().utf8 { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+            return h
+        }
+
         var body: some View {
-            let hue = Double(abs(name.hashValue) % 360) / 360
+            let h = Self.stableHash(name)
+            let hue = Double(h % 360) / 360
+            let hue2 = (hue + 0.08 + Double((h >> 9) % 20) / 100).truncatingRemainder(dividingBy: 1)
+            let blobX = CGFloat((h >> 17) % 60) / 100 - 0.1, blobY = CGFloat((h >> 25) % 50) / 100 - 0.2
+            let letter = String(name.trimmingCharacters(in: .whitespaces).first ?? "?").uppercased()
             ZStack {
-                LinearGradient(colors: [Color(hue: hue, saturation: 0.55, brightness: 0.42), Color(hue: (hue + 0.12).truncatingRemainder(dividingBy: 1), saturation: 0.6, brightness: 0.22)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                LinearGradient(colors: [Color(hue: hue, saturation: 0.55, brightness: 0.42), Color(hue: hue2, saturation: 0.6, brightness: 0.22)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                GeometryReader { geo in
+                    let m = min(geo.size.width, geo.size.height), w = geo.size.width
+                    Circle().fill(Color(hue: hue2, saturation: 0.45, brightness: 0.85).opacity(0.30)).frame(width: max(m, w * 0.55))
+                        .blur(radius: m * 0.22).offset(x: w * blobX, y: geo.size.height * blobY)
+                    Text(letter).font(.system(size: m * 1.25, weight: .black, design: .rounded)).foregroundStyle(.white.opacity(0.07))
+                        .frame(width: w, height: geo.size.height).offset(x: w * 0.18, y: m * 0.12)
+                }
                 if plain {
                     EmptyView()
                 } else if titled {
@@ -136,6 +158,7 @@ struct GameArtView: View {
                     Image(systemName: "gamecontroller.fill").font(.system(size: 34)).foregroundStyle(.white.opacity(0.35))
                 }
             }
+            .clipped()
         }
     }
 }
@@ -334,7 +357,7 @@ struct NoticeStrip: View {
                         }
                         .buttonStyle(.plain)
                         .focusTarget("notice-\(n.id)", radius: 22, scale: 1.04) { act(n) }
-                        if let detail = n.detail { InfoButton(id: "notice-info-\(n.id)", title: n.title, text: detail) }
+                        if let detail = n.detail { InfoButton(id: "notice-info-\(n.id)", title: n.title, text: detail, helpMessage: n.helpMessage) }
                         if n.dismissKey != nil, let dismiss {
                             Button { dismiss(n) } label: {
                                 Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.textDim)
@@ -377,6 +400,104 @@ struct AddGameTile: View {
     }
 }
 
+// MARK: - The way the library is laid out
+
+/// How Home shows the library: the shelf along the bottom (the default), a grid of cards, or a list.
+enum HomeLayout: String, CaseIterable, Identifiable {
+    case shelf, grid, list
+    static let key = "f4.homeLayout"
+    var id: String { rawValue }
+    var title: String { switch self { case .shelf: "Shelf"; case .grid: "Grid"; case .list: "List" } }
+    var symbol: String { switch self { case .shelf: "rectangle.3.group.fill"; case .grid: "square.grid.2x2.fill"; case .list: "list.bullet" } }
+}
+
+/// Three small buttons that switch Home between the shelf, a grid and a list. The choice is kept.
+struct HomeLayoutPicker: View {
+    @AppStorage(HomeLayout.key) private var raw = HomeLayout.shelf.rawValue
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(HomeLayout.allCases) { layout in
+                let on = raw == layout.rawValue
+                Button { withAnimation(.easeOut(duration: 0.2)) { raw = layout.rawValue } } label: {
+                    Image(systemName: layout.symbol).font(.system(size: 14, weight: .bold)).foregroundStyle(on ? Theme.onAccent : Theme.textDim)
+                        .frame(width: 40, height: 36).background(on ? Theme.accent : Color.clear, in: Capsule()).contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .focusTarget("home-layout-\(layout.rawValue)", radius: 18, scale: 1.08) { withAnimation(.easeOut(duration: 0.2)) { raw = layout.rawValue } }
+                .accessibilityLabel("\(layout.title) layout")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2).background(Theme.panel, in: Capsule()).overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 1))
+        .fixedSize()
+    }
+}
+
+/// One game in the list layout: a small picture, the name and what is known about it, and a Play button.
+struct GameListRow: View {
+    let game: GameCardData
+    let play: () -> Void
+    let open: () -> Void
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: open) {
+                HStack(spacing: 12) {
+                    Color.clear.aspectRatio(460.0 / 215.0, contentMode: .fit).frame(width: 104)
+                        .overlay { GameArtView(id: game.id, name: game.name, titled: false) }
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(game.name).font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1)
+                        Text(game.subtitle).font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(1)
+                        HStack(spacing: 6) {
+                            if let badge = game.badge { BadgeIcon(badge: badge, size: 22) }
+                            if let level = game.controller { ControllerPill(level: level, compact: true, iconOnly: true) }
+                            if let store = game.store { StoreCorner(store: store, size: 22) }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(TilePress())
+            .focusTarget(game.id, radius: 14, scale: 1.02, secondary: play, label: "Details", secondaryLabel: "Play", action: open)
+            .accessibilityLabel(game.name)
+            Button(action: play) {
+                Image(systemName: "play.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.onAccent)
+                    .frame(width: 44, height: 44).background(Theme.accent, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .focusTarget("list-play-\(game.id)", radius: 22, scale: 1.1, action: play)
+            .accessibilityLabel("Play \(game.name)")
+        }
+        .padding(10)
+        .background(Theme.panel.opacity(0.85), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+    }
+}
+
+/// The last row of the list layout: add a game.
+struct AddGameRow: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "plus").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.accent)
+                Text("Add a game").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16).frame(maxWidth: .infinity, minHeight: 56)
+            .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.accent.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [7, 6])))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(TilePress())
+        .focusTarget("add-game", radius: 16, scale: 1.02, action: action)
+        .accessibilityLabel("Add a game")
+    }
+}
+
+
 /// The home screen: the chosen game's artwork across the back, its name and Play in front, and one shelf of games along the bottom. Moving along the shelf changes the chosen game.
 struct HomeView: View {
     let notices: [NoticeData]
@@ -390,6 +511,8 @@ struct HomeView: View {
     var menu: ((GameCardData) -> AnyView)?
     /// Draws the controller layout (wide chosen tile) without a controller: for the simulator preview.
     var forceControllerLayout = false
+    @AppStorage(HomeLayout.key) private var layoutRaw = HomeLayout.shelf.rawValue
+    private var layout: HomeLayout { HomeLayout(rawValue: layoutRaw) ?? .shelf }
     @State private var shownID: UUID?
     /// False until the page has appeared: the tiles then come in one after another.
     @State private var arrived = false
@@ -409,10 +532,13 @@ struct HomeView: View {
             let sideways = vSize == .compact   // a phone held sideways: everything has to fit in about 350 points of height
             let tileWidth: CGFloat = sideways ? min(190, geo.size.width / 4.4) : geo.size.width > 900 ? 270 : hSize == .regular ? 230 : min(max(180, geo.size.width * 0.56), 250)
             ZStack {
-                HomeBackdrop(game: shown, height: geo.size.height * (geo.size.height > geo.size.width ? 0.72 : 0.8))
+                HomeBackdrop(game: layout == .shelf ? shown : games.first, height: geo.size.height * (geo.size.height > geo.size.width ? 0.72 : 0.8))
                 // The bats (or falling leaves) go above the game's picture and still behind the text (the backdrop's own would be hidden by that picture).
                 FestiveSky()
                 // Not a scroll view: the page is sized to the screen and never moves up or down. Only the row of games scrolls, sideways.
+                if layout != .shelf {
+                    libraryPage(width: geo.size.width, side: side, sideways: sideways).frame(width: geo.size.width, height: geo.size.height)
+                } else {
                 VStack(alignment: .leading, spacing: sideways ? 8 : 20) {
                     if !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismiss, compact: sideways).padding(.horizontal, side - 2) }
                     Spacer(minLength: 0)
@@ -427,11 +553,66 @@ struct HomeView: View {
                 }
                 .padding(.vertical, sideways ? 4 : 12)
                 .frame(width: geo.size.width, height: geo.size.height)
+                }
             }
         }
         .onAppear { startFocus(force: true); BatsPlacement.shared.homeDrawsThem = true; arrived = true }
         .onDisappear { BatsPlacement.shared.homeDrawsThem = false }
         .onChange(of: games.first?.id) { _, _ in startFocus(force: false) }
+    }
+
+    /// The grid and list layouts: the page scrolls up and down. The most recently played game is written large at the top with Play, and the whole library follows below it.
+    private func libraryPage(width: CGFloat, side: CGFloat, sideways: Bool) -> some View {
+        let available = width - side * 2, gap: CGFloat = 14
+        let columns = layout == .grid ? (available >= 820 ? 4 : available >= 520 ? 3 : 2) : 1
+        let cell = (available - gap * CGFloat(columns - 1)) / CGFloat(columns)
+        enum Item: Identifiable { case game(GameCardData), add
+            var id: String { switch self { case .game(let g): g.id.uuidString; case .add: "add" } } }
+        let items: [Item] = games.map(Item.game) + [.add]
+        let rows = stride(from: 0, to: items.count, by: columns).map { Array(items[$0..<min($0 + columns, items.count)]) }
+        @ViewBuilder func rowView(_ row: [Item]) -> some View {
+            HStack(alignment: .top, spacing: gap) {
+                ForEach(row) { item in
+                    switch item {
+                    case .game(let game):
+                        if layout == .grid {
+                            VStack(alignment: .leading, spacing: 6) {
+                                GameTile(game: game, width: cell, focusScale: 1.05, play: { play(game) }) { open(game) }
+                                Text(game.name).font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1)
+                                Text(game.subtitle).font(.system(size: 11, weight: .medium, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(1)
+                            }
+                            .frame(width: cell, alignment: .leading)
+                            .contextMenu { if let menu { menu(game) } }
+                        } else {
+                            GameListRow(game: game, play: { play(game) }) { open(game) }
+                                .contextMenu { if let menu { menu(game) } }
+                        }
+                    case .add:
+                        if layout == .grid { AddGameTile(width: cell, action: add) } else { AddGameRow(action: add) }
+                    }
+                }
+                if row.count < columns { Spacer(minLength: 0) }
+            }
+        }
+        return FocusScroll(axes: .vertical) {
+            VStack(alignment: .leading, spacing: sideways ? 12 : 18) {
+                if !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismiss, compact: sideways).padding(.horizontal, side - 2) }
+                if let hero = games.first {
+                    HeroInfo(game: hero, mostRecent: true, play: { play(hero) }, open: { open(hero) }, playing: featuredPlaying).padding(.horizontal, side)
+                } else {
+                    EmptyHome(add: add).padding(.horizontal, side)
+                }
+                if !games.isEmpty {
+                    shelfTitle.padding(.horizontal, side)
+                    Group {
+                        if games.count > 24 { LazyVStack(alignment: .leading, spacing: gap) { ForEach(rows.indices, id: \.self) { rowView(rows[$0]) } } }
+                        else { VStack(alignment: .leading, spacing: gap) { ForEach(rows.indices, id: \.self) { rowView(rows[$0]) } } }
+                    }
+                    .padding(.horizontal, side).padding(.bottom, 24)
+                }
+            }
+            .padding(.top, sideways ? 4 : 12)
+        }
     }
 
     /// "Your library" with how many games it holds.

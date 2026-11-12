@@ -83,7 +83,7 @@ final class GogAuth: ObservableObject {
                 accountName = tokens.username.isEmpty ? "GOG account" : tokens.username
                 LogStore.shared.log("[gog-auth] signed in")
             } catch {
-                signInError = (error as? GogAuthError)?.message ?? error.localizedDescription
+                signInError = (error as? GogAuthError)?.message ?? ErrorText.plain(error)
                 LogStore.shared.log("[gog-auth] sign-in failed: \((error as? GogAuthError)?.message ?? "\(error)")", level: .error)
             }
             isBusy = false

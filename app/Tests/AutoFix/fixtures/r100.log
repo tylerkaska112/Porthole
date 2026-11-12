@@ -1,0 +1,5 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+0198:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c0000005 at 00000000703D91F1: top_filter=00000070F20E3DB8 nested=0
+0198:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc0000005) syscalls=0 unix_calls=26573
+0038:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=27077

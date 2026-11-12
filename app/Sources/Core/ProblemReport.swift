@@ -106,10 +106,34 @@ enum ProblemReport {
             } else {
                 add("Log of this run", read(current), label: "this run")
                 add("Log of the run before", read(previous), label: "the run before")
+                // The game's own session logs (Documents/logs): the newest few that are not one of the two above. After the app was opened again the run before is only the
+                // last run; the problem may be in an earlier one, and a log is kept for each of the last forty.
+                for log in gameLogs(excluding: [current, previous]) {
+                    add("A game's own log: \(log.lastPathComponent)", read(log, cap: 20 * 1024 * 1024), label: "\(log.lastPathComponent)")
+                }
             }
             return (out, parts)
         }.value
         return Built(note: note, facts: facts, log: result.0, parts: result.1)
+    }
+
+    /// The newest game session logs (written in the last two weeks), at most three, leaving out any that is the same file as one of `excluding` (a session log is another name for
+    /// the log of its run, so the run before and its session log are one file).
+    static func gameLogs(excluding: [URL], limit: Int = 3) -> [URL] {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let folder = docs.appendingPathComponent("logs", isDirectory: true)
+        let modified: (URL) -> Date = { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
+        func identity(_ url: URL) -> NSObjectProtocol? { (try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier) }
+        let taken = excluding.compactMap(identity)
+        var seen: [NSObjectProtocol] = []
+        var out: [URL] = []
+        let files = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []).filter { $0.pathExtension == "txt" }
+            .sorted { modified($0) > modified($1) }
+        for file in files where out.count < limit && Date().timeIntervalSince(modified(file)) < 14 * 24 * 3600 {
+            guard let id = identity(file), !taken.contains(where: { $0.isEqual(id) }), !seen.contains(where: { $0.isEqual(id) }) else { continue }
+            seen.append(id); out.append(file)
+        }
+        return out
     }
 
     /// The report as text for the person to look at before it goes anywhere: everything but the middle of the log, with its size said plainly.

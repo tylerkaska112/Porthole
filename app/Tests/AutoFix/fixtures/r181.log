@@ -1,0 +1,13 @@
+I 24 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I 2C FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[00:18:20.613] [INFO] [mem-pressure] CRITICAL: app 6554 MB, free 1638 MB, gpu 288 MB; malloc gave back 0 MB
+[00:18:20.624] [INFO] [mem-pressure] CRITICAL: app 6431 MB, free 1761 MB, gpu 283 MB; malloc gave back 0 MB
+[00:18:35.441] [INFO] [mem-pressure] CRITICAL: app 6556 MB, free 1636 MB, gpu 1549 MB; malloc gave back 0 MB
+[00:18:35.448] [INFO] [mem-pressure] CRITICAL: app 6554 MB, free 1638 MB, gpu 1522 MB; malloc gave back 0 MB
+[00:18:35.464] [INFO] [mem-pressure] CRITICAL: app 6560 MB, free 1632 MB, gpu 1563 MB; malloc gave back 0 MB
+[00:26:01.466] [INFO] [mem-pressure] CRITICAL: app 6562 MB, free 1630 MB, gpu 1284 MB; malloc gave back 0 MB
+[00:26:01.601] [INFO] [mem-pressure] CRITICAL: app 6554 MB, free 1638 MB, gpu 1284 MB; malloc gave back 0 MB
+[00:26:01.641] [INFO] [mem-pressure] CRITICAL: app 6554 MB, free 1638 MB, gpu 1273 MB; malloc gave back 0 MB
+[00:26:02.068] [INFO] [mem-pressure] CRITICAL: app 6554 MB, free 1638 MB, gpu 1273 MB; malloc gave back 0 MB
+[00:26:02.317] [INFO] [mem-pressure] CRITICAL: app 6590 MB, free 1602 MB, gpu 1280 MB; malloc gave back 0 MB
+002c:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=348750

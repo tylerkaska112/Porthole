@@ -64,9 +64,9 @@ final class VCRuntimeInstaller {
             installed = Self.hasDownloadedCopy
             state = installed ? .idle : .failed("The files were not saved. Check that the device has free space.")
         } catch let error as VCRuntimeFiles.Failure {
-            state = .failed(error.localizedDescription)
+            state = .failed(ErrorText.plain(error))
         } catch {
-            state = .failed("Couldn't download it: \(error.localizedDescription)")
+            state = .failed("Couldn't download it: \(ErrorText.plain(error))")
         }
     }
 

@@ -16,10 +16,12 @@ struct SettingsScreen: View {
 
     /// The list on the left, in groups. A heading above each group says what its pages are about.
     static let sections: [(title: String, pages: [SettingsPage])] = [
-        ("Playing", [.play, .saves, .storage]),
-        ("Accounts", [.stores, .jit]),
-        ("App", [.appearance, .updates, .advanced]),
-        ("Help", [.reports, .help, .report]),
+        ("Playing", [.display, .performance, .sound, .controls]),
+        ("Your games", [.stores, .saves, .storage]),
+        ("Connection", [.jit]),
+        ("App", [.appearance, .updates, .signing, .advanced]),
+        ("Reports and fixes", [.reports, .fixing]),
+        ("Help", [.guides, .about, .report]),
     ]
     static let pages: [SettingsPage] = sections.flatMap(\.pages)
 
@@ -50,10 +52,10 @@ struct SettingsScreen: View {
                 }
             }
             .onAppear {
-                // Opens on the Play page every time (or the page a link asked for), with the glow on its entry in the list.
+                // Opens on the first page every time (or the page a link asked for), with the glow on its entry in the list.
                 if let page = router.settingsPage { selection = page; router.settingsPage = nil }
-                else { selection = wide ? .play : nil; sub = nil }
-                scope?.start(at: "set-\((selection ?? .play).rawValue)", force: true)
+                else { selection = wide ? .display : nil; sub = nil }
+                scope?.start(at: "set-\((selection ?? .display).rawValue)", force: true)
             }
             .onChange(of: router.settingsPage) { _, page in if let page { selection = page; router.settingsPage = nil } }
             // Opening a page inside a page moves the highlight to its Back button, so the D-pad starts at the top of it.
@@ -67,7 +69,7 @@ struct SettingsScreen: View {
                     DispatchQueue.main.async { scope?.focused = open.rowID }
                     return true
                 }
-                if wide { scope?.focused = "set-\((selection ?? .play).rawValue)"; return true }
+                if wide { scope?.focused = "set-\((selection ?? .display).rawValue)"; return true }
                 if selection != nil { selection = nil; return true }
                 return false
             }
@@ -146,7 +148,7 @@ struct SettingsScreen: View {
     private func badge(for page: SettingsPage) -> String? {
         switch page {
         case .updates: return updates.available != nil ? "1" : nil
-        case .help: return setupDone ? nil : "!"
+        case .guides: return setupDone ? nil : "!"
         case .jit: return BuiltinJIT.hasPairing ? nil : "!"
         case .report: return problems.unseen > 0 ? "\(problems.unseen)" : (CrashEvidence.latestUnreported() != nil ? "!" : nil)
         default: return nil
@@ -157,69 +159,91 @@ struct SettingsScreen: View {
 extension SettingsPage {
     var title: String {
         switch self {
-        case .play: "Play"
+        case .display: "Display"
+        case .performance: "Performance"
+        case .sound: "Sound"
+        case .controls: "Controls"
+        case .stores: "Stores"
         case .saves: "Saves"
         case .storage: "Storage"
-        case .stores: "Stores"
         case .jit: "JIT and connection"
         case .appearance: "Appearance"
         case .updates: "Updates"
+        case .signing: "Signing"
         case .advanced: "Advanced"
         case .reports: "Compatibility reports"
-        case .help: "Help and about"
+        case .fixing: "Fixing problems"
+        case .guides: "Setup guide and tips"
+        case .about: "About and credits"
         case .report: "Report a problem"
         }
     }
     var symbol: String {
         switch self {
-        case .play: "gamecontroller.fill"
+        case .display: "display"
+        case .performance: "speedometer"
+        case .sound: "speaker.wave.2.fill"
+        case .controls: "gamecontroller.fill"
+        case .stores: "storefront.fill"
         case .saves: "externaldrive.badge.icloud"
         case .storage: "internaldrive.fill"
-        case .stores: "storefront.fill"
         case .jit: "bolt.horizontal.fill"
         case .appearance: "paintpalette.fill"
         case .updates: "arrow.triangle.2.circlepath"
+        case .signing: "person.text.rectangle.fill"
         case .advanced: "wrench.and.screwdriver.fill"
         case .reports: "checkmark.seal.fill"
-        case .help: "questionmark.circle.fill"
+        case .fixing: "wand.and.stars"
+        case .guides: "lightbulb.fill"
+        case .about: "info.circle.fill"
         case .report: "exclamationmark.bubble.fill"
         }
     }
     var tint: Color {
         switch self {
-        case .play: .blue
+        case .display: .cyan
+        case .performance: .orange
+        case .sound: .red
+        case .controls: .blue
+        case .stores: .indigo
         case .saves: .teal
         case .storage: .orange
-        case .stores: .indigo
         case .jit: .green
         case .appearance: .pink
         case .updates: .mint
+        case .signing: .brown
         case .advanced: .gray
         case .reports: .purple
-        case .help: .cyan
+        case .fixing: .yellow
+        case .guides: .cyan
+        case .about: .gray
         case .report: .red
         }
     }
 }
 
-/// A page's content. Most pages are several of the older, smaller ones one after another.
+/// A page's content. Each page is one screen of its own; a few are made of two older, smaller ones.
 struct SettingsPageView: View {
     let page: SettingsPage
 
     var body: some View {
         switch page {
-        case .play:
-            CombinedPage(title: "Play", symbol: "gamecontroller.fill") { DisplayPage(); PerformancePage(); SoundPage(); ControlsPage() }
+        case .display: DisplayPage()
+        case .performance: PerformancePage()
+        case .sound: SoundPage()
+        case .controls: ControlsPage()
+        case .stores: StoresSettingsPage()
         case .saves: SavesPage()
         case .storage: StoragePage()
-        case .stores: StoresSettingsPage()
         case .jit: ConnectionPage()
         case .appearance: AppearancePage()
-        case .updates: UpdatesPage()
+        case .updates: UpdatesPage(mode: .updates)
+        case .signing: UpdatesPage(mode: .signing)
         case .advanced: AdvancedPage()
-        case .reports: ReportsSettingsPage()
-        case .help:
-            CombinedPage(title: "Help and about", symbol: "questionmark.circle.fill") { SetupPage(); GuidesPage(); AboutPage() }
+        case .reports: ReportsSettingsPage(mode: .reports)
+        case .fixing: ReportsSettingsPage(mode: .fixing)
+        case .guides: CombinedPage(title: "Setup guide and tips", symbol: "lightbulb.fill") { SetupPage(); GuidesPage() }
+        case .about: AboutPage()
         case .report: ReportProblemPage()
         }
     }

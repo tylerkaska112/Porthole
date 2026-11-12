@@ -1,0 +1,31 @@
+--- a/build/ntdll-unix/signal_arm64_ios.c	2026-11-08 23:07:36
++++ b/build/ntdll-unix/signal_arm64_ios.c	2026-11-08 23:07:36
+@@ -13760,6 +13760,28 @@
+                 }
+                 else
+                     ERR("ILL diag: [ill-guest-bytes] 0194 guest rip 0x%llx: the bytes cannot be read\n", (unsigned long long)x6);
++            }
++            /* Porthole 0195: who owns that address (the [fault-rgn] explanation: wine view, page protections, view history), and what its RW alias holds (an anonymous
++             * executable page's bytes are read through the pool's RX copy; if the RW alias differs, the two have come apart). */
++            if (x6 >= 0x100000000ULL && x6 < 0x8000000000ULL)
++            {
++                extern void ios_page_vprot_explain( const void *addr, const char *why );
++                extern uintptr_t ios_jit_anon_alias_lookup( uintptr_t addr );
++                uintptr_t rwa = ios_jit_anon_alias_lookup( (uintptr_t)x6 );
++                ios_page_vprot_explain( (const void *)(uintptr_t)x6, "ill-guest-rip" );
++                if (rwa)
++                {
++                    uint8_t rb[32];
++                    vm_size_t rsz = sizeof(rb);
++                    char rhex[32 * 3 + 1];
++                    if (vm_read_overwrite(mach_task_self(), (vm_address_t)rwa, sizeof(rb), (vm_address_t)rb, &rsz) == KERN_SUCCESS)
++                    {
++                        for (size_t i = 0; i < rsz && i < sizeof(rb); i++) snprintf( rhex + i * 3, 4, "%02x ", rb[i] );
++                        ERR("ILL diag: [ill-rw-alias-bytes] 0195 the RW alias of 0x%llx is 0x%llx, bytes there: %s\n", (unsigned long long)x6, (unsigned long long)rwa, rhex);
++                    }
++                }
++                else
++                    ERR("ILL diag: [ill-rw-alias-bytes] 0195 0x%llx has no anonymous-JIT alias\n", (unsigned long long)x6);
+             }
+             /* FEX inline L1 exit-dispatch reads {L1Ptr, L1Mask} at STATE+0xa0
+              * and the entry pair {host, guest} at L1Ptr + (rip & mask)<<?.

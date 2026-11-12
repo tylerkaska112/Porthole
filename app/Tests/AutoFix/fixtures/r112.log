@@ -1,0 +1,5 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I AC FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I D0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+00ac:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=36428

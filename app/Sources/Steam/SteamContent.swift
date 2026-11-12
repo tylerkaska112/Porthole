@@ -8,7 +8,18 @@ struct SteamContentError: Error, Equatable, CustomStringConvertible {
     var message: String
     /// The account does not own this app or depot (Steam answered "access denied").
     var notOwned = false
+    /// Steam answered "blocked" (error 40) for this depot's key: a depot that is not available to this account (a region or release restriction), not a transient failure.
+    var blocked = false
     var description: String { message }
+
+    /// What a failed depot-key answer from Steam means.
+    static func forDepotKey(code: Int, depot: Int) -> SteamContentError {
+        switch code {
+        case 15: return SteamContentError(message: "This account does not own depot \(depot).", notOwned: true)
+        case 40: return SteamContentError(message: "Steam has blocked depot \(depot) for this account (error 40, usually a region or release restriction).", blocked: true)
+        default: return SteamContentError(message: "Steam would not give the key for depot \(depot) (error \(code)).")
+        }
+    }
 }
 
 // MARK: - App information
@@ -94,11 +105,23 @@ struct SteamLaunchOption: Codable, Hashable {
         guard !options.isEmpty else { return nil }
         let ordinary = options.filter { ["", "default"].contains($0.type.lowercased()) }
         let windows = ordinary.filter { $0.oslist.isEmpty || $0.oslist.contains("windows") }
-        let suitable = windows.filter { $0.osarch.isEmpty || $0.osarch == "64" }
+        var suitable = windows.filter { $0.osarch.isEmpty || $0.osarch == "64" }
+        // A game whose entries are all of a numbered kind ("option1", "option3": PAYDAY 3 has entries 1 and 11 and none of the ordinary kind) has no ordinary entry:
+        // the lowest-numbered Windows entry of any kind that suits a 64-bit client is asked for, instead of 0, which Valve's client does not have ("entry for launch option 0 not found").
+        if suitable.isEmpty { suitable = options.filter { ($0.oslist.isEmpty || $0.oslist.contains("windows")) && ($0.osarch.isEmpty || $0.osarch == "64") } }
         if suitable.isEmpty { return 0 }
         if suitable.contains(where: { $0.key == nil }) { return nil }
         return suitable.compactMap(\.key).min()
     }
+}
+
+/// One save location a game's product info lists for Steam's automatic cloud sync (`ufs/savefiles`): the files in `path` under `root` that match `pattern`.
+struct SteamCloudRule: Equatable {
+    var root: String
+    var path: String
+    var pattern: String
+    var recursive: Bool
+    var exclude: String = ""
 }
 
 struct SteamAppInfo: Equatable {
@@ -118,6 +141,8 @@ struct SteamAppInfo: Equatable {
     var listedDLC: [Int] = []
     /// The depot the app's Workshop items are stored in (`depots/workshopdepot`); nil means the app's own id.
     var workshopDepot: Int?
+    /// Where the game keeps files Steam syncs by itself (Auto-Cloud), for the Windows version.
+    var cloudRules: [SteamCloudRule] = []
 }
 
 enum SteamAppInfoParser {
@@ -181,10 +206,19 @@ enum SteamAppInfoParser {
                                                   key: Int(key), osarch: (launchConfig?["osarch"] as? String) ?? ""))
             }
         }
+        var rules: [SteamCloudRule] = []
+        let saveFiles = (app["ufs"] as? [String: Any])?["savefiles"] as? [String: Any]
+        for key in (saveFiles ?? [:]).keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
+            guard let node = saveFiles?[key] as? [String: Any], let root = node["root"] as? String, !root.isEmpty else { continue }
+            let platforms = ((node["platforms"] as? [String: Any]) ?? [:]).values.compactMap { ($0 as? String)?.lowercased() }
+            if !platforms.isEmpty && !platforms.contains(where: { $0 == "all" || $0 == "windows" }) { continue }
+            rules.append(SteamCloudRule(root: root, path: (node["path"] as? String) ?? "", pattern: ((node["pattern"] as? String).flatMap { $0.isEmpty ? nil : $0 }) ?? "*",
+                                        recursive: (node["recursive"] as? String) == "1", exclude: (node["exclude"] as? String) ?? ""))
+        }
         return SteamAppInfo(appid: appid, name: (common?["name"] as? String) ?? "App \(appid)", installDirectory: config?["installdir"] as? String,
                             buildID: buildID, depots: depots, type: ((common?["type"] as? String) ?? "").lowercased(), launches: launches,
                             branches: branchList, dlcApps: dlcApps, listedDLC: listed,
-                            workshopDepot: (depotsNode["workshopdepot"] as? String).flatMap { Int($0) })
+                            workshopDepot: (depotsNode["workshopdepot"] as? String).flatMap { Int($0) }, cloudRules: rules)
     }
 
     static func bytes(fromHex text: String) -> Data? {
@@ -554,7 +588,7 @@ final class SteamCMBackend: SteamContentBackend {
                     let fields = PBFields(packet.body)
                     let code = fields?.int(1) ?? 2
                     if code == 1, let key = fields?.data(3), key.count == 32 { completion(.success(key)) }
-                    else { completion(.failure(SteamContentError(message: code == 15 ? "This account does not own depot \(depot)." : "Steam would not give the key for depot \(depot) (error \(code)).", notOwned: code == 15))) }
+                    else { completion(.failure(.forDepotKey(code: code, depot: depot))) }
                 }
             }
             self.cm.send(EMsg.getDepotDecryptionKey, body: request.data)

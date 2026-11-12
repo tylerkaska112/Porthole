@@ -40,17 +40,44 @@ final class GameMenuModel: ObservableObject {
     @Published var powerChosen: PowerMode = .balanced
     @Published var powerEffective: PowerMode = .balanced
     @Published var eco = false
-    @Published var frameGen = false
+    /// Lossless Scaling frame generation (only offered while its licence check passes): the live setting, and a sentence about what the engine reports.
+    @Published var lsAvailable = false
+    @Published var lsEnabled = false
+    @Published var lsGenerated = 1
+    @Published var lsFlow = 1.0
+    @Published var lsPerformance = true
+    @Published var lsStatus = ""
+    /// Upscaling (MetalFX) changed live: 0 off, 1 to the screen, 2 a fixed factor, and the sentence about what the engine reports.
+    @Published var upMode = 0
+    @Published var upFactor = 2.0
+    @Published var upMethod = 0       // 0 MetalFX, 1 Lossless Scaling LS1, 2 LS1 performance
+    @Published var upSharpness = 3
+    @Published var upLossless = false // the Lossless Scaling methods are offered (its copy is downloaded and licensed)
+    @Published var upStatus = ""
+    @Published var upAvailable = false
     @Published var fenceMode = 1
 
     // Controls
     /// The controller shown to the game: nil = Automatic, "xbox", "hid", "keys". `padHidReady`: the DualSense exists this session; `padKindName`: the connected controller.
     @Published var padMode: String?
+    /// The on-screen game controller: on or off, its size and how opaque it is.
+    @Published var virtualPad = false
+    @Published var virtualPadScale = 1.0
+    @Published var virtualPadLayout: VirtualPadLayout.Preset = .standard
+    @Published var virtualPadStyle: VirtualPadStyle = .xbox
+    @Published var virtualPadOpacity = 0.55
     @Published var padHidReady = false
     @Published var padKindName = ""
     @Published var layout: ControlLayout = .standard
     @Published var customLayoutInUse = false
     @Published var controlsShown = true
+    /// Seconds without a touch after which the on-screen controls hide (0 = never); see TouchAutoHide.
+    @Published var autoHideSeconds = 0
+    /// Every on-screen stick floats: its base appears where the thumb lands (see FloatingStick).
+    @Published var floatingSticks = false
+    /// How a finger on the game works: as the cursor itself, or as a trackpad (TrackpadEngine), and the trackpad's speed.
+    @Published var pointerMode = PointerMode.direct
+    @Published var pointerSpeed = TrackpadEngine.Speed.normal
     @Published var showLookSpeed = false
     @Published var lookSpeed = 2.4
 
@@ -70,14 +97,30 @@ final class GameMenuModel: ObservableObject {
     var dismiss: () -> Void = {}
     var setPower: (PowerMode) -> Void = { _ in }
     var setEco: (Bool) -> Void = { _ in }
-    var setFrameGen: (Bool) -> Void = { _ in }
+    var setLosslessEnabled: (Bool) -> Void = { _ in }
+    var setLosslessGenerated: (Int) -> Void = { _ in }
+    var setLosslessFlow: (Double) -> Void = { _ in }
+    var setLosslessPerformance: (Bool) -> Void = { _ in }
+    var refreshLosslessStatus: () -> Void = {}
+    var setUpscaling: (Int, Double, Int, Int) -> Void = { _, _, _, _ in }
+    var refreshUpscalingStatus: () -> Void = {}
     var setFence: (Int) -> Void = { _ in }
     var setHandleStyle: (MenuHandleStyle) -> Void = { _ in }
     var setLayout: (ControlLayout) -> Void = { _ in }
     var setControlsShown: (Bool) -> Void = { _ in }
+    var setAutoHide: (Int) -> Void = { _ in }
+    var setFloatingSticks: (Bool) -> Void = { _ in }
+    var setPointerMode: (PointerMode) -> Void = { _ in }
+    var setPointerSpeed: (TrackpadEngine.Speed) -> Void = { _ in }
     var adjustLook: (Double) -> Void = { _ in }
     var setPadMode: (String?) -> Void = { _ in }
+    var setVirtualPad: (Bool) -> Void = { _ in }
+    var setVirtualPadLayout: (VirtualPadLayout.Preset) -> Void = { _ in }
+    var setVirtualPadStyle: (VirtualPadStyle) -> Void = { _ in }
+    /// Changes the on-screen controller's size and opacity by these amounts (0.1 steps).
+    var adjustVirtualPad: (Double, Double) -> Void = { _, _ in }
     var openKeyboard: () -> Void = {}
+    var openFullKeyboard: () -> Void = {}
     var openBinds: () -> Void = {}
     var editControls: () -> Void = {}
     var report: () -> Void = {}
@@ -95,10 +138,20 @@ final class GameMenuModel: ObservableObject {
     ]
 }
 
+/// How much of the screen's right side the open menu covers. The launch screen's "Back to launch screen" pill sits in a window of its own above everything and keeps clear of it
+/// (it used to be drawn over the menu's title).
+@MainActor
+final class MenuPresence: ObservableObject {
+    static let shared = MenuPresence()
+    @Published var panelWidth: CGFloat = 0
+}
+
 /// The side panel. Slides in from the right over a dimmed game; the game keeps running behind it.
 struct GameMenuView: View {
     @ObservedObject var model: GameMenuModel
     @ObservedObject var overlay: PerfOverlaySettings
+
+    private func panelWidth(_ total: CGFloat) -> CGFloat { min(370, max(310, total * 0.4)) }
 
     var body: some View {
         GeometryReader { geo in
@@ -109,7 +162,7 @@ struct GameMenuView: View {
                         .onTapGesture { model.dismiss() }
                         .transition(.opacity)
                     GameMenuPanel(model: model, overlay: overlay)
-                        .frame(width: min(370, max(310, geo.size.width * 0.4)))
+                        .frame(width: panelWidth(geo.size.width))
                         .frame(maxHeight: .infinity)
                         // Swipe the panel back to the right to close it.
                         .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { v in
@@ -121,6 +174,11 @@ struct GameMenuView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.9), value: model.isPresented)
+        .background(GeometryReader { geo in
+            Color.clear
+                .onChange(of: model.isPresented) { _, open in MenuPresence.shared.panelWidth = open ? panelWidth(geo.size.width) : 0 }
+                .onDisappear { MenuPresence.shared.panelWidth = 0 }
+        })
     }
 }
 
@@ -205,41 +263,48 @@ private struct GameMenuPanel: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Menu").font(.system(size: 20, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Menu").font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
                 if let name = model.gameName {
-                    Text(name).font(.system(size: 12)).foregroundStyle(Theme.textDim).lineLimit(1)
+                    Text(name).font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(1)
                 }
             }
-            Spacer()
+            Spacer(minLength: 8)
             Button { model.dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.text)
-                    .frame(width: 36, height: 36).background(Circle().fill(Theme.panelHigh))
+                Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.text)
+                    .frame(width: 34, height: 34).background(Circle().fill(Theme.panelHigh)).overlay(Circle().strokeBorder(Theme.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close menu")
         }
-        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
     }
 
+    /// One row of equal tabs. The icon has a box of its own and the label is one line (scaled down a little when five tabs share a narrow panel), so every tab lines up and
+    /// "Performance" never breaks in the middle of the word.
     private var tabBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(model.availableTabs) { tab in
                 let on = model.tab == tab
                 Button { model.tab = tab } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: tab.symbol).font(.system(size: 16, weight: .semibold))
-                        Text(tab.title).font(.system(size: 11, weight: .semibold))
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.symbol).font(.system(size: 16, weight: .semibold)).frame(height: 20)
+                        Text(tab.title).font(.system(size: 11, weight: .semibold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.72).allowsTightening(true)
                     }
                     .foregroundStyle(on ? Theme.onAccent : Theme.textDim)
-                    .frame(maxWidth: .infinity, minHeight: 46)
-                    .background { if on { RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accentGradient) } }
+                    .padding(.horizontal, 2)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background { if on { RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.accentGradient) } }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(on ? .isSelected : [])      // the tabs change with LB and RB or a tap, not with the D-pad
             }
         }
-        .padding(.horizontal, 12).padding(.bottom, 10)
+        .padding(3)
+        .background(Theme.panel.opacity(0.7), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+        .padding(.horizontal, 12).padding(.bottom, 12)
     }
 }
 
@@ -253,8 +318,9 @@ struct MenuCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             Theme.label(title)
             VStack(alignment: .leading, spacing: 0) { content }
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
             if let footer {
                 Text(footer).font(.system(size: 12)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
             }
@@ -278,7 +344,9 @@ struct MenuChoiceRow: View {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 19)).foregroundStyle(selected ? Theme.accent : Theme.textDim.opacity(0.6))
             }
-            .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 46).contentShape(Rectangle())
+            .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 46)
+            .background(selected ? Theme.accent.opacity(0.11) : Color.clear)          // the chosen one is easy to find
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusTarget("choice:\(title)", radius: 8, scale: 1.0, action: action)
@@ -329,6 +397,34 @@ struct MenuActionRow: View {
 
 struct MenuDivider: View { var body: some View { Divider().overlay(Theme.line).padding(.leading, 12) } }
 
+/// A row that opens to a few lines of explanation, closed at first: long text under a card pushed the choices off the screen of a phone held sideways.
+struct MenuExpandRow: View {
+    let title: String
+    let text: String
+    @State private var open = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "questionmark.circle").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.accent)
+                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent).lineLimit(2).multilineTextAlignment(.leading)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textDim).rotationEffect(.degrees(open ? 180 : 0))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusTarget("expand:\(title)", radius: 8, scale: 1.0) { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(open ? "Expanded" : "Collapsed")
+            if open {
+                Text(text).font(.system(size: 12)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12).padding(.bottom, 12)
+            }
+        }
+    }
+}
+
 // MARK: - Performance
 
 private struct PerformanceTab: View {
@@ -349,11 +445,8 @@ private struct PerformanceTab: View {
             }
         }
 
-        MenuCard(title: "Engine", footer: "Eco puts the game on the efficiency cores: cooler and longer battery, slower. Frame generation helps a game running at no more than half the screen\u{2019}s rate (60 FPS on a 120 Hz screen); try it and look at the overlay. GPU sync only matters if you see flicker or a freeze.") {
+        MenuCard(title: "Engine", footer: "Eco puts the game on the efficiency cores: cooler and longer battery, slower. GPU sync only matters if you see flicker or a freeze.") {
             MenuToggleRow(title: "Eco mode", detail: nil, isOn: Binding(get: { model.eco }, set: { model.setEco($0) }))
-            MenuDivider()
-            MenuToggleRow(title: "Frame generation", detail: "Experimental. A picture between game frames, for a screen that can show twice the game's rate.",
-                          isOn: Binding(get: { model.frameGen }, set: { model.setFrameGen($0) }))
             MenuDivider()
             VStack(alignment: .leading, spacing: 0) {
                 Text("GPU sync").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.horizontal, 12).padding(.top, 10)
@@ -363,7 +456,98 @@ private struct PerformanceTab: View {
             }
         }
 
+        if model.upAvailable { UpscalingCard(model: model) }
+
+        if model.lsAvailable { LosslessCard(model: model) }
+
         OverlayCard(overlay: overlay)
+    }
+}
+
+/// Lossless Scaling frame generation: on or off, how many frames to add, how detailed the motion search is, and what the engine says it is doing (refreshed every second while the menu is open).
+/// MetalFX upscaling of the running game: off, to the screen, or a fixed factor. The engine takes the choice without a restart.
+private struct UpscalingCard: View {
+    @ObservedObject var model: GameMenuModel
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private static let choices: [(Int, Double, String, String)] = [
+        (0, 2.0, "Off", "The picture is drawn as the game makes it."),
+        (1, 2.0, "To the screen", "Enlarged to the screen\u{2019}s own pixels (at most 2\u{00D7}); nothing happens when the game already draws about as large as the screen."),
+        (2, 1.5, "1.5\u{00D7}", "A fixed enlargement."),
+        (2, 2.0, "2\u{00D7}", "A fixed doubling of the game\u{2019}s size."),
+    ]
+    private static let methods: [(Int, String, String)] = [
+        (0, "MetalFX", "Apple\u{2019}s own spatial scaler. Works in Direct3D 11 and 12 games."),
+        (1, "Lossless Scaling LS1", "Lossless Scaling\u{2019}s own upscaler, from your copy of the program: a small neural network that redraws the edges. Direct3D 11 and 12 games."),
+        (2, "Lossless Scaling LS1 performance", "The same upscaler with a lighter network: less graphics work, a little less exact edges."),
+    ]
+    var body: some View {
+        MenuCard(title: "Upscaling (MetalFX)", footer: model.upStatus) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Enlarge the game\u{2019}s picture").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.horizontal, 12).padding(.top, 10)
+                ForEach(Self.choices, id: \.2) { item in
+                    MenuChoiceRow(title: item.2, detail: item.3, selected: model.upMode == item.0 && (item.0 != 2 || model.upFactor == item.1)) { model.setUpscaling(item.0, item.1, model.upMethod, model.upSharpness) }
+                }
+            }
+            if model.upLossless && model.upMode != 0 {
+                MenuDivider()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Method").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.horizontal, 12).padding(.top, 10)
+                    ForEach(Self.methods, id: \.0) { item in
+                        MenuChoiceRow(title: item.1, detail: item.2, selected: model.upMethod == item.0) { model.setUpscaling(model.upMode, model.upFactor, item.0, model.upSharpness) }
+                    }
+                }
+                if model.upMethod != 0 {
+                    MenuDivider()
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Sharpness").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.horizontal, 12).padding(.top, 10)
+                        ForEach(1...5, id: \.self) { n in
+                            MenuChoiceRow(title: "\(n)", detail: n == 1 ? "Softest: closest to a plain enlargement." : (n == 5 ? "Sharpest edges; can look over-processed." : nil), selected: model.upSharpness == n) { model.setUpscaling(model.upMode, model.upFactor, model.upMethod, n) }
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear { model.refreshUpscalingStatus() }
+        .onReceive(tick) { _ in model.refreshUpscalingStatus() }
+    }
+}
+
+private struct LosslessCard: View {
+    @ObservedObject var model: GameMenuModel
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private static let flows: [(Double, String, String)] = [
+        (1.0, "Full", "The motion search runs at the game\u{2019}s own size. Best picture, most work."),
+        (1.5, "Medium", "Two thirds of the game\u{2019}s size."),
+        (2.0, "Half", "Half the size: about a quarter of the work."),
+        (3.0, "Third", "A third of the size."),
+        (4.0, "Quarter", "A quarter of the size: fastest, roughest motion."),
+    ]
+    var body: some View {
+        MenuCard(title: "Lossless Scaling", footer: model.lsStatus) {
+            MenuToggleRow(title: "Frame generation", detail: "A picture between the game\u{2019}s frames, made with your copy of Lossless Scaling. Direct3D 11 and 12 games (12 needs more memory). The passes use graphics power, so the game itself runs slower: the screen shows more frames, but not double. The first seconds stutter while the shaders are prepared.",
+                          isOn: Binding(get: { model.lsEnabled }, set: { model.setLosslessEnabled($0) }))
+            if model.lsEnabled {
+                MenuDivider()
+                MenuToggleRow(title: "Lighter passes", detail: "Lossless Scaling\u{2019}s performance layout: fewer and smaller intermediate pictures, clearly less graphics work, a little less exact motion. Switch it off for the full layout.",
+                              isOn: Binding(get: { model.lsPerformance }, set: { model.setLosslessPerformance($0) }))
+                MenuDivider()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Frames added between two").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.horizontal, 12).padding(.top, 10)
+                    ForEach([(1, "1", "One extra picture per game frame."), (2, "2", "Two extra: the passes run twice per game frame, so this costs a lot more."), (3, "3", "Three extra: three times the passes. Only for a strong device and a fast screen.")], id: \.0) { item in
+                        MenuChoiceRow(title: item.1, detail: item.2, selected: model.lsGenerated == item.0) { model.setLosslessGenerated(item.0) }
+                    }
+                }
+                MenuDivider()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Motion search detail").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.horizontal, 12).padding(.top, 10)
+                    ForEach(Self.flows, id: \.0) { item in
+                        MenuChoiceRow(title: item.1, detail: item.2, selected: model.lsFlow == item.0) { model.setLosslessFlow(item.0) }
+                    }
+                }
+            }
+        }
+        .onAppear { model.refreshLosslessStatus() }
+        .onReceive(tick) { _ in model.refreshLosslessStatus() }
     }
 }
 
@@ -371,16 +555,23 @@ private struct PerformanceTab: View {
 private struct ProcessorCard: View {
     @ObservedObject private var monitor = CPUClampMonitor.shared
     var body: some View {
-        MenuCard(title: "Processor", footer: "After a few minutes of load iOS pins the phone\u{2019}s fast cores at about 1.1 GHz, roughly half their speed, and the game slows down with them. Less power use delays it: a 30 FPS cap (Balanced) and the screen not held at 120 Hz help. Heat as iOS reports it: \(CPUClampMonitor.thermalName), pressure \(CPUClampMonitor.pressureName(monitor.pressure)).") {
-            HStack(spacing: 10) {
-                Circle().fill(color).frame(width: 12, height: 12)
-                VStack(alignment: .leading, spacing: 1) {
+        MenuCard(title: "Processor") {
+            HStack(alignment: .top, spacing: 12) {
+                // A tile of its own (not a dot), so it is not mistaken for the choice buttons of the cards below.
+                Image(systemName: "cpu").font(.system(size: 16, weight: .semibold)).foregroundStyle(color)
+                    .frame(width: 36, height: 36).background(color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
                     if let detail { Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true) }
+                    Text("Heat: \(CPUClampMonitor.thermalName) \u{00B7} pressure: \(CPUClampMonitor.pressureName(monitor.pressure))")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textDim.opacity(0.85))
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 46)
+            MenuDivider()
+            MenuExpandRow(title: "Why does iOS slow the phone down?",
+                          text: "After a few minutes of load iOS pins the phone\u{2019}s fast cores at about 1.1 GHz, roughly half their speed, and the game slows down with them. Less power use delays it: a 30 FPS cap (Balanced) and the screen not held at 120 Hz help.")
         }
     }
     private var color: Color {
@@ -532,6 +723,29 @@ private struct ControlsTab: View {
         }
 
         MenuCard(title: "On screen") {
+            MenuToggleRow(title: "Game controller", detail: "An Xbox controller drawn on the screen, for games that want a pad. The touch layouts are put away while it is on; a real controller works with it.",
+                          isOn: Binding(get: { model.virtualPad }, set: { model.setVirtualPad($0) }))
+            if model.virtualPad {
+                MenuDivider()
+                HStack {
+                    Text("Controller size").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                    Spacer()
+                    stepButton("minus", id: "vpad-smaller") { model.adjustVirtualPad(-0.1, 0) }
+                    Text(String(format: "%.0f%%", model.virtualPadScale * 100)).font(.system(size: 15, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text).frame(minWidth: 52)
+                    stepButton("plus", id: "vpad-bigger") { model.adjustVirtualPad(0.1, 0) }
+                }
+                .padding(.horizontal, 12).frame(minHeight: 50)
+                MenuDivider()
+                HStack {
+                    Text("Controller opacity").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                    Spacer()
+                    stepButton("minus", id: "vpad-fainter") { model.adjustVirtualPad(0, -0.1) }
+                    Text(String(format: "%.0f%%", model.virtualPadOpacity * 100)).font(.system(size: 15, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text).frame(minWidth: 52)
+                    stepButton("plus", id: "vpad-stronger") { model.adjustVirtualPad(0, 0.1) }
+                }
+                .padding(.horizontal, 12).frame(minHeight: 50)
+            }
+            MenuDivider()
             MenuToggleRow(title: "Show controls", detail: nil, isOn: Binding(get: { model.controlsShown }, set: { model.setControlsShown($0) }))
             if model.showLookSpeed {
                 MenuDivider()
@@ -546,7 +760,60 @@ private struct ControlsTab: View {
                 .padding(.horizontal, 12).frame(minHeight: 50)
             }
             MenuDivider()
-            MenuActionRow(title: "Keyboard", symbol: "keyboard") { model.openKeyboard() }
+            MenuActionRow(title: "Keyboard", symbol: "keyboard", detail: "The iPhone's keyboard, for typing text") { model.openKeyboard() }
+            MenuDivider()
+            MenuActionRow(title: "Full keyboard", symbol: "keyboard.fill", detail: "Every key: F keys, arrows, Ctrl, Alt and Shift") { model.openFullKeyboard() }
+        }
+
+        MenuCard(title: "Touch pointer", footer: "For point-and-click and strategy games and anything with small targets: Trackpad keeps your finger off the thing you are aiming at. A first-person game's look-around is not affected.") {
+            ForEach(Array(PointerMode.allCases.enumerated()), id: \.element) { index, mode in
+                if index > 0 { MenuDivider() }
+                MenuChoiceRow(title: mode.title, detail: mode.detail, selected: model.pointerMode == mode) { model.setPointerMode(mode) }
+            }
+            if model.pointerMode == .trackpad {
+                MenuDivider()
+                HStack(spacing: 8) {
+                    Text("Cursor speed").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                    Spacer(minLength: 8)
+                    ForEach(TrackpadEngine.Speed.allCases, id: \.self) { speed in
+                        Button { model.setPointerSpeed(speed) } label: {
+                            Text(speed.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(model.pointerSpeed == speed ? Theme.onAccent : Theme.text)
+                                .padding(.horizontal, 11).frame(minHeight: 34)
+                                .background(model.pointerSpeed == speed ? AnyShapeStyle(Theme.accentGradient) : AnyShapeStyle(Theme.panelHigh), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .focusTarget("pointer-speed:\(speed.rawValue)", radius: 17, scale: 1.0) { model.setPointerSpeed(speed) }
+                        .accessibilityAddTraits(model.pointerSpeed == speed ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal, 12).frame(minHeight: 50)
+            }
+        }
+
+        MenuCard(title: "Sticks", footer: "A stick takes a touch near its place and puts its base where your thumb lands, so you do not have to find the circle. Not while you edit the layout.") {
+            MenuToggleRow(title: "Floating sticks", detail: nil, isOn: Binding(get: { model.floatingSticks }, set: { model.setFloatingSticks($0) }))
+        }
+
+        MenuCard(title: "Hide when not touched", footer: "The on-screen controls hide when no finger has touched the screen for this long, and come back with a touch anywhere. They never hide while a menu is open or a finger is held on one.") {
+            ForEach(Array(TouchAutoHide.choices.enumerated()), id: \.element) { index, seconds in
+                if index > 0 { MenuDivider() }
+                MenuChoiceRow(title: TouchAutoHide.title(seconds), detail: nil, selected: model.autoHideSeconds == seconds) { model.setAutoHide(seconds) }
+            }
+        }
+
+        if model.virtualPad {
+            MenuCard(title: "Controller type", footer: "The controller it imitates: its look and its own layout. The game sees an Xbox pad whichever you choose.") {
+                ForEach(Array(VirtualPadStyle.allCases.enumerated()), id: \.element) { index, style in
+                    if index > 0 { MenuDivider() }
+                    MenuChoiceRow(title: style.title, detail: style.detail, selected: model.virtualPadStyle == style) { model.setVirtualPadStyle(style) }
+                }
+            }
+            MenuCard(title: "Controller layout", footer: "Choosing a type already picks its layout. Pick another here to change only where the controls are; a layout leaves out the controls it does not need.") {
+                ForEach(Array(VirtualPadLayout.Preset.allCases.enumerated()), id: \.element) { index, preset in
+                    if index > 0 { MenuDivider() }
+                    MenuChoiceRow(title: preset.title, detail: preset.detail, selected: model.virtualPadLayout == preset) { model.setVirtualPadLayout(preset) }
+                }
+            }
         }
 
         MenuCard(title: "Binds") {

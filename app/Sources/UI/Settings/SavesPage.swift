@@ -78,7 +78,7 @@ struct SavesPage: View {
                 case .success(let b):
                     message = "\(b.files) files, \(ByteCountFormatter.string(fromByteCount: Int64(b.bytes), countStyle: .file))" + (b.leftOut > 0 ? "; \(b.leftOut) very large files left out" : "")
                     shareURL = b.url
-                case .failure(let e): message = e.localizedDescription
+                case .failure(let e): message = ErrorText.plain(e)
                 }
             }
         }
@@ -93,7 +93,7 @@ struct SavesPage: View {
                 busy = false
                 switch result {
                 case .success(let n): message = "\(n) files restored."
-                case .failure(let e): message = e.localizedDescription
+                case .failure(let e): message = ErrorText.plain(e)
                 }
             }
         }

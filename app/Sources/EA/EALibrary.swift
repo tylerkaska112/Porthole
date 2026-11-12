@@ -164,7 +164,7 @@ extension EAOwnedGame {
                 LogStore.shared.log("[ea-library] owned games=\(games.count)")
             } catch {
                 Self.note(error, context: "library")
-                self.error = error.localizedDescription
+                self.error = ErrorText.plain(error)
             }
             isLoading = false
         }

@@ -15,6 +15,8 @@ struct EpicInstalledGame: Codable {
     var prereqName: String
     var prereqPath: String
     var prereqArgs: String
+    /// The game's own prerequisite installer was run from the game's page (it runs only when asked, never by itself).
+    var prereqDone: Bool?
 }
 
 @MainActor final class EpicInstaller: ObservableObject {
@@ -59,7 +61,7 @@ struct EpicInstalledGame: Codable {
                 for id in pending.keys { installs[id] = Install(state: .paused) }
                 attachBackground()
                 ready = true
-            } catch { self.error = "Could not read Epic installs: " + error.localizedDescription }
+            } catch { self.error = "Could not read Epic installs: " + ErrorText.plain(error) }
         }
     }
     private func attachBackground() {
@@ -79,6 +81,42 @@ struct EpicInstalledGame: Codable {
     func game(for appName: String) -> EpicGame? { pending[appName]?.game ?? installed[appName]?.game }
     /// What is installed, as the page of a game shows it.
     func record(_ appName: String) -> EpicInstalledGame? { installed[appName] }
+
+    /// The prerequisite installer a game's manifest lists (Unreal games: UE4PrereqSetup_x64.exe, which sets up the Visual C++ runtime and DirectX), when its file is in the install.
+    struct Prerequisite { let name: String; let windowsPath: String; let args: String; let done: Bool }
+    func prerequisite(_ appName: String) -> Prerequisite? {
+        guard let r = installed[appName], !r.prereqPath.isEmpty else { return nil }
+        let relative = r.installDir + "/" + r.prereqPath.replacingOccurrences(of: "\\", with: "/")
+        let windows = AppModel.windowsPath(forRelative: relative)
+        guard let file = AppModel.unixURL(forWindows: windows), FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return Prerequisite(name: r.prereqName.isEmpty ? file.lastPathComponent : r.prereqName, windowsPath: windows, args: r.prereqArgs, done: r.prereqDone == true)
+    }
+    /// The prerequisite setup that was started: the game's app name and the id of the runner game the session was started with (so only the end of THAT session counts).
+    private var prerequisiteRunner: (appName: String, gameID: UUID)?
+
+    /// Runs the game's prerequisite installer in Porthole's Windows, once, when the person asks (the game's page). The person watches it on the desktop. Most games run without it
+    /// (the Visual C++ runtime is provided), so it is never started on its own: an installer that hangs must not stand between a person and their game.
+    func runPrerequisite(_ appName: String) {
+        guard let p = prerequisite(appName) else { return }
+        guard !AppModel.shared.session.isActive else { error = "End the running game before installing its prerequisites."; return }
+        var runner = Game(name: "Prerequisites: " + p.name, exe: p.windowsPath)
+        runner.args = p.args
+        runner.inDesktop = true; runner.installer = true
+        prerequisiteRunner = (appName, runner.id)      // overwritten by the next try, so a start that failed leaves nothing stuck
+        error = nil
+        LogStore.shared.log("[epic-install] running the prerequisite installer of \(appName): \(p.windowsPath) \(p.args)")
+        AppModel.shared.session.start(runner)
+    }
+
+    /// The Wine session ended: if it was a prerequisite installer, remember that it ran.
+    func sessionEnded() {
+        guard let running = prerequisiteRunner, AppModel.shared.session.game?.id == running.gameID else { return }      // the end of some other session is not this setup's
+        let name = running.appName
+        prerequisiteRunner = nil
+        installed[name]?.prereqDone = true
+        persist()
+        LogStore.shared.log("[epic-install] the prerequisite installer of \(name) finished")
+    }
     /// The library entry of an installed game.
     func entry(_ appName: String) -> Game? {
         guard installed[appName] != nil else { return nil }
@@ -94,7 +132,7 @@ struct EpicInstalledGame: Codable {
         saving = Task {
             await previous?.value
             do { try await worker.save(store) }
-            catch { self.error = "Could not save Epic installs: " + error.localizedDescription }
+            catch { self.error = "Could not save Epic installs: " + ErrorText.plain(error) }
         }
     }
     func install(_ game: EpicGame) {
@@ -202,7 +240,7 @@ struct EpicInstalledGame: Codable {
                     AppModel.shared.removeEpic(appName: id)
                 }
                 installs.removeValue(forKey: id); persist()
-            } catch { installs[id] = Install(state: .failed("Could not remove Epic files: " + error.localizedDescription)) }
+            } catch { installs[id] = Install(state: .failed("Could not remove Epic files: " + ErrorText.plain(error))) }
             removing.remove(id)
         }
     }
@@ -239,7 +277,7 @@ struct EpicInstalledGame: Codable {
                 if Task.isCancelled {
                     if installs[id]?.state != .queued { installs[id]?.state = .paused }
                 } else {
-                    let message = (error as? EpicAuthError)?.message ?? error.localizedDescription
+                    let message = (error as? EpicAuthError)?.message ?? ErrorText.plain(error)
                     installs[id]?.state = .failed(message)
                     outcome = .failed(message)
                     LogStore.shared.log("[epic-install] failure completed-bytes=\(installs[id]?.progress.doneBytes ?? 0) total-bytes=\(installs[id]?.progress.totalBytes ?? 0) reason=\(message)", level: .error)

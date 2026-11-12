@@ -24,6 +24,11 @@ enum AppArt {
             await MainActor.run { AppModel.shared.setSteamAppID(found, for: game) }
         }
         guard let sid = steamID, sid > 0 else { return nil }
-        return kind == .hero ? await SteamArt.shared.image(appID: sid) : await SteamArt.shared.header(appID: sid)
+        if kind == .hero {
+            // Some (older) games have no wide picture: their small one, spread behind the page, is better than the plain fill.
+            if let wide = await SteamArt.shared.image(appID: sid) { return wide }
+            return await SteamArt.shared.header(appID: sid)
+        }
+        return await SteamArt.shared.header(appID: sid)
     }
 }

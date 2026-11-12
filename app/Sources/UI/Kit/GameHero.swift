@@ -54,7 +54,7 @@ struct GameHero<Chips: View>: View {
     private var artCard: some View {
         Color.clear.aspectRatio(compact ? 460.0 / 215.0 : 16.0 / 9.0, contentMode: .fit)
             .overlay { GameArtView(id: id, name: name, kind: .hero, titled: true) }
-            .overlay(alignment: .bottom) { LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom).frame(height: compact ? 54 : 110) }
+            .overlay(alignment: .bottom) { LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.45), location: 0.45), .init(color: .black.opacity(0.88), location: 1)], startPoint: .top, endPoint: .bottom).frame(height: compact ? 64 : 130) }
             .overlay(alignment: .bottomLeading) {
                 Text(name).font(.system(size: compact ? 20 : 30, weight: .heavy, design: .rounded)).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
                     .shadow(color: .black.opacity(0.6), radius: 8, y: 2).padding(compact ? 10 : 16)
@@ -108,7 +108,7 @@ struct StoreHero<Art: View, Chips: View, Actions: View>: View {
             if let back { PillButton(id: "sp-back", title: backTitle, symbol: "chevron.left", action: back) }
             Color.clear.aspectRatio(compact ? 460.0 / 215.0 : 16.0 / 9.0, contentMode: .fit)
                 .overlay { art }
-                .overlay(alignment: .bottom) { LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom).frame(height: compact ? 54 : 110) }
+                .overlay(alignment: .bottom) { LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.45), location: 0.45), .init(color: .black.opacity(0.88), location: 1)], startPoint: .top, endPoint: .bottom).frame(height: compact ? 64 : 130) }
                 .overlay(alignment: .bottomLeading) {
                     Text(name).font(.system(size: compact ? 20 : 30, weight: .heavy, design: .rounded)).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
                         .shadow(color: .black.opacity(0.6), radius: 8, y: 2).padding(compact ? 10 : 16)

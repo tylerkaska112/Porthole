@@ -1,0 +1,7 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I A4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+00a4:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xffffffff) syscalls=0 unix_calls=8852
+I BC FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+00bc:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c000001d at 0000000170E525AF: top_filter=00000001700BA3AC nested=0
+00bc:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc000001d) syscalls=0 unix_calls=11087
+[03:50:25.891] [INFO] [launch] stop requested while the game was starting: closing the app

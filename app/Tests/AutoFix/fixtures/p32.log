@@ -1,0 +1,14 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I AC FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I C0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71eb3c0000+0xa0000): want=0xa4000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71eb2c0000+0xa0000): want=0xa4000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71eb2c0000+0xa0000): want=0xa4000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71ea090000+0x80000): want=0x84000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71e9f30000+0x80000): want=0x84000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71e9d90000+0x80000): want=0x84000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71e9d80000+0x90000): want=0x94000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71e9d90000+0x80000): want=0x84000 bump=0xcf98000/0x211bc000 tail_resv=0x141bc000 freelist=19 — FAILING the load (was: silent BUS loop)
+0104:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c0000005 at 00000001412445CD: top_filter=0000000141389940 nested=0
+[jit-pool] L"\\??\\C:\\windows\\sysx64\\AVRT.dll": no JIT-pool copy for executable section .text -- the load fails with STATUS_NO_MEMORY instead of mapping code that cannot run
+00c0:err:module:load_dll [dll-missing] rev=ml336 #10 L"AVRT.dll" status=c0000017 -- if the webhelper dies right after this, it is the delay-load Chromium kills the process over

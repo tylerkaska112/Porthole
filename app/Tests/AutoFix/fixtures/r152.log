@@ -1,0 +1,5 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+[fex-arena] ml799 constrained 8GB: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @16-32G: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @8-16G: native reserve FAILED kr=3
+I 24 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538

@@ -1,0 +1,194 @@
+PORTHOLE 1.3.0 "FULL SAIL" - CHANGELOG
+======================================
+
+Everything below is what changed since the public 1.2.1. It was built and tested as 169 private builds, 1.3.1 (689) to 1.3.170 (860); they are folded into this one list.
+The engine is 2c133ca-r1 (upstream Madeira of 2026-11-05 plus two upstream fixes, with Porthole's patches). Compatibility badges are tied to the engine, so every game starts at "Not yet tested" again until people have played it on this version.
+Sections: HEADLINES, ADDED, CHANGED, FIXED, GAMES WE WORKED ON, KNOWN LIMITS.
+
+
+HEADLINES
+---------
+* A bigger, sharper picture: Upscaling (MetalFX or, with your own copy of Lossless Scaling, its LS1 upscalers) for Direct3D 11 and 12 games, switchable while the game runs from the in-game menu.
+* More frames: Lossless Scaling frame generation for Direct3D 11 and 12 games, from your own copy of Lossless Scaling (Stores > Software checks your Steam purchase first; nothing of it is shipped with Porthole).
+* Steam Cloud saves both ways: upload and download a game's saves from its page, with a list of what will move before anything does. A save changed on both sides is never overwritten.
+* Fixes that ask first: when a run ends with a known cause (a game that needs AVX, a memory limit, a copied-library pool filling up, a missing program), Porthole suggests changing one setting for that game on Home. Nothing changes until you tap Apply; after that there is an Undo button, and the next run is judged.
+* An on-screen game controller (several layouts; Xbox, PlayStation, Nintendo Switch and Super Nintendo types) for games that need a pad.
+* Much better touch controls for keyboard-and-mouse games: a trackpad mode, a full PC keyboard on screen, mixed layouts with gamepad buttons, floating sticks, controls that fade away when you are not touching them, and a suggestion to switch on touch controls when a game ignores the on-screen controller.
+* Downloads to an external drive: choose the device or the SSD when you press Download, with a drive speed test and gentle writing for slow drives.
+* Blender, as the first program in a new Software section: download it from the Stores tab, touch controls for its 3D view, and GPU rendering with kernels built for your device.
+* Settings reorganised into 17 short pages in six sections, with a Controls page that gathers every controller, keyboard, mouse and touch setting.
+* A documentation section on the website, and "What does this mean?" buttons on errors, settings and engine lines that open the right page.
+* Vulkan as an opt-in route (DXVK, vkd3d-proton, MoltenVK or KosmicKrisp) for games that render wrongly on the default route, and a benchmark line at the end of every run.
+
+
+ADDED
+-----
+
+Upscaling and frame generation
+* Upscaling (MetalFX) as a game setting (1.5x, 2x or To the screen) and an Upscaling card in the in-game menu (Off, To the screen, 1.5x, 2x). The menu changes it at once, without restarting the game. Direct3D 11 and 12. The card says what the engine is doing: the size the game draws, the size it is enlarged to, or that there is nothing to enlarge.
+* "To the screen" enlarges the game's picture to the screen's own pixels (at most 2x) and does nothing when the game already draws about as large as the screen. Set the game's Resolution lower (for example 1280x720) and the game runs faster while the picture stays sharp.
+* Lossless Scaling frame generation: in a game's Engine section and the in-game menu, for Direct3D 11 and 12 games. It needs your own copy of Lossless Scaling (Steam app 993090). The menu card switches it on and off while the game runs, chooses how many frames are added (1 to 3) and how detailed the motion search is, and says what it is doing: frames made per second, what the passes cost, or why it cannot work.
+* Lighter passes (on by default): Lossless Scaling's performance layout, with fewer and smaller intermediate pictures. Changing a setting no longer prepares every shader again.
+* Frame generation runs only in the game's own program, never in launchers or helper windows (Rockstar's Launcher, Social Club, Steam).
+* Frame generation works with games that use an sRGB back buffer (Unity games such as Schedule I); the generated pictures are kept in 16-bit floats so shadows do not band.
+* Lossless Scaling's own upscalers (LS1 and LS1 performance) as upscaling methods, with a sharpness setting from 1 to 5, in the in-game Upscaling card and in the game's settings. Direct3D 11 and 12. If they cannot start, MetalFX is used and the card says why. They also enlarge the frames that frame generation makes.
+* Stores > Software > Lossless Scaling: checks, with Steam's own licence list for your account, that you own it; downloads it from Steam with your account (Steam only gives its files to a licensed account); keeps only Lossless.dll, sealed on the device; keeps a signed proof of the licence that must be renewed online every 7 days. A refund or revoked licence removes the file at the next check. It cannot be installed as a game from the Steam store page.
+* Direct3D games that list resolutions through DXGI now see the whole table, from 640x360 up to the Resolution set for Porthole, so upscaling has something to enlarge from. (A line env.DXMT_WSI_MODE_TABLE = 0 in a game's config turns it off.) The log lists the display modes a game asks for.
+
+Steam
+* Steam Cloud card under Play on a game's page (games Steam installed): Upload saves to Steam and Download saves from Steam, with the files listed first (to upload, to download, changed on both sides) and their sizes, a "Check again" button, and the state at a glance. Nothing runs by itself; the buttons wait while a game is running. Upload finds new saves where the game keeps them (Steam's Auto-Cloud rules, for example a new Factorio world); download understands ProgramData and the per-game folder Steam uses for games that use Steam's own save calls.
+* An Offline play row on a Steam game's page: Ready once Steam has saved an offline sign-in on this device, or what to do first.
+* Steam downloads skip a depot Steam blocks for your region or release (error 40) and install the rest, and say which one was left out.
+* When Steam's client files are not on the device yet, the Home notice has an Open Steam button (the files are about 73 MB, from Valve).
+* Settings > Steam shows a warning when the app id in this copy's signature differs from the app id the app declares (a signing service's profile can name an id of its own), which is the cause of a folder chooser that gets no answer, and says how to fix it.
+
+Stores and storage
+* Stores > Software: programs that are not games. Blender and Lossless Scaling are there; each is a row that opens its own page (download, start, update, remove, what is known to be limited or wrong). New programs and new versions can be added to the list without an app update; some are data packs that are not started.
+* Downloads to an external drive or SSD library: Download asks where the game goes (this device or the SSD, with the free-space check against the place you choose); Settings > Steam > Ask where each game goes switches the question off; Use a different folder stops using the registered folder so another can be chosen (nothing on the drive is deleted).
+* A drive speed test (Settings > Steam > Test the drive's speed) writes and reads a 64 MB file and makes 60 small files, then shows write speed, read speed and small files per second.
+* Gentle writing for slow drives: before a download Porthole writes 8 MB to the drive and times it (kept for three days); a drive that manages 40 MB/s or more is written like the device's own storage, a slower one gently (four chunks in flight, in order); a drive that slows down mid-download is noticed and the rest is written gently.
+* Hide the stores you do not use: long-press a store on the Stores tab, or Settings > Stores > Show on the Stores tab. A hidden store leaves the Stores tab, the store switcher and the All games page; a line at the bottom says which are hidden and opens Settings to show them again. Nothing is signed out or deleted.
+* Stores tab: the store icons have a row to themselves, the search box, filters, Friends and Sort wrap onto new lines instead of sliding sideways, and the All / Installed / Controller choice is remembered per store.
+* Settings > Sound > Keep other apps' sound playing: music, a podcast or a video in another app (second screen, Split View, Picture in Picture) plays together with the game. Programs from the Software section always allow it.
+
+Games and Home
+* Home can show your library as a shelf, a grid of cards or a list with a Play button on every row; the choice is kept. A game without a picture gets a gradient made from its name, with its first letter large and faint; the colours stay the same every launch.
+* A game's page is sorted into Set up (controls and key binds, more options), From Steam (news, achievements, friends playing, workshop), Reports (how it runs for others, report how it runs, report a problem) and Manage (about and files). The report buttons are in one place; "Report a problem" from a game's page already has the game's name in the sentence.
+* A "Last time" card on a game's page says in plain words how the last run ended: how long it ran, why it could not start, the known cause when the log fits one, and how much memory the run used with what helps when it ended badly. "Share this game's log" hands the game's newest own log to the share sheet, cleaned of your name, account names, e-mail and public IP addresses. When the log holds a line the website's documentation explains, the card says "Looks like: ..." and opens that entry.
+* A note on a game whose folder holds files of a cracked, repacked or emulated release (files scene releases and Steam emulators ship, well-known piracy sites by name, release groups' .nfo files, OnlineFix files): the game can still run, there is no support for copies like this. Nothing is blocked or changed; a plain word such as "gog" or "steam" never counts.
+* Porthole's own tested setups can be offered next to Madeira's list on a game's page, as a button you press and can undo. The first is Supermarket Simulator (the engine's texture saver, Swap 4 GB, large blocks and relaxed vector memory ordering; it ran 13 minutes on an iPad with an M4 chip at 56 to 65 frames a second).
+* The Witcher 3 and Dying Light 2 start with AVX and AVX2 on (both ended on an AVX instruction without it).
+* A "No extra memory" chip on a game's launch screen when this copy was signed without the Increased Memory Limit permission (a free Apple account cannot have it), and an explanation on a game's page after a run that ended badly with memory warnings in such a copy. A copy that can never get JIT (signed with a distribution or enterprise certificate) now says so at once when a game is started.
+* Launch screen: the facts about how the game starts are small tags that wrap, and the buttons stack when they do not fit, so "Show Steam window" is never cut off.
+
+Fixes that ask first
+* When a game stops and its log clearly shows a known cause, Porthole suggests changing one setting of that game, with Apply on Home. Saying no leaves the game alone and the same fix is not offered again (Settings > Fixing problems can still apply it). Applied fixes have an Undo; the first run afterwards is judged (it worked if it ran five minutes or more and drew frames; the setting is put back if it ended within two minutes without a frame or showed the same cause again). A switch, "Ask me before changing a game" (on by default), turns the asking off.
+* The causes handled: a game that needs AVX (ended on an AVX instruction) gets AVX and AVX2; a game that ran out of memory repeatedly gets a 4 GB swap file with wide coverage; a swap file that was on but covered little widens its coverage; Unity games that ran out of memory on textures get the texture saver; a game whose emulator pool filled with copies of the game's libraries stops copying them; a game whose sound library could not be copied into the pool gets the code buffers a region of their own; an install without the Extended Virtual Addressing capability gets an explanation (nothing is changed).
+* When a game crashed and no line names a cause, Porthole falls back on what is known about it: a tested setup from Madeira's or Porthole's list (only for a game with no engine lines of its own), then the settings most people who say the game works great use (from the community server). Each is tried once per game, asked first, judged and taken back if the next run ends badly again.
+* A game whose program is not where it was saved is repaired: Porthole looks for a file of exactly the same name inside the game's own folder, points the game at it and says so on Home. It never searches a folder that holds many games.
+* Settings > Fixing problems lists the last ten changes (suggestions, declined ones and applied ones, with what the run after each one showed) and can Apply or Undo them.
+* The Hub can publish new rules (turn AVX on, set a swap file of 512 MB to 8 GB, widen coverage, add one plain engine line, or only explain), replace a built-in rule, and switch any fix off, so new causes can be handled without an update. The Launcher's Reviews > Fixes list has a toggle for each.
+
+Controller
+* An on-screen game controller: two sticks (a quick tap clicks one), a direction pad, A B X Y, bumpers, triggers, View and Menu. The game sees an ordinary Xbox pad, so nothing in a game has to support it. Switch it on in the game's page or in the in-game menu; its size and opacity can be changed. A real controller can be used at the same time.
+* Four controller types (Xbox, PlayStation, Nintendo Switch, Super Nintendo), each with its own look and its own arrangement of the controls, and layouts to choose from (Standard, Mirrored, Retro, Racing, Minimal, PlayStation, Xbox, Nintendo Switch). The controls are about half their first size, redrawn with glass-like buttons, rings and a raised thumb, and stay clear of the right edge swipe and the safe area.
+* A game that ignores the on-screen game controller (no controller read for 20 seconds) is offered touch controls for keyboard and mouse, with a card you can accept or dismiss; the answer is remembered for that game.
+
+Touch controls
+* Touch pointer (in-game menu > Controls): Direct (the finger is the cursor) or Trackpad. A finger sliding anywhere moves the game's cursor (Slow, Normal or Fast), a tap clicks, a tap then a touch and slide drags, a two-finger tap is a right click, two fingers sliding scroll. A Right mode swaps the buttons.
+* A full keyboard over the game: function keys, numbers, letters, punctuation, arrows, Tab, Esc, Enter, Space, Backspace, Delete, Caps. Shift, Ctrl and Alt hold for the next key when tapped (yellow) and lock when tapped twice (green). "Fewer keys" hides the function row. Open it from the in-game menu or add a Keys button to a layout.
+* Custom layouts can hold gamepad controls (sticks, D-pad, A B X Y, bumpers, triggers, Menu, View, stick clicks) next to keys and mouse buttons; there is a Gamepad preset.
+* Floating sticks (off by default): a stick's base appears where your thumb lands. "Hide when not touched" (Never, After 5, 10 or 20 seconds): the controls fade away and come back with a touch anywhere.
+* The controls editor's Options menu: controls opacity when playing, tap feedback on or off, bring to front / send to back, combos (hold Shift, Ctrl or Alt together with a key), lock positions and sizes, and a shape (round, rounded square, square) and a colour for keys and mouse buttons. A layout saved before these options reads exactly as before.
+* Blender gets touch controls for its 3D view: two fingers pan, a pinch zooms, three fingers orbit, and a column of buttons sets what one finger does (Select, Orbit or Pan) and jumps to the camera view or frames the selection.
+
+Controls settings
+* Settings > Controls: controller (connected controller, rumble and a rumble test, open the menu with the controller, controller as keyboard and mouse, pointer for the controller, hide on-screen controls), keyboard and mouse (mouse speed, mouse look, scroll direction, key repeat, keyboard layout, the keys for Porthole's menu and pointer lock) and touch screen (look sensitivity, fewer keys on the on-screen keyboard). Controller fixes and Keyboard and mouse fixes appear with Show technical options. The same engine options are still in Advanced > Engine options; changing one changes the other.
+
+Blender
+* Blender starts without copying libraries by hand (libraries in its blender.shared folder are put next to it as hard links, refreshed after an update), gets the engine lines it needs by itself on its first start (OpenGL 4.3 and the 2:10:10:10 vertex format; that start is stopped once with a message because the lines are read when Porthole opens), and a video library (avicap32.dll) it lacked.
+* Cycles GPU rendering: kernels built ahead of time for your GPU and iOS version are offered on Blender's page (only a pack made for this device is shown, else the one that works anywhere), and Blender picks them up by itself; scenes with transparent shadows render with the right shadows. Blender's page also lists its known limitations and known problems, which can change without an app update.
+* Native Arm programs start: the CPU-level check at start-up, per-thread storage, and asking which module holds one of a program's own functions are fixed in the engine (patches 0179, 0181 and 0182).
+* The Metal layer that Windows programs reach the GPU through can compile Metal source, build ray-tracing structures, use linked functions and intersection tables, report a pipeline's limits and set threadgroup memory, and load GPU binaries built ahead of time (the machinery Cycles needs).
+
+Graphics
+* Vulkan as an opt-in route for x64 games: DXVK (Direct3D 10/11) and vkd3d-proton (Direct3D 12) with Wine's Vulkan driver, using MoltenVK or KosmicKrisp (Mesa 26.2's Vulkan 1.4 on Metal 4; iOS 26 or later) as the Vulkan library. Off unless a game asks; DXMT and madeira-d3d12 stay the normal routes. The app grows by about 16 MB plus about 13 MB for KosmicKrisp.
+* A game's page > Engine > Graphics route (Vulkan, experimental): Direct3D 10/11 runtime, Direct3D 12 runtime and Vulkan library, each starting on Default, which changes nothing.
+* A [benchmark] line at the end of every run: the game, build and engine, the length, average frame rate, the slowest 1% and 5% seconds, the lowest second, peak app and GPU memory, least free memory, heat, and the graphics choices in effect. The memory line is now also written once a minute, so a run that iOS ends still leaves its latest figures.
+* Diagnostics: with MADEIRA_BLOCK_RING on, the log holds the last blocks of code a program ran before it exited by itself; the engine's crash report lists every register ([fault-regs-all]); an instruction the emulator cannot decode gets a line with the bytes around it and what owns the address.
+
+Epic Games
+* "Install the game's prerequisites" on an Epic game's page when its manifest lists a setup program (Unreal games' UE4PrereqSetup): it runs that setup once, on request, in Porthole's Windows, on the desktop where you can watch it, and offers to run it again. It never runs by itself.
+
+Help, errors and reports
+* The website's documentation (portholehq.site/docs): every setting, engine line and message. "What does this mean?" on errors (the "Couldn't start the game" notice, install-check notices, failed downloads on the Epic, GOG, EA, Amazon, itch.io and Steam pages, failed rows in Downloads), "Read more online" in a setting's (i) pop-up, and "What these lines do" under the engine-lines editor (name, description and default of each line, and a warning for a line the engine does not know).
+* Errors from the system are put in plain words with a next step (no internet connection, a server that took too long, a secure connection that failed, not enough free storage, a file that is gone). This covers about 100 places. "Madeira Dock could not complete the Steam launch (code 45)" says that Steam itself refused, gives Steam's reason number and lists what to try. "Wineserver failed to start", "JIT pool allocation failed", "Could not open StikDebug" and "File not found" say what they mean and what to do. A copy installed with a distribution certificate is told to install again with a development certificate (SideStore or AltStore with a free Apple ID).
+* When JIT cannot be switched on, the message names the step that failed and a short reason.
+* The setup guide's Full speed page offers "Use LocalDevVPN" and "Allow Porthole's own private link" as two choices and says one is enough; an install whose own tunnel cannot start shows that as a warning, not a problem.
+* The start-up log says how this copy is signed (device model, system version, signature flags, kind of provisioning profile, entitlements granted and entitlements really signed with), so two installs can be compared.
+* A compatibility report carries the game's own session logs (up to five newest within two weeks), not Porthole's; Report a problem carries the game's own logs too. Logs are thinned before they are cleaned and sent (a 45 MB log becomes about 6 MB), and cleaning personal data out of a log is about ten times faster.
+* A game that works can be reported at any time: the five minutes of play that were needed are gone (the question Porthole asks after you play still waits five minutes).
+
+
+CHANGED
+-------
+* Settings are 17 short pages in six sections: Playing (Display, Performance, Sound, Controls), Your games (Stores, Saves, Storage), Connection (JIT and connection), App (Appearance, Updates, Signing, Advanced), Reports and fixes (Compatibility reports, Fixing problems), Help (Setup guide and tips, About and credits, Report a problem). Signing (certificate and profile) and Fixing problems have pages of their own. Settings search, the guide cards and Home's notices open the new pages.
+* Settings were decluttered: Audio buffer and Bring sound back after a call, and the Bundle row, are behind Show technical options; LocalDevVPN, Your own VPN and Cellular data are one row, VPN and cellular options, that opens a page; the list of builds is one row, Older versions; the credits are in Licences and credits; the Downloads and Storage rows that repeated on every store's page are gone; the search finds every moved row and says when one needs Show technical options.
+* Settings polish: a setting's (i) button sits right after its name, so values, switches and arrows line up on the right edge. Store cards are the same height. A game's picture has a stronger shade behind its name. The performance overlay's numbers fill their rows evenly.
+* The in-game menu: the tabs are one row of equal boxes with an icon and a one-line label, cards have rounder corners, and the Processor card shows its state in a tile with the long explanation one tap away.
+* Swap starts on, at 4 GB covering blocks of 1 MB and up, on iPhones and iPads whose apps may use about 4 GB. A value you chose before, Off included, is kept; a game's own Swap setting still wins.
+* The engine is upstream Madeira of 2026-11-05 plus two upstream fixes, with Porthole's patches (the vector registers of a thread read through another thread's context, two leaks of JIT pool code buffers fixed, Direct3D 9 effects compiled at run time and one-channel render targets, no first-frame stall from a large Direct3D 12 shader cache, and Social Club's 2.4.0.302 launcher).
+* Direct3D 12 frame generation and upscaling follow only the game's own large window; small probe and helper windows are left alone.
+* The old MetalFX frame generation is gone; Lossless Scaling's is the only one. Upscaling's fixed factors are 1.5x and 2x.
+* Steam Cloud says "Up to date with Steam Cloud" instead of "Everything is in step", and a Steam Cloud download backs up the file it replaces (file.1.porthole-backup, up to five) instead of deleting it.
+* Settings > Connection no longer shows "Turn the tunnel on" on an install that has no tunnel of its own. Enable JIT is more honest about why it cannot work.
+* BeamNG.drive's x64 program is started directly, next to Steam's client, with the options its settings need (the game's launcher insists on its native Arm build, which cannot run here). Programs started this way begin in the game's folder.
+* Choosing the external drive's folder: Settings > Steam explains how (make a folder on the drive first and open that folder), refuses a folder on the device itself, and explains a FAT32 drive instead of failing (format it as exFAT).
+* Preparing a Steam download makes each folder once and as files are written, and checks the game's files already on the drive in parallel, so Preparing on a slow drive is shorter. The log times it.
+* The mouse wheel in a game turns the same way as the launcher's lists (it follows the system's natural scrolling setting).
+* A game's page, Last time card and the Fixing problems list use plain words; "Fix known problems automatically" is now "Look for known problems".
+
+
+FIXED
+-----
+Crashes and freezes
+* Porthole no longer crashes after a Windows program ends with an error (a pointer to the program's name was read after its thread was gone).
+* Scrolling with a mouse wheel outside a game no longer crashes the app, on any screen (1.3.16 to 1.3.20 test builds only).
+* Downloads to a drive no longer freeze the app: drive work that a slow drive answers slowly (the list of finished chunks, creating folders and files, adding up sizes, opening and closing files) moved off the screen thread and out of the lock the progress tick needs.
+* A wineserver that dies while starting (seen when Porthole runs inside another app) ends the launch with a message instead of leaving the game waiting for ever.
+* A .NET program packed as one file (the Memoria patcher for Final Fantasy IX is one) starts, gets a 4 GB garbage-collector reservation instead of 256 GB, and no longer freezes in the middle of its work.
+
+Mouse wheel
+* One click is one notch in games: a slow click registers, a fast turn of 10 to 20 clicks counts every click, a hard flick counts as several, a quick click's overshoot is not counted twice, the vertical axis is no longer chosen from noise (and is found on a large display area), and scrolling no longer counts each click twice.
+
+Steam and downloads
+* Games whose launch entries are all numbered (PAYDAY 3) start; Porthole asks for the lowest-numbered 64-bit Windows entry instead of entry 0.
+* The offline start that came with Madeira's Steam launcher is switched on for real: a start with no network asks Steam to sign in offline from its saved licences, and the first normal online start records that it can.
+* Steam Cloud: finds a new save where the game keeps it; a save changed on both sides is left alone and listed (before, only file dates were compared); a file Steam lists as deleted or not kept is no longer offered for upload; the card shows only for games Steam installed.
+* Steam games downloaded with a damaged program path (for example "...\Ranch Simulator\mulator\...") start; new downloads get the right path and games with the damaged one are repaired the next time they start.
+* A Steam download to an external drive is no longer refused with "0 MB is free" (many drives report no value for the free space iOS offers to apps), a game on the SSD starts instead of being refused as missing, and "the Windows SSD drive mapping is already in use" is gone (the link had no owner recorded).
+* After a folder was chosen for the SSD there is a way to choose another, and the folder picker is opened from UIKit so pressing Open answers.
+* itch.io .7z downloads: a file and a folder whose names differ only by case are refused with a clear message; an archive inside an archive that an earlier one replaced no longer stops the install.
+* Home's note that a program was found again no longer opens Settings for JIT.
+
+Enable JIT and start-up
+* Enable JIT works with StikDebug 2.x (the App Store version, which answers only to the older stikjit link), and says so in Settings and in the log when StikDebug cannot be found. JIT counts as on only when something is attached to answer the game's memory request (a leftover flag from StikDebug's app list used to count, and Play failed with "JIT pool allocation failed").
+* A controller that stopped answering after opening Control Center or the app switcher answers again (not verified on a device); the on-screen controller reaches a game started a second time.
+* On a game's About and files page, the Program row's Change button opens over the sheet.
+
+Graphics, upscaling and frame generation
+* Frame generation no longer starves the screen of drawables (about 3 FPS with two generated frames), no longer leaves a Direct3D 12 game at about 10 FPS or frozen, and no longer stops the game for a moment and switches itself off while its shaders are prepared.
+* Upscaling works in Direct3D 12 games (it did nothing there) and no longer enlarges a game that already draws at the screen's size to twice the screen; with upscaling and frame generation both on, games with an sRGB back buffer no longer flicker.
+* Many Direct3D games offered no resolution below the one Porthole was set to.
+* The in-game menu: "Performance" no longer breaks into "Performa" and "nce" in the tab bar, and the "Back to launch screen" button is no longer drawn over the menu's title.
+* Touch controls: the gamepad controls of a custom layout answer touches (they were drawn but did nothing in builds 1.3.156 and 1.3.157); a key with a combo keeps its modifiers down until after the key is up; the D-pad follows the Tap feedback setting; a locked layout cannot be replaced from Presets.
+* Epic prerequisites: the setup is only marked as having run when its own session ends, and a setup that failed to start no longer blocks the next try. The [benchmark] line names the route the game's config really used.
+
+Reports, fixes and documentation
+* Reports and Report a problem took a long time to prepare and send for a game with long logs.
+* The automatic fixes missed a crash when the app was opened a second time before the first had been read (they fall back on the game's own session log); a declined or waiting suggestion is no longer forgotten when the history grows; Apply on a suggestion whose rule the Hub has removed says so in the log.
+* About 30 settings added during 1.3 had no "Read more online" link because the list of documented settings was out of date.
+
+
+GAMES WE WORKED ON
+------------------
+* Supermarket Simulator no longer runs a 6 GB iPad out of memory when a save loads (its texture saver is on); Subliminal no longer asks for the Visual C++ Redistributable (arm64) (Porthole writes the marker it reads).
+* Steep from the Epic library no longer ends a second after it starts (the launcher stub exits at once; the session now waits for the launcher it started). Whether Ubisoft Connect then signs in and starts the game is not known.
+* Grand Theft Auto V Legacy: the Windows imaging component is registered with a proper path (Rockstar's launcher no longer quits with "failed to initialize"), every class registration with a garbled program is put back, the shader converter skips a case it cannot handle instead of ending the game on an assertion, the game gets room for all the threads it, Steam and the launchers start, fast semaphore waits, and Madeira's tested settings including the Social Club memory layout.
+* Grand Theft Auto V Enhanced: Social Club's browser helpers start (Madeira's tested launcher, code-pool and thread settings), and it starts with the Broad swap coverage (no seconds at or below 12 FPS in two runs, against 15 of 60 with Wide; lower Texture Quality if the memory warning shows). Red Dead Redemption 2 shares the Social Club bridge, which knows launcher build 2.4.0.302.
+* BeamNG.drive: the native Arm build that could not load D3DCOMPILER_47.dll is avoided (the x64 build is started directly).
+* Unity games that run out of memory on their textures are offered the texture saver (a rule built from logs people sent in; no single game is named).
+* Final Fantasy Resonance: a sound library that cannot be copied into the memory pool is offered a fix. Final Fantasy IX's Memoria patcher (single-file .NET) starts and runs.
+* Factorio: a new world is uploaded by Steam Cloud. Persona 5 Royal: the thread-context crash is fixed in the engine. Schedule I: frame generation works with its sRGB back buffer. The Witcher 3 and Dying Light 2 start with AVX on. PAYDAY 3 starts through Steam.
+* Black Ops Cold War: the engine keeps the game's address range while its protection rebuilds its program (patch 0193; experimental) and the log shows the instruction it stops on. It does not run yet.
+
+
+KNOWN LIMITS (said plainly)
+---------------------------
+* Lossless Scaling features need your own copy of Lossless Scaling on Steam. Porthole does not ship or download it from anywhere except your own account's copy.
+* Frame generation and upscaling were tuned on a few games; they can cost speed instead of adding it. The in-game menu has switches to turn each off while playing. Direct3D 12 frame generation is experimental and needs more memory.
+* Blender GPU rendering needs a kernel pack made for your GPU and iOS version; where there is none, Blender runs on the CPU.
+* The Vulkan routes (DXVK, vkd3d-proton, MoltenVK, KosmicKrisp) are opt-in and have not been tried on many games. KosmicKrisp needs iOS 26 or later and a device with Metal 4.
+* Grand Theft Auto V (Legacy) and Call of Duty: Black Ops Cold War are not known to work yet; the engine got fixes towards them, nothing more is claimed.
+* Download-to-SSD needs a folder you make on the drive first, and an exFAT drive (FAT32 cannot hold files over 4 GB).
+* A copy of Porthole signed with a distribution or enterprise certificate cannot get JIT; install it with a development certificate (SideStore or AltStore with a free Apple ID). A copy signed without the Increased Memory Limit permission (a free Apple account cannot have it) runs out of memory sooner in big games; the launch screen says so with a "No extra memory" chip.

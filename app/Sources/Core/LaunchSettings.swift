@@ -45,8 +45,14 @@ struct LaunchSettings {
         static let swapMB = "f4.swapMB", swapCoverage = "f4.swapCoverage", vramMB = "f4.vramMB"
     }
 
+    /// A device whose app limit is about 4 GB: the 6 GB iPhones and iPads (A15 and A16 class report 5.6 to 5.9 GB; an 8 GB one reports 7.3 GB or more). A 64-bit game with a big working set runs
+    /// past that limit within a minute and iOS ends the app (Supermarket Simulator, CORDURA Playtest and Legends of Idleon, 2026-11-05, all with Swap off), so Swap starts on there.
+    /// Only a default: a value the person ever set, "Off" included, wins, and so does a game's own override.
+    static var lowMemoryDevice: Bool { ProcessInfo.processInfo.physicalMemory < UInt64(6656) << 20 }
+    static let lowMemorySwapMB = 4096, lowMemorySwapCoverage = "wide"
+
     static var globalSwapMB: Int {
-        get { (UserDefaults.standard.object(forKey: Key.swapMB) as? Int) ?? Int(MadeiraConfig.get("swap-mb") ?? "") ?? 0 }
+        get { (UserDefaults.standard.object(forKey: Key.swapMB) as? Int) ?? Int(MadeiraConfig.get("swap-mb") ?? "") ?? (lowMemoryDevice ? lowMemorySwapMB : 0) }
         set { UserDefaults.standard.set(newValue, forKey: Key.swapMB) }
     }
     static var globalSwapCoverage: String {
@@ -54,6 +60,7 @@ struct LaunchSettings {
             if let v = UserDefaults.standard.string(forKey: Key.swapCoverage) { return v }
             let v = (MadeiraConfig.get("env.MADEIRA_SWAP_COVERAGE") ?? "").lowercased()
             if v.isEmpty, MadeiraConfig.get("swap-mode") == "2" { return "broad" }   // the old Engine options row; see EngineOptions.migrateSwapMode()
+            if v.isEmpty, lowMemoryDevice { return lowMemorySwapCoverage }   // nobody chose one: the default for a 4 GB app limit (1 MB and up), see lowMemoryDevice
             return v == "classic" ? "" : v
         }
         set { UserDefaults.standard.set(newValue, forKey: Key.swapCoverage) }
@@ -69,7 +76,7 @@ struct LaunchSettings {
             power: o.powerMode.flatMap(PowerMode.init(rawValue:)) ?? PowerManager.shared.userMode,
             keepModeWhenHot: o.keepModeWhenHot ?? PowerManager.shared.ignoreHeat,
             swapMB: o.swapMB ?? globalSwapMB,
-            swapCoverage: o.swapCoverage ?? globalSwapCoverage,
+            swapCoverage: o.swapCoverage ?? GameFixes.fix(forSteamAppID: game?.dockAppID ?? game?.steamAppID)?.swapCoverage ?? globalSwapCoverage,
             vramMB: o.vramMB ?? globalVramMB,
             audioCushionMs: o.audioCushionMs ?? SessionController.audioCushionMs,
             preciseMath: o.preciseMath ?? SessionController.preciseMath,

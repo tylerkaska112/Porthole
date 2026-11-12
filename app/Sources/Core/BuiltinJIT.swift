@@ -115,8 +115,13 @@ final class BuiltinJIT: NSObject, F4JITHost {
         dispatchPrecondition(condition: .onQueue(.main))
         guard launcher == nil else { report("Relaunch the app before another JIT attempt."); return false }
         guard #available(iOS 18, *) else { report("In-app JIT needs iOS 18 or later."); return false }
-        guard F4HasDebugEntitlement() else { report("This copy was not signed with get-task-allow, so it cannot be debugged."); return false }
-        guard !jit_check_debugged() else { report("A debugger is already attached (Xcode?). Relaunch without it."); return false }
+        guard F4HasDebugEntitlement() else { report("JIT cannot be turned on for this copy of Porthole: it was installed with a certificate that does not allow debugging (the \u{201C}get-task-allow\u{201D} permission, which distribution and enterprise certificates do not carry). Install Porthole again signed with a development certificate, for example with SideStore or AltStore and a free Apple ID."); return false }
+        guard !jit_check_debugged() else {
+            // The flag stays set after another tool attached and left: nothing is attached now, but the flag cannot be cleared inside this run.
+            report(StikJITHelper.ready ? "A debugger is already attached (Xcode?). Relaunch without it."
+                                       : "JIT was switched on by another tool earlier in this run, and nothing is attached now. Close Porthole completely, open it again from the Home Screen and try again.")
+            return false
+        }
         let pairing: Data
         do { guard let loaded = Self.loadPairing() else { throw CocoaError(.fileNoSuchFile) }; pairing = loaded; try JITPairing.validate(pairing) }
         catch { report("Import a pairing file first (Updates > JIT)."); return false }

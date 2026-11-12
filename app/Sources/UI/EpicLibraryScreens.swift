@@ -174,7 +174,7 @@ struct EpicOwnedList: View {
     @ObservedObject private var library = EpicLibrary.shared
     @ObservedObject private var installer = EpicInstaller.shared
     @State private var search = ""
-    @State private var filter = "all"
+    @AppStorage("f4.filter.epic") private var filter = "all"
     @State private var open: EpicGame?
     @ObservedObject private var network = NetworkStatus.shared
     @Environment(\.focusScope) private var scope
@@ -238,7 +238,6 @@ struct EpicOwnedList: View {
     private var grid: some View {
         let games = shown
         return StorePage {
-            StoreSwitcher()
             if !network.isOnline { OfflineChip() }
             if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
             else { IconPillButton(id: "eo-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
@@ -442,7 +441,9 @@ struct EpicGamePage: View {
             case .paused?:
                 TileProgress(value: install?.progress.fraction ?? 0, paused: true)
                 Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
-            case .failed(let why)?: Text(why).font(.caption).foregroundStyle(Theme.bad)
+            case .failed(let why)?:
+                Text(why).font(.caption).foregroundStyle(Theme.bad)
+                ErrorHelpButton(message: why)
             default: EmptyView()
             }
             if let error = installer.error { Text(error).font(.footnote).foregroundStyle(Theme.warn) }
@@ -524,6 +525,12 @@ struct EpicGamePage: View {
             }
             if let entry = libraryGame, !session.isActive || session.game != entry {
                 ActionRow(id: "ep-c-write", symbol: "square.and.pencil", title: "Write a report", chevron: false) { door = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { writing = entry } }
+            }
+            if isInstalled, !session.isActive, let prerequisite = installer.prerequisite(game.appName) {
+                ActionRow(id: "ep-prereq", symbol: "shippingbox.fill", title: prerequisite.done ? "Run the game's prerequisites again" : "Install the game's prerequisites",
+                          subtitle: "Runs \(prerequisite.name), the game's own setup, once in Porthole's Windows. Most games start without it; try this if one reports a missing runtime.", chevron: false) {
+                    door = nil; installer.runPrerequisite(game.appName)
+                }
             }
             if isInstalled {
                 ActionRow(id: "ep-remove", symbol: "trash", title: "Delete downloaded files", destructive: true, chevron: false) { door = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { confirmRemove = true } }

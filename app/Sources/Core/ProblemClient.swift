@@ -74,8 +74,8 @@ final class ProblemTracker: ObservableObject {
             recount()
         } catch let failure as CompatError {
             if case .server(let status, _) = failure, status == 401 || status == 404 { entries = []; recount(); return }     // no reports yet, or the server has no such service yet
-            error = failure.localizedDescription
-        } catch { self.error = error.localizedDescription }
+            error = ErrorText.plain(failure)
+        } catch { self.error = ErrorText.plain(error) }
     }
 
     /// The person has looked at the list: every answer so far counts as seen.
@@ -88,7 +88,7 @@ final class ProblemTracker: ObservableObject {
 
     func withdraw(_ entry: ProblemEntry) async {
         do { try await ProblemClient.withdraw(id: entry.id); entries.removeAll { $0.id == entry.id }; recount() }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = ErrorText.plain(error) }
     }
 
     /// The reports that were answered since the person last looked (the Home notice and the Settings badge).

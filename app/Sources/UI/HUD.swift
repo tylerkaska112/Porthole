@@ -11,6 +11,10 @@ final class MovementStickView: UIView {
     private var held: Set<Int32> = []
     private var tracking: UITouch?
     private let side: CGFloat
+    /// Floating (FloatingStick): the stick takes a touch near its place and its base is drawn under the thumb where it lands. `centre` is that place, in this view's own points.
+    var floating = false { didSet { if !floating, tracking == nil { centre = nil; drawBase() } } }
+    private var centre: CGPoint?
+    private var origin: CGPoint { centre ?? CGPoint(x: bounds.midX, y: bounds.midY) }
 
     /// `MovementStickView()` goes through UIView.init() -> init(frame:), so that path must work (a trap here crashed every game launch in 0.14.0).
     override init(frame: CGRect) { side = 104; super.init(frame: frame); setup() }
@@ -30,8 +34,31 @@ final class MovementStickView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        base.path = UIBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)).cgPath
-        moveKnob(to: CGPoint(x: bounds.midX, y: bounds.midY))
+        drawBase()
+    }
+
+    /// The base and the knob at rest, around the stick's own centre or (floating, while a thumb is on it) around the thumb's landing place.
+    private func drawBase() {
+        let c = origin
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        base.path = UIBezierPath(ovalIn: CGRect(x: c.x - side / 2 + 2, y: c.y - side / 2 + 2, width: side - 4, height: side - 4)).cgPath
+        moveKnob(to: c)
+        CATransaction.commit()
+    }
+
+    /// The part of the screen a floating base may be drawn in (the safe area), in this view's points.
+    private func field() -> CGRect? {
+        guard let w = window else { return nil }
+        return convert(w.bounds.inset(by: w.safeAreaInsets), from: w)
+    }
+
+    /// A floating stick also takes a touch in its zone, unless another control is there.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) { return true }
+        guard floating, tracking == nil, let parent = superview else { return false }
+        let near = parent.subviews.filter { $0 !== self && !$0.isHidden && $0.alpha > 0.01 && $0.isUserInteractionEnabled && $0.bounds.width <= side * 2.5 && $0.bounds.height <= side * 2.5 }
+            .map { convert($0.frame, from: parent) }
+        return FloatingStick.takes(point, frame: bounds, neighbours: near)
     }
 
     private func moveKnob(to p: CGPoint) {
@@ -40,7 +67,7 @@ final class MovementStickView: UIView {
     }
 
     private func update(with p: CGPoint) {
-        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        let c = origin
         var dx = p.x - c.x, dy = p.y - c.y
         let radius = side / 2, length = hypot(dx, dy)
         if length > radius { dx *= radius / length; dy *= radius / length }
@@ -59,12 +86,16 @@ final class MovementStickView: UIView {
     private func end() {
         for k in held { HUDKeys.up(k) }
         held = []; tracking = nil
-        moveKnob(to: CGPoint(x: bounds.midX, y: bounds.midY))
+        centre = nil
+        drawBase()
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard tracking == nil, let t = touches.first else { return }
-        tracking = t; update(with: t.location(in: self))
+        tracking = t
+        let p = t.location(in: self)
+        if floating { centre = FloatingStick.centre(touch: p, diameter: side, field: field()); drawBase() }
+        update(with: p)
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         if let t = tracking, touches.contains(t) { update(with: t.location(in: self)) }
@@ -96,6 +127,10 @@ final class MouseHoldButton: UIButton {
     func release() { guard isPressed else { return }; isPressed = false; backgroundColor = UIColor(white: 0, alpha: 0.55); winios_pointer(0, 0, up, 0) }
 }
 
+/// A view that takes touches itself (not a UIControl): the HUD lets a touch on it through instead of passing it to the game. Every interactive control of the HUD that is a plain UIView
+/// conforms; forgetting it is how a control draws but never answers (the pad controls of a custom layout did so in 1.3.156 and 1.3.157).
+protocol TakesHUDTouches: UIView {}
+
 /// A container that is transparent to touches: points on empty parts fall through to the views below it. (A plain full-screen UIView claims every
 /// point, so it shadowed the top-bar buttons underneath: they never received a touch.)
 final class PassthroughView: UIView {
@@ -116,12 +151,57 @@ final class GameHUDView: UIView {
     private var hiddenByPad = false
     private var lastTouchAt: TimeInterval = 0
     private var padWatch: Timer?
+    /// Controls that hide when nothing has touched the screen for a while (the in-game menu's Controls tab: Hide when not touched; TouchAutoHide). A touch anywhere brings them back.
+    static let autoHideKey = "f4.controlsAutoHide"
+    private var idle = TouchAutoHide()
+    private let touchObserver = TouchObserver()
+    /// The offer to switch to touch controls when the on-screen game controller is on and the game never asks for a controller (LayoutSuggestion).
+    private var suggestion = LayoutSuggestion()
+    private var suggestionCard: LayoutSuggestionCard?
+    private var lastSuggestionCheck: TimeInterval = 0
     func noteTouch() {
         lastTouchAt = ProcessInfo.processInfo.systemUptime
         if hiddenByPad { hiddenByPad = false; refreshControlVisibility() }
     }
+    /// About once a second: has a game that ignores the controller had the on-screen controller on for long enough to make the offer?
+    private func checkSuggestion(now: TimeInterval) {
+        let gameID = AppModel.shared.session.game?.id.uuidString
+        let eligible = lastState == .running && virtualPadOn && GCController.controllers().isEmpty && layoutEditor.isHidden && !menuOpen && suggestionCard == nil
+            && gameID.map { LayoutSuggestion.mayAsk(gameID: $0) } == true
+        guard suggestion.update(now: now, reads: winios_gamepad_read_count(), eligible: eligible), let gameID else { return }
+        showSuggestion(gameID: gameID)
+    }
+
+    private func showSuggestion(gameID: String) {
+        LayoutSuggestion.remember(gameID: gameID)          // asked once, whatever the answer
+        let card = LayoutSuggestionCard(text: LayoutSuggestion.text(gameName: gameName))
+        card.onSwitch = { [weak self] in
+            guard let self else { return }
+            self.suggestionCard = nil
+            LogStore.shared.log("[controls] switched from the on-screen controller to touch controls (the offer; the game never read the controller)")
+            AppModel.shared.session.setVirtualPad(false)
+            self.virtualPadOn = false
+            self.controlsOn = true
+            self.refreshControlVisibility()
+            self.refreshMenuModel()
+        }
+        card.onDismiss = { [weak self] in self?.suggestionCard = nil }
+        suggestionCard = card
+        addSubview(card)
+        NSLayoutConstraint.activate([
+            card.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
+            card.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 56),
+            card.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
+        ])
+        LogStore.shared.log("[controls] the game has not read the controller while the on-screen controller is on: offered touch controls for keyboard and mouse")
+    }
+
     private func watchPad() {
         let now = ProcessInfo.processInfo.systemUptime
+        if now - lastSuggestionCheck >= 1 { lastSuggestionCheck = now; checkSuggestion(now: now) }
+        idle.seconds = UserDefaults.standard.integer(forKey: Self.autoHideKey)
+        if idle.tick(now: now, suspended: lastState != .running || !layoutEditor.isHidden || menuOpen) { refreshControlVisibility() }
         let enabled = EngineOptions.value("env.PORTHOLE_HIDE_TOUCH_ON_PAD") != "0"
         let activity = PadInput.shared.lastActivity
         let padWant = enabled && activity > 0 && activity > lastTouchAt && now - activity < 3600 && !GCController.controllers().isEmpty
@@ -135,7 +215,13 @@ final class GameHUDView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         padWatch?.invalidate(); padWatch = nil
-        guard window != nil else { return }
+        touchObserver.view?.removeGestureRecognizer(touchObserver)
+        guard let window else { return }
+        touchObserver.onChange = { [weak self] fingers in
+            guard let self else { return }
+            if self.idle.touch(now: ProcessInfo.processInfo.systemUptime, fingers: fingers) { self.refreshControlVisibility() }
+        }
+        window.addGestureRecognizer(touchObserver)
         padWatch = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.watchPad() }
     }
     static let shared = GameHUDView(frame: .zero)
@@ -154,7 +240,40 @@ final class GameHUDView: UIView {
     // The in-game menu (a side panel) and the performance overlay, both SwiftUI, hosted above the controls.
     private let menuModel = GameMenuModel()
     /// The running game's name, for the menu's header.
-    var gameName: String? { didSet { menuModel.gameName = gameName } }
+    var gameName: String? { didSet {
+        menuModel.gameName = gameName; isBlender = AppModel.shared.session.game?.isBlender == true
+        virtualPad.preset = VirtualPadLayout.preset(game: AppModel.shared.session.game?.virtualPadLayout, last: UserDefaults.standard.string(forKey: VirtualPadLayout.lastKey))
+        menuModel.virtualPadLayout = virtualPad.preset
+        virtualPad.style = VirtualPadStyle.style(game: AppModel.shared.session.game?.virtualPadStyle, last: UserDefaults.standard.string(forKey: VirtualPadStyle.lastKey))
+        menuModel.virtualPadStyle = virtualPad.style
+        virtualPadOn = AppModel.shared.session.game?.virtualPad == true
+        // The HUD outlives a game and PadInput.endSession drops the on-screen controller's sample: a game that starts with the controller already on leaves virtualPadOn unchanged,
+        // so its didSet does not run and the game would see no pad although the controller is drawn. Hand the sample over again at every start.
+        publishPad()
+    } }
+    /// Blender is running: its touch navigation (pan, zoom, orbit) and the column of buttons for it. Nothing else gets either.
+    private(set) var isBlender = false { didSet { guard isBlender != oldValue else { return }; if !isBlender { blenderNav.reset() }; refreshControlVisibility() } }
+    var blenderNavMode: NavMode { blenderNav.mode }
+    private let blenderNav = BlenderNavBar()
+    /// The on-screen game controller (VirtualPadView): an Xbox pad drawn on the screen for a game that wants a pad. While it is on, the touch layouts (mouse and keys, first person, a bind set's) are put away.
+    private let virtualPad = VirtualPadView()
+    /// The full keyboard over the game (TouchKeyboardView): opened from the in-game menu or a layout's Keys button.
+    private let touchKeyboard = TouchKeyboardView()
+    private(set) var virtualPadOn = false { didSet {
+        guard virtualPadOn != oldValue else { return }
+        menuModel.virtualPad = virtualPadOn
+        if !virtualPadOn { virtualPad.releaseAll(); padMixer.set(VirtualPadSample(), for: "pad") }
+        publishPad()
+        refreshControlVisibility()
+    } }
+    /// What drives the on-screen Xbox pad: the game controller view, and the pad controls of a custom layout (mixed layouts). The game sees one pad, all of them merged.
+    private var padMixer = TouchPadMixer()
+    /// Hands the merged pad to PadInput: there is a pad while the game controller is on or the layout has pad controls, none otherwise.
+    private func publishPad() {
+        let wanted = virtualPadOn || (customControls.usesPad && customLayout != nil)
+        PadInput.shared.setVirtual(wanted ? padMixer.merged : nil)
+    }
+    static let padScaleKey = "f4.vpad.scale", padAlphaKey = "f4.vpad.alpha"
     /// The running game's Steam app id (nil for a game that is not from Steam), for the menu's Workshop tab.
     var steamAppID: Int? { didSet { menuModel.steamAppID = steamAppID } }
     private let perfModel = PerfOverlayModel()
@@ -317,6 +436,20 @@ final class GameHUDView: UIView {
         NSLayoutConstraint.activate([controls.leadingAnchor.constraint(equalTo: leadingAnchor), controls.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      controls.topAnchor.constraint(equalTo: topAnchor), controls.bottomAnchor.constraint(equalTo: bottomAnchor)])
 
+        blenderNav.translatesAutoresizingMaskIntoConstraints = false; blenderNav.isHidden = true
+        addSubview(blenderNav)       // on the HUD itself: it stays whichever of the touch layouts is in use
+        NSLayoutConstraint.activate([blenderNav.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
+                                     blenderNav.centerYAnchor.constraint(equalTo: centerYAnchor)])
+
+        virtualPad.translatesAutoresizingMaskIntoConstraints = false; virtualPad.isHidden = true
+        let defaults = UserDefaults.standard
+        virtualPad.scale = CGFloat(defaults.object(forKey: Self.padScaleKey) as? Double ?? 1); virtualPad.restingAlpha = CGFloat(defaults.object(forKey: Self.padAlphaKey) as? Double ?? 0.55)
+        virtualPad.onChange = { [weak self] in self?.padMixer.set($0, for: "pad"); self?.publishPad() }
+        customControls.onPad = { [weak self] in self?.padMixer.set($0, for: "custom"); self?.publishPad() }
+        addSubview(virtualPad)
+        NSLayoutConstraint.activate([virtualPad.leadingAnchor.constraint(equalTo: leadingAnchor), virtualPad.trailingAnchor.constraint(equalTo: trailingAnchor),
+                                     virtualPad.topAnchor.constraint(equalTo: topAnchor), virtualPad.bottomAnchor.constraint(equalTo: bottomAnchor)])
+
         stick.translatesAutoresizingMaskIntoConstraints = false
         controls.addSubview(stick)
         NSLayoutConstraint.activate([stick.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 20),
@@ -443,6 +576,7 @@ final class GameHUDView: UIView {
         if new?.look != customLayout?.look { customLookFlipped = false }          // the layout's own setting changed: start from it
         customLayout = new
         customControls.apply(new)
+        publishPad()          // a layout with pad controls makes the game see a controller; one without takes it away again
         menuModel.customLayoutInUse = new != nil          // the built-in layouts are not in use while a set's layout is
         if new == nil { cursorMode = false }
         refreshControlVisibility()
@@ -465,12 +599,26 @@ final class GameHUDView: UIView {
         refreshControlVisibility()
     }
 
+    /// Floating sticks (FloatingStick) for every stick the HUD owns.
+    private func applyFloating() {
+        let on = FloatingStick.enabled
+        stick.floating = on; fpStick.floating = on
+        customControls.floatingSticks = on
+        virtualPad.floating = on
+    }
+
     private func refreshControlVisibility() {
-        let on = lastState == .running && controlsOn && !hiddenByPad
-        controls.isHidden = !(on && layout == .standard && customLayout == nil)
-        fpControls.isHidden = !(on && layout == .firstPerson && customLayout == nil)
-        customControls.isHidden = !(on && customLayout != nil)
-        if !(on && customLayout != nil) { customControls.release() }
+        applyFloating()
+        let on = lastState == .running && controlsOn && !hiddenByPad && !idle.hidden
+        // Blender's touch navigation is a gesture layer, not buttons: hiding it when idle would swallow the first gesture, so only the other reasons hide it.
+        blenderNav.isHidden = !(lastState == .running && controlsOn && !hiddenByPad && isBlender && layoutEditor.isHidden)
+        let padShown = on && virtualPadOn && layoutEditor.isHidden
+        virtualPad.isHidden = !padShown
+        if !padShown { virtualPad.releaseAll() }
+        controls.isHidden = !(on && layout == .standard && customLayout == nil && !virtualPadOn)
+        fpControls.isHidden = !(on && layout == .firstPerson && customLayout == nil && !virtualPadOn)
+        customControls.isHidden = !(on && customLayout != nil && !virtualPadOn)
+        if !(on && customLayout != nil && !virtualPadOn) { customControls.release() }
         editButton.isHidden = !(lastState == .running) || !layoutEditor.isHidden
         keyboardButton.isHidden = editButton.isHidden
         if !on || layout != .firstPerson || customLayout != nil { fpStick.release(); fpHolds.forEach { $0.release() } }
@@ -511,7 +659,7 @@ final class GameHUDView: UIView {
         guard let v = super.hitTest(point, with: event) else { return nil }
         if !layoutEditor.isHidden, v.isDescendant(of: layoutEditor) { return v }
         if !menuHost.isHidden, v.isDescendant(of: menuHost) { return v }          // the open menu takes every touch, so none reach the game
-        return (v is UIControl || v is MovementStickView || v is CustomStick || v is CustomControlsView) ? v : nil
+        return (v is UIControl || v is TakesHUDTouches || v is MovementStickView || v is CustomStick || v is CustomControlsView || v is VirtualPadView) ? v : nil
     }
 
     // MARK: Menu and performance overlay
@@ -522,18 +670,58 @@ final class GameHUDView: UIView {
         m.dismiss = { [weak self] in self?.menuOpen = false }
         m.setPower = { PowerManager.shared.setForSession($0) }
         m.setPadMode = { [weak self] mode in AppModel.shared.session.setPadMode(mode); self?.refreshMenuModel() }
+        m.setVirtualPad = { [weak self] on in AppModel.shared.session.setVirtualPad(on); self?.virtualPadOn = on; self?.refreshMenuModel() }
+        // A style is a controller: its look and its own layout come together (the layout can be changed on its own afterwards).
+        m.setVirtualPadStyle = { [weak self] style in
+            AppModel.shared.session.setVirtualPadStyle(style)
+            AppModel.shared.session.setVirtualPadLayout(style.nativePreset)
+            self?.virtualPad.style = style; self?.virtualPad.preset = style.nativePreset
+            self?.refreshMenuModel()
+        }
+        m.setVirtualPadLayout = { [weak self] preset in AppModel.shared.session.setVirtualPadLayout(preset); self?.virtualPad.preset = preset; self?.refreshMenuModel() }
+        m.adjustVirtualPad = { [weak self] size, opacity in
+            guard let self else { return }
+            let scale = max(0.6, min(1.4, Double(self.virtualPad.scale) + size)), alpha = max(0.2, min(1, Double(self.virtualPad.restingAlpha) + opacity))
+            self.virtualPad.scale = CGFloat(scale); self.virtualPad.restingAlpha = CGFloat(alpha)
+            UserDefaults.standard.set(scale, forKey: Self.padScaleKey); UserDefaults.standard.set(alpha, forKey: Self.padAlphaKey)
+            self.refreshMenuModel()
+        }
         m.setEco = { [weak self] on in
             madeira_set_eco(on ? 1 : 0)
             LogStore.shared.log("[eco] \(on ? "on" : "off") from the in-game menu")
             self?.refreshMenuModel()
         }
-        m.setFrameGen = { [weak self] on in
-            let hz = Double(UIScreen.main.maximumFramesPerSecond)
-            madeira_framegen_set(on ? 1 : 0, hz)
-            ProMotionHold.shared.setFrameGeneration(on)
-            LogStore.shared.log("[framegen] \(on ? "on" : "off") from the in-game menu (screen \(Int(hz)) Hz)")
+        m.setLosslessEnabled = { [weak self] on in
+            var v = LosslessScaling.shared.live; v.enabled = on
+            let ok = LosslessScaling.shared.apply(v)
+            ProMotionHold.shared.setFrameGeneration(on && ok)
+            LogStore.shared.log("[lossless] frame generation \(on ? (ok ? "on" : "could not start: the shaders could not be prepared") : "off") from the in-game menu")
             self?.refreshMenuModel()
         }
+        m.setLosslessGenerated = { [weak self] n in
+            var v = LosslessScaling.shared.live; v.generated = n
+            LosslessScaling.shared.apply(v)
+            LogStore.shared.log("[lossless] \(n) frame(s) added from the in-game menu")
+            self?.refreshMenuModel()
+        }
+        m.setLosslessFlow = { [weak self] f in
+            var v = LosslessScaling.shared.live; v.flow = f
+            LosslessScaling.shared.apply(v)
+            LogStore.shared.log("[lossless] motion search at 1/\(f) from the in-game menu")
+            self?.refreshMenuModel()
+        }
+        m.setLosslessPerformance = { [weak self] on in
+            var v = LosslessScaling.shared.live; v.performance = on
+            LosslessScaling.shared.apply(v)
+            LogStore.shared.log("[lossless] \(on ? "lighter (performance)" : "full (quality)") passes from the in-game menu")
+            self?.refreshMenuModel()
+        }
+        m.refreshLosslessStatus = { [weak self] in self?.menuModel.lsStatus = LosslessScaling.shared.statusText() }
+        m.setUpscaling = { [weak self] mode, factor, method, sharpness in
+            AppModel.shared.session.setUpscaling(LiveUpscaling.Live(mode: LiveUpscaling.Mode(rawValue: mode) ?? .off, factor: factor, method: LiveUpscaling.Method(rawValue: method) ?? .metalfx, sharpness: sharpness))
+            self?.refreshMenuModel()
+        }
+        m.refreshUpscalingStatus = { [weak self] in self?.menuModel.upStatus = LiveUpscaling.shared.statusText() }
         m.setFence = { [weak self] mode in
             madeira_set_fence_mode(Int32(mode == 0 ? 7 : mode))
             self?.fenceMode = mode
@@ -542,8 +730,31 @@ final class GameHUDView: UIView {
         }
         m.setLayout = { [weak self] l in guard let self, l != self.layout else { return }; self.onSwitchLayout?(l) }
         m.setControlsShown = { [weak self] on in guard let self, on != self.controlsOn else { return }; self.toggleControls() }
+        m.setPointerMode = { [weak self] mode in
+            UserDefaults.standard.set(mode.rawValue, forKey: PointerMode.key)
+            self?.menuModel.pointerMode = mode
+            LogStore.shared.log("[controls] touch pointer: \(mode.rawValue) (from the in-game menu)")
+        }
+        m.setPointerSpeed = { [weak self] speed in
+            UserDefaults.standard.set(speed.rawValue, forKey: PointerMode.speedKey)
+            self?.menuModel.pointerSpeed = speed
+            LogStore.shared.log("[controls] trackpad speed: \(speed.rawValue) (from the in-game menu)")
+        }
+        m.setFloatingSticks = { [weak self] on in
+            UserDefaults.standard.set(on, forKey: FloatingStick.key)
+            self?.applyFloating()
+            self?.menuModel.floatingSticks = on
+            LogStore.shared.log("[controls] floating sticks \(on ? "on" : "off") (from the in-game menu)")
+        }
+        m.setAutoHide = { [weak self] seconds in
+            UserDefaults.standard.set(seconds, forKey: Self.autoHideKey)
+            self?.idle.seconds = seconds
+            self?.menuModel.autoHideSeconds = seconds
+            LogStore.shared.log("[controls] hide when not touched: \(seconds == 0 ? "never" : "\(seconds) s") (from the in-game menu)")
+        }
         m.adjustLook = { [weak self] factor in self?.onAdjustLook(factor) }
         m.openKeyboard = { [weak self] in self?.menuOpen = false; self?.onKeyboard?() }
+        m.openFullKeyboard = { [weak self] in self?.menuOpen = false; self?.touchKeyboard.toggle() }
         m.openBinds = { [weak self] in self?.menuOpen = false; self?.onEditBinds?() }
         m.editControls = { [weak self] in self?.beginLayoutEditing() }
         m.report = { [weak self] in self?.menuOpen = false; self?.onReport?() }
@@ -574,6 +785,14 @@ final class GameHUDView: UIView {
         }
         buildHandle()
 
+        addSubview(touchKeyboard)
+        let keyboardWidth = touchKeyboard.widthAnchor.constraint(equalToConstant: 860)
+        keyboardWidth.priority = .defaultHigh                  // as wide as 860 points when the screen allows, else the margins decide
+        NSLayoutConstraint.activate([touchKeyboard.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor), keyboardWidth,
+                                     touchKeyboard.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 8),
+                                     touchKeyboard.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -8),
+                                     touchKeyboard.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4)])
+        customControls.onToggleKeyboard = { [weak self] in self?.touchKeyboard.toggle() }
         addSubview(perfHost); addSubview(menuHost)
         NSLayoutConstraint.activate([menuHost.leadingAnchor.constraint(equalTo: leadingAnchor), menuHost.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      menuHost.topAnchor.constraint(equalTo: topAnchor), menuHost.bottomAnchor.constraint(equalTo: bottomAnchor)])
@@ -684,16 +903,32 @@ final class GameHUDView: UIView {
     private func refreshMenuModel() {
         let p = PowerManager.shared
         menuModel.padMode = AppModel.shared.session.game?.engine?.controllerMode
+        menuModel.virtualPad = virtualPadOn
+        menuModel.virtualPadLayout = virtualPad.preset
+        menuModel.virtualPadStyle = virtualPad.style
+        menuModel.virtualPadScale = Double(virtualPad.scale); menuModel.virtualPadOpacity = Double(virtualPad.restingAlpha)
         menuModel.padHidReady = PadInput.shared.hidReady
         menuModel.padKindName = ControllerInput.shared.kind == .none ? "" : ControllerInput.shared.kind.displayName
         menuModel.powerChosen = p.chosen
         menuModel.powerEffective = p.effective
         menuModel.eco = madeira_get_eco() != 0
-        menuModel.frameGen = madeira_framegen_get() != 0
+        menuModel.lsAvailable = LosslessScaling.shared.usable
+        let ls = LosslessScaling.shared.live
+        menuModel.lsEnabled = ls.enabled; menuModel.lsGenerated = ls.generated; menuModel.lsFlow = ls.flow; menuModel.lsPerformance = ls.performance
+        menuModel.lsStatus = LosslessScaling.shared.statusText()
+        menuModel.upAvailable = LiveUpscaling.shared.controlled
+        let up = LiveUpscaling.shared.live
+        menuModel.upMode = up.mode.rawValue; menuModel.upFactor = up.factor
+        menuModel.upMethod = up.method.rawValue; menuModel.upSharpness = up.sharpness; menuModel.upLossless = LosslessScaling.shared.usable
+        menuModel.upStatus = LiveUpscaling.shared.statusText()
         menuModel.fenceMode = fenceMode
         menuModel.layout = layout
         menuModel.customLayoutInUse = customLayout != nil
         menuModel.controlsShown = controlsOn
+        menuModel.autoHideSeconds = UserDefaults.standard.integer(forKey: Self.autoHideKey)
+        menuModel.floatingSticks = FloatingStick.enabled
+        menuModel.pointerMode = PointerMode.current
+        menuModel.pointerSpeed = PointerMode.speed
         menuModel.showLookSpeed = layout == .firstPerson || customLook
         menuModel.lookSpeed = Double(lookSensitivity)
         menuModel.hasReport = onReport != nil
@@ -778,10 +1013,13 @@ final class GameHUDView: UIView {
         LogStore.shared.log("[f4-hud] state -> \(state)")
         let running = state == .running
         if running {
+            suggestion.begin(now: ProcessInfo.processInfo.systemUptime, reads: winios_gamepad_read_count())
             Telemetry.shared.onSample = { [weak self] s in self?.showTelemetry(s) }
             Telemetry.shared.onAlert = { [weak self] text in self?.showNotice(text) }
             Telemetry.shared.start()
         } else {
+            touchKeyboard.hide()
+            suggestionCard?.removeFromSuperview(); suggestionCard = nil
             Telemetry.shared.stop()
             stick.release(); fpStick.release(); fpHolds.forEach { $0.release() }; latches.forEach { $0.release() }
         }

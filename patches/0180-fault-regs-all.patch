@@ -1,0 +1,31 @@
+--- a/build/ntdll-unix/signal_arm64_ios.c
++++ b/build/ntdll-unix/signal_arm64_ios.c
+@@ -7544,6 +7544,28 @@
+                             (void*)(uintptr_t)state.__x[10], (void*)(uintptr_t)state.__x[11],
+                             (void*)(uintptr_t)state.__x[0], (void*)(uintptr_t)state.__x[2],
+                             (void *)thread_teb, peb_p, peb_ecbm);
++                    }
++                    /* Porthole 0180 [fault-regs-all]: every register of the first two unhandled faults on one line, and 64 bytes at each of x0, x19..x22 that look like
++                     * a pointer. A null table read (OpenImageIO_Util.dll's ustring table) is explained by the object the code was given, not by the one register that faulted. Log only. */
++                    if (cnt <= 2)
++                    {
++                        int r;
++                        dprintf(STDERR_FILENO, "[fault-regs-all]");
++                        for (r = 0; r <= 28; r++) dprintf(STDERR_FILENO, " x%d=%llx", r, (unsigned long long)state.__x[r]);
++                        dprintf(STDERR_FILENO, " fp=%llx\n", (unsigned long long)state.__fp);
++                        static const int dump_regs[] = { 0, 19, 20, 21, 22 };
++                        for (r = 0; r < 5; r++)
++                        {
++                            uint64_t v = state.__x[dump_regs[r]], q[8];
++                            mach_vm_size_t got = 0;
++                            if (v < 0x100000000ULL || v >= 0x800000000ULL) continue;
++                            if (mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)v, sizeof(q), (mach_vm_address_t)q, &got) == KERN_SUCCESS && got == sizeof(q))
++                                dprintf(STDERR_FILENO, "[fault-regs-all]   x%d -> %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx\n", dump_regs[r],
++                                        (unsigned long long)q[0], (unsigned long long)q[1], (unsigned long long)q[2], (unsigned long long)q[3],
++                                        (unsigned long long)q[4], (unsigned long long)q[5], (unsigned long long)q[6], (unsigned long long)q[7]);
++                            else
++                                dprintf(STDERR_FILENO, "[fault-regs-all]   x%d -> unreadable\n", dump_regs[r]);
++                        }
+                     }
+                     /* madeira-bcd [fault-full]: every register, and the host code
+                      * that led up to the faulting instruction (JIT blocks compute

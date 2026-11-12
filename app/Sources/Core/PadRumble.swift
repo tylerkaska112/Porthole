@@ -117,7 +117,7 @@ final class PadRumble: @unchecked Sendable {
             try engine.start()
             m.engine = engine
             return nil
-        } catch { return error.localizedDescription }
+        } catch { return ErrorText.plain(error) }
     }
 
     /// One short buzz at the motor's current strength; the heavy motor is a low rumble, the light one a sharper buzz. Returns an error text, or nil.
@@ -129,7 +129,7 @@ final class PadRumble: @unchecked Sendable {
             let player = try engine.makePlayer(with: try CHHapticPattern(events: [event], parameters: []))
             try player.start(atTime: CHHapticTimeImmediate)
             return nil
-        } catch { return error.localizedDescription }
+        } catch { return ErrorText.plain(error) }
     }
 
     /// A short buzz on the first connected controller, for the Engine options page, with the outcome of every step spelled out (`done` gets the text, on the main queue).
@@ -154,7 +154,7 @@ final class PadRumble: @unchecked Sendable {
                     try player.start(atTime: CHHapticTimeImmediate)
                     out.append("\(name): played")
                     Thread.sleep(forTimeInterval: 0.65)
-                } catch { out.append("\(name): \(error.localizedDescription)") }
+                } catch { out.append("\(name): \(ErrorText.plain(error))") }
                 engine.stop()
                 Thread.sleep(forTimeInterval: 0.15)
             }

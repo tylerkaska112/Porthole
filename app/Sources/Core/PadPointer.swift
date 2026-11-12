@@ -50,6 +50,11 @@ final class PadPointer: @unchecked Sendable {
         winios_pointer(px, py, 0x1 | 0x8000, 0)                  // MOVE | ABSOLUTE, so the compositor's cursor follows
     }
 
+    /// The touch trackpad (TrackpadEngine) moved the pointer: the arrow shows, as for the controller's stick, and idles away the same way.
+    func trackpadMoved() {
+        lock.lock(); used = true; lastMove = CFAbsoluteTimeGetCurrent(); lock.unlock()
+    }
+
     /// A touch put the game's pointer here (desktop pixels): the desktop pointer carries on from there.
     func set(x nx: Int32, y ny: Int32) {
         lock.lock(); defer { lock.unlock() }

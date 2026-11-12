@@ -122,6 +122,8 @@ final class FakeContent: SteamContentBackend {
     var apps: [Int: SteamAppInfo] = [:]
     var depots: [Int: ContentFixture.Depot] = [:]
     var notOwnedDepots: Set<Int> = []
+    /// Depots whose key Steam answers with "blocked" (error 40).
+    var blockedDepots: Set<Int> = []
     var appInfoFailure: SteamContentError?
     var noServers = false
     var delay: TimeInterval = 0
@@ -149,6 +151,7 @@ final class FakeContent: SteamContentBackend {
         lock.lock(); keyRequests.append(depot); lock.unlock()
         let result: Result<Data, SteamContentError>
         if notOwnedDepots.contains(depot) { result = .failure(SteamContentError(message: "This account does not own depot \(depot).", notOwned: true)) }
+        else if blockedDepots.contains(depot) { result = .failure(.forDepotKey(code: 40, depot: depot)) }
         else if let d = depots[depot] { result = .success(d.key) }
         else { result = .failure(SteamContentError(message: "no such depot")) }
         DispatchQueue.main.async { completion(result) }

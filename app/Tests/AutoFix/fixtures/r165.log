@@ -1,0 +1,4 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B8 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D B8 Load module UnityPlayer.dll (unityplayer.dll-5694e47efd732bf4): 71F2A70000
+0138:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c0000005 at 00000071F4E59E80: top_filter=00000071EFB456C0 nested=0

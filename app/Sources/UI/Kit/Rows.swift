@@ -92,19 +92,21 @@ struct RowBase<Trailing: View>: View {
             HStack(spacing: 12) {
                 if let symbol { IconTile(symbol: symbol, tint: destructive ? Theme.bad : tint, size: 32) }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 16, weight: emphasized ? .bold : .semibold, design: .rounded)).foregroundStyle(destructive ? Theme.bad : emphasized ? Theme.accent : plain ? Theme.text.opacity(0.85) : Theme.text).lineLimit(2)
+                    HStack(spacing: 0) {
+                        Text(title).font(.system(size: 16, weight: emphasized ? .bold : .semibold, design: .rounded)).foregroundStyle(destructive ? Theme.bad : emphasized ? Theme.accent : plain ? Theme.text.opacity(0.85) : Theme.text).lineLimit(2)
+                        if let info { InfoButton(id: "\(id)-info", title: title, text: info, docsTopic: title, compact: true) }
+                    }
                     if let subtitle { Text(subtitle).font(.footnote).foregroundStyle(Theme.textDim).lineLimit(2) }
                 }
                 Spacer(minLength: 8)
                 trailing
             }
-            .padding(.leading, 14).padding(.trailing, info == nil ? 14 : 4).padding(.vertical, 10)
+            .padding(.horizontal, 14).padding(.vertical, 10)
             .frame(minHeight: 56)
             .contentShape(Rectangle())
             .onTapGesture(perform: action)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
-            if let info { InfoButton(id: "\(id)-info", title: title, text: info) }
         }
         .background(plain ? AnyShapeStyle(Color.clear) : emphasized ? AnyShapeStyle(Theme.accent.opacity(0.16)) : AnyShapeStyle(Theme.panel), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(plain ? Color.clear : emphasized ? Theme.accent.opacity(0.7) : Theme.line, lineWidth: emphasized ? 1.5 : 1))
@@ -246,10 +248,12 @@ struct SliderRow: View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 if let symbol { IconTile(symbol: symbol, tint: Theme.accent, size: 32) }
-                Text(title).font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundStyle(Theme.text)
+                HStack(spacing: 0) {
+                    Text(title).font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundStyle(Theme.text)
+                    if let info { InfoButton(id: "\(id)-info", title: title, text: info, docsTopic: title, compact: true) }
+                }
                 Spacer()
                 Text(format(value)).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.accent).monospacedDigit()
-                if let info { InfoButton(id: "\(id)-info", title: title, text: info) }
             }
             GeometryReader { geo in
                 let fraction = (value - range.lowerBound) / (range.upperBound - range.lowerBound)

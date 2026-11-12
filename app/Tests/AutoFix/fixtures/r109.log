@@ -1,0 +1,6 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I A4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D A4 Load module UnityPlayer.dll (unityplayer.dll-5546e47efcddcc8a): FB3410000
+[07:32:01.739] [INFO] [mem-pressure] CRITICAL: app 3283 MB, free 813 MB, gpu 690 MB; malloc gave back 0 MB
+[07:32:01.765] [INFO] [mem-pressure] CRITICAL: app 3294 MB, free 802 MB, gpu 712 MB; malloc gave back 0 MB

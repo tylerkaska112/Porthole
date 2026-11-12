@@ -129,8 +129,14 @@ enum SteamCloudLocation {
         return runtimeUser
     }
 
-    /// nil for a root this device has no place for (Steam's own folder, Mac and Linux folders) or an unsafe name.
-    static func localURL(for name: String, driveC: URL, windowsUser: String, installFolder: URL?) -> URL? {
+    /// Where Steam keeps the files a game saves through its own API (no root in the name): `Steam/userdata/<account>/<app>/remote`, which Valve's client reads and writes inside the prefix.
+    static func defaultRemoteFolder(driveC: URL, account: String, appID: Int) -> URL? {
+        guard !account.isEmpty, account != "0", account.allSatisfy({ $0.isNumber }) else { return nil }
+        return driveC.appendingPathComponent("Program Files (x86)/Steam/userdata/\(account)/\(appID)/remote", isDirectory: true)
+    }
+
+    /// nil for a root this device has no place for (Mac and Linux folders, or Steam's own folder when `defaultRemote` is not known) or an unsafe name.
+    static func localURL(for name: String, driveC: URL, windowsUser: String, installFolder: URL?, defaultRemote: URL? = nil) -> URL? {
         let (root, relative) = split(name)
         guard isSafe(relative: relative) else { return nil }
         let user = driveC.appendingPathComponent("users").appendingPathComponent(windowsUser)
@@ -141,7 +147,9 @@ enum SteamCloudLocation {
         case "WinAppDataLocalLow": base = user.appendingPathComponent("AppData/LocalLow")
         case "WinMyDocuments": base = user.appendingPathComponent("Documents")
         case "WinSavedGames": base = user.appendingPathComponent("Saved Games")
+        case "WinProgramData": base = driveC.appendingPathComponent("ProgramData")
         case "GameInstall": guard let installFolder else { return nil }; base = installFolder
+        case "": guard let defaultRemote else { return nil }; base = defaultRemote
         default: return nil
         }
         return relative.split(whereSeparator: { $0 == "/" || $0 == "\\" }).reduce(base) { $0.appendingPathComponent(String($1)) }
@@ -161,16 +169,28 @@ struct SteamCloudReport: Equatable {
     var downloaded: [String] = []
     var upToDate = 0
     var keptNewerLocal: [String] = []
+    /// Changed on this device AND in the cloud since the last sync: neither side is touched.
+    var conflicts: [String] = []
     var skipped: [String] = []       // roots with no place here, other platforms, deleted
     var failed: [String] = []
     var bytes = 0
     var summary: String {
-        "\(downloaded.count) downloaded (\(bytes / 1024) KB), \(upToDate) already current, \(keptNewerLocal.count) newer here (kept), \(skipped.count) skipped, \(failed.count) failed"
+        "\(downloaded.count) downloaded (\(bytes / 1024) KB), \(upToDate) already current, \(keptNewerLocal.count) newer here (kept), \(skipped.count) skipped, \(failed.count) failed" + (conflicts.isEmpty ? "" : ", \(conflicts.count) changed on both sides (left)")
     }
 }
 
 enum SteamCloudSync {
     static let backupSuffix = ".porthole-backup"
+
+    /// A backup that is already there is not thrown away for the new one: it is renamed `<file>.1.porthole-backup` (up to 5 older ones; the oldest is reused when all are taken), so
+    /// two overwrites in a row never destroy the only copy of what was on this device.
+    static func keepOlderBackup(_ backup: URL, fileManager fm: FileManager = .default) {
+        guard fm.fileExists(atPath: backup.path) else { return }
+        let stem = String(backup.path.dropLast(backupSuffix.count))
+        let target = (1...5).map { URL(fileURLWithPath: "\(stem).\($0)\(backupSuffix)") }.first { !fm.fileExists(atPath: $0.path) } ?? URL(fileURLWithPath: "\(stem).1\(backupSuffix)")
+        try? fm.removeItem(at: target)
+        try? fm.moveItem(at: backup, to: target)
+    }
 
     static func sha1(of url: URL) -> Data? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
@@ -196,10 +216,11 @@ enum SteamCloudSync {
     }
 
     /// Brings the person's cloud files for `appID` onto this device. Never throws for one bad file: it is counted in the report and the rest go on.
-    static func downloadMissing(appID: Int, transport: SteamCloudTransport, driveC: URL, installFolder: URL? = nil, maxFileBytes: Int = 600 << 20, parallel: Int = 6,
+    static func downloadMissing(appID: Int, transport: SteamCloudTransport, driveC: URL, installFolder: URL? = nil, defaultRemote: URL? = nil, ledgerURL: URL? = nil, maxFileBytes: Int = 600 << 20, parallel: Int = 6,
                                 fileManager fm: FileManager = .default, progress: ((Int, Int, String) -> Void)? = nil) async throws -> SteamCloudReport {
         var report = SteamCloudReport()
         let list = try await transport.changelist(appID: appID)
+        var ledger = SteamCloudLedger.load(from: ledgerURL)
         SteamLog.event("[cloud] app=\(appID) list: change \(list.currentChange), \(list.files.count) file(s), prefixes \(list.pathPrefixes.prefix(8).map { "'\($0)'" })")
         guard let user = SteamCloudLocation.windowsUser(in: driveC) else { SteamLog.event("[cloud] app=\(appID) no Windows user folder in the prefix"); return report }
         var shown = 0
@@ -214,15 +235,21 @@ enum SteamCloudSync {
         struct Job { var file: SteamCloudFile; var full: String; var dest: URL; var backup: URL? }
         var jobs: [Job] = []
         for (file, full) in wanted.map({ (file: $0.file, full: $0.full) }) {
-            guard let dest = SteamCloudLocation.localURL(for: full, driveC: driveC, windowsUser: user, installFolder: installFolder) else {
+            guard let dest = SteamCloudLocation.localURL(for: full, driveC: driveC, windowsUser: user, installFolder: installFolder, defaultRemote: defaultRemote) else {
                 report.skipped.append(full); note(file, full, "skipped (no place for it on this device)"); continue
             }
             if file.size > maxFileBytes { report.skipped.append(full); note(file, full, "skipped (over the size limit)"); continue }
             var backup: URL?
             if fm.fileExists(atPath: dest.path) {
-                if let have = sha1(of: dest), have == file.sha1 { report.upToDate += 1; note(file, full, "already current"); continue }
+                let have = sha1(of: dest)
+                if let have, have == file.sha1 { report.upToDate += 1; ledger.files[full] = SteamCloudLedger.hex(have); note(file, full, "already current"); continue }
+                // The record of the last sync tells a change made here from a change made in the cloud: only a file that is unchanged here is replaced. Without a record
+                // (or when this file cannot be read) the dates decide, as they always did.
                 let modified = ((try? fm.attributesOfItem(atPath: dest.path)[.modificationDate]) as? Date)?.timeIntervalSince1970 ?? 0
-                if file.timestamp > 0, modified > Double(file.timestamp) + 2 { report.keptNewerLocal.append(full); note(file, full, "a newer copy is here; kept"); continue }
+                if let baseline = ledger.files[full], let have {
+                    if baseline == SteamCloudLedger.hex(file.sha1) { report.keptNewerLocal.append(full); note(file, full, "changed here since the last sync, the cloud has not changed; kept"); continue }
+                    if baseline != SteamCloudLedger.hex(have) { report.conflicts.append(full); note(file, full, "changed here and in the cloud since the last sync; left alone"); continue }
+                } else if file.timestamp > 0, modified > Double(file.timestamp) + 2 { report.keptNewerLocal.append(full); note(file, full, "a newer copy is here; kept"); continue }
                 backup = URL(fileURLWithPath: dest.path + backupSuffix)
             }
             jobs.append(Job(file: file, full: full, dest: dest, backup: backup))
@@ -241,7 +268,7 @@ enum SteamCloudSync {
                 try fm.createDirectory(at: job.dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let part = URL(fileURLWithPath: job.dest.path + ".porthole-part")
                 try data.write(to: part, options: .atomic)
-                if let backup = job.backup { try? fm.removeItem(at: backup); try fm.moveItem(at: job.dest, to: backup) }
+                if let backup = job.backup { Self.keepOlderBackup(backup); try fm.moveItem(at: job.dest, to: backup) }
                 try fm.moveItem(at: part, to: job.dest)
                 if job.file.timestamp > 0 { try? fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: TimeInterval(job.file.timestamp))], ofItemAtPath: job.dest.path) }
                 return .downloaded(data.count)
@@ -264,12 +291,14 @@ enum SteamCloudSync {
         }
         for (i, job) in jobs.enumerated() {
             switch results[i] {
-            case .downloaded(let n)?: report.downloaded.append(job.full); report.bytes += n; note(job.file, job.full, "downloaded \(n) B")
+            case .downloaded(let n)?: report.downloaded.append(job.full); report.bytes += n; ledger.files[job.full] = SteamCloudLedger.hex(job.file.sha1); note(job.file, job.full, "downloaded \(n) B")
             case .skipped(let why)?: report.skipped.append(job.full); note(job.file, job.full, why)
             case .failed(let why)?: report.failed.append(job.full); note(job.file, job.full, why)
             case .none: report.failed.append(job.full)
             }
         }
+        if report.failed.isEmpty { ledger.change = list.currentChange }
+        ledger.save(to: ledgerURL)
         SteamLog.event("[cloud] app=\(appID) change=\(list.currentChange): \(report.summary)")
         return report
     }
@@ -280,8 +309,9 @@ enum SteamCloudSync {
 /// Steam's own answers over the signed-in connection, and the file links over HTTPS.
 struct SteamCMCloudTransport: SteamCloudTransport {
     let cm: SteamCM
+    var machineName = "Porthole"
 
-    private func call(_ name: String, _ body: Data) async throws -> Data {
+    func call(_ name: String, _ body: Data) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.main.async {
                 cm.call(name, body: body, timeout: 25) { result in

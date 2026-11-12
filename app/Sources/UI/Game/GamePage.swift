@@ -83,10 +83,11 @@ struct GamePage: View {
                 }
                 .sheet(item: $sub) { s in
                     GameSubSheet(title: s.title, scope: subScope, close: { sub = nil }) { subContent(s, game) }
+                        // The program picker is presented FROM this sheet, over it: a sheet put on the page underneath cannot open until the one above it is closed.
+                        .sheet(isPresented: $changingProgram) {
+                            ChangeProgramSheet(game: game, scope: programScope, close: { changingProgram = false }).environmentObject(model).preferredColorScheme(Theme.scheme)
+                        }
                         .environmentObject(model).environmentObject(session).environment(router)
-                }
-                .sheet(isPresented: $changingProgram) {
-                    ChangeProgramSheet(game: game, scope: programScope, close: { changingProgram = false }).environmentObject(model).preferredColorScheme(Theme.scheme)
                 }
                 .sheet(isPresented: $writing) { ReportSheet(game: game).environmentObject(model).preferredColorScheme(Theme.scheme) }
                 .sheet(isPresented: $browsing) {
@@ -166,27 +167,42 @@ struct GamePage: View {
 
     /// The pages behind the doors on this page.
     enum Sub: String, Identifiable {
-        case controls, compat, more, about, achievements, workshop, friends, news
+        case controls, compat, more, about, achievements, workshop, friends, news, cloud, problem
         var id: String { rawValue }
-        var title: String { switch self { case .controls: "Controls"; case .compat: "How it runs"; case .more: "More options"; case .about: "About and files"; case .achievements: "Achievements"; case .friends: "Friends playing"; case .news: "News and patch notes"; case .workshop: "Workshop" } }
+        var title: String { switch self { case .controls: "Controls"; case .compat: "How it runs"; case .more: "More options"; case .about: "About and files"; case .achievements: "Achievements"; case .friends: "Friends playing"; case .news: "News and patch notes"; case .workshop: "Workshop"; case .cloud: "Steam Cloud"; case .problem: "Report a problem" } }
     }
 
     @ViewBuilder private func content(_ g: Game) -> some View {
         playSection(g)
-        SettingsGroup(title: "Explore") {
+        LastRunCard(game: g)
+        CopyNoteCard(game: g)
+        if steam.signedIn, let appID = g.dockAppID { SteamCloudCard(appID: appID, store: steam) { open(.cloud) } }
+        SettingsGroup(title: "Set up") {
             ActionRow(id: "gp-door-controls", symbol: "gamecontroller.fill", title: "Controls and key binds", subtitle: (g.controls ?? .standard) == .firstPerson ? "First person" : "Mouse and keys") { open(.controls) }
-            ActionRow(id: "gp-door-compat", symbol: "checkmark.seal.fill", title: "How it runs for others", subtitle: compatSummary(g)) { open(.compat) }
-            if g.steamAppID ?? g.dockAppID != nil {
+            ActionRow(id: "gp-door-more", symbol: "slider.horizontal.3", title: "More options", subtitle: "Speed, memory, engine and launch options") { open(.more) }
+        }
+        if g.steamAppID ?? g.dockAppID != nil {
+            SettingsGroup(title: "From Steam") {
                 ActionRow(id: "gp-door-news", symbol: "newspaper.fill", title: "News and patch notes", subtitle: "From Steam") { open(.news) }
-            }
-            if steam.signedIn, g.steamAppID ?? g.dockAppID != nil {
-                ActionRow(id: "gp-door-achievements", symbol: "trophy.fill", title: "Achievements", subtitle: progress.summary(for: g.steamAppID ?? g.dockAppID) ?? "Your progress on Steam") { open(.achievements) }
-                ActionRow(id: "gp-door-friends", symbol: "person.2.fill", title: "Friends playing", subtitle: friendsSubtitle(g.steamAppID ?? g.dockAppID ?? 0)) { open(.friends) }
-                ActionRow(id: "gp-door-workshop", symbol: "puzzlepiece.extension.fill", title: "Workshop", subtitle: workshopSubtitle(g.steamAppID ?? g.dockAppID ?? 0), badge: "Beta") { open(.workshop) }
+                if steam.signedIn {
+                    ActionRow(id: "gp-door-achievements", symbol: "trophy.fill", title: "Achievements", subtitle: progress.summary(for: g.steamAppID ?? g.dockAppID) ?? "Your progress on Steam") { open(.achievements) }
+                    ActionRow(id: "gp-door-friends", symbol: "person.2.fill", title: "Friends playing", subtitle: friendsSubtitle(g.steamAppID ?? g.dockAppID ?? 0)) { open(.friends) }
+                    ActionRow(id: "gp-door-workshop", symbol: "puzzlepiece.extension.fill", title: "Workshop", subtitle: workshopSubtitle(g.steamAppID ?? g.dockAppID ?? 0), badge: "Beta") { open(.workshop) }
+                }
             }
         }
+        SettingsGroup(title: "Reports") {
+            ActionRow(id: "gp-door-compat", symbol: "checkmark.seal.fill", title: "How it runs for others", subtitle: compatSummary(g)) { open(.compat) }
+            // A game nobody has reported on this version of the engine is the one worth a report most: say so, and make the button the main one.
+            let reported = compat.hasReported(g), untested = compat.badges[g.id]?.verdict == nil
+            let earlier = compat.badges[g.id]?.earlier?.reports ?? 0
+            ActionRow(id: "gp-door-report", symbol: "square.and.pencil",
+                      title: reported ? "Update my report" : (untested ? (earlier > 0 ? "Report how it runs on this version" : "Be the first to report") : "Report how it runs"),
+                      subtitle: reported ? "You reported on this version." : (untested ? "Nobody has told us how it runs on this version yet. It takes under a minute." : "Tell others how it works for you"),
+                      chevron: false, prominent: untested && !reported) { writing = true }
+            ActionRow(id: "gp-door-problem", symbol: "exclamationmark.bubble.fill", title: "Report a problem", subtitle: "Send the log of a run that went wrong") { open(.problem) }
+        }
         SettingsGroup(title: "Manage") {
-            ActionRow(id: "gp-door-more", symbol: "slider.horizontal.3", title: "More options", subtitle: "Speed, memory, engine and launch options") { open(.more) }
             ActionRow(id: "gp-door-about", symbol: "info.circle.fill", title: "About and files", subtitle: sizeText) { open(.about) }
         }
     }
@@ -228,10 +244,12 @@ struct GamePage: View {
             GameEngineSection(gameID: g.id)
             launchOptionsGroups(g)
         case .about: detailsSection(g)
+        case .problem: ReportProblemPage(game: g.name).environment(\.embeddedPage, true)
         case .achievements: if let id = g.steamAppID ?? g.dockAppID { SteamAchievementsContent(appID: id, store: steam) }
         case .friends: if let id = g.steamAppID ?? g.dockAppID { SteamFriendsList(onlyIn: id) }
         case .news: if let id = g.steamAppID ?? g.dockAppID { SteamNewsList(appID: id) }
         case .workshop: if let id = g.steamAppID ?? g.dockAppID { SteamWorkshopContent(appID: id, name: g.name, store: steam) }
+        case .cloud: if let id = g.dockAppID { SteamCloudContent(appID: id, name: g.name, store: steam) }
         }
     }
 
@@ -247,15 +265,16 @@ struct GamePage: View {
         let globalRes = DisplayResolution.resolve(id: LaunchSettings.globalResolution, screenAspect: aspect).text
         return VStack(alignment: .leading, spacing: 18) {
             SettingsGroup(title: "Play") {
-                if g.dockAppID != nil {
+                if let dockID = g.dockAppID {
                     ChoiceRow(id: "gp-mode", symbol: "shield.checkered", title: "Start",
                               info: "Through Steam: Valve's own client checks your licence first. Most Steam games need this. Run directly: starts the game without Steam. Only use it for games that don't check Steam when they start; a game that does will freeze on its first screen.",
                               options: [(false, "Through Steam"), (true, "Run directly")], selection: Binding(get: { g.launchDirect == true }, set: { model.setLaunchDirect($0, for: g) }))
+                    if g.launchDirect != true, DockOffline.enabled { OfflineMarkRow(appID: dockID) }
                 }
-                OverrideRow(id: "gp-res", symbol: "display", title: "Resolution", info: "The size of the screen this game sees. Default follows Settings > Play. Applies the next time the game starts.",
+                OverrideRow(id: "gp-res", symbol: "display", title: "Resolution", info: "The size of the screen this game sees. Default follows Settings > Display. Applies the next time the game starts.",
                             value: DisplayResolution.offered(s.resolution), globalText: globalRes,
                             options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: aspect)) }) { v in setting(g) { $0.resolution = v } }
-                OverrideRow(id: "gp-power", symbol: "bolt.fill", title: "Power mode", info: "Default follows Settings > Play. Max runs up to the screen\u{2019}s maximum (120 FPS on a ProMotion screen, otherwise 60), Saver is 30 FPS and cooler.",
+                OverrideRow(id: "gp-power", symbol: "bolt.fill", title: "Power mode", info: "Default follows Settings > Performance. Max runs up to the screen\u{2019}s maximum (120 FPS on a ProMotion screen, otherwise 60), Saver is 30 FPS and cooler.",
                             value: s.powerMode, globalText: PowerManager.shared.chosen.title,
                             options: PowerMode.allCases.map { ($0.rawValue, $0.title) }) { v in setting(g) { $0.powerMode = v } }
             }
@@ -294,7 +313,7 @@ struct GamePage: View {
             SettingsGroup(title: "Memory") {
                 OverrideRow(id: "gp-swap", symbol: "internaldrive.fill", title: "Swap", value: s.swapMB, globalText: LaunchSettings.globalSwapMB == 0 ? "Off" : "\(LaunchSettings.globalSwapMB / 1024) GB",
                             options: [(0, "Off"), (1024, "1 GB"), (2048, "2 GB"), (3072, "3 GB"), (4096, "4 GB")]) { v in setting(g) { $0.swapMB = v } }
-                OverrideRow(id: "gp-cover", symbol: "square.stack.3d.up.fill", title: "Swap covers", value: s.swapCoverage, globalText: GameInfo.coverageName(LaunchSettings.globalSwapCoverage),
+                OverrideRow(id: "gp-cover", symbol: "square.stack.3d.up.fill", title: "Swap covers", value: s.swapCoverage, globalText: GameInfo.coverageName(GameFixes.fix(forSteamAppID: g.dockAppID ?? g.steamAppID)?.swapCoverage ?? LaunchSettings.globalSwapCoverage),
                             options: [("", "Large (8 MB+)"), ("blocks", "All 1 MB+"), ("wide", "1 MB+ and overflow"), ("broad", "Broad")]) { v in setting(g) { $0.swapCoverage = v } }
                 OverrideRow(id: "gp-vram", symbol: "memorychip.fill", title: "Video memory", value: s.vramMB, globalText: LaunchSettings.globalVramMB == 0 ? "Automatic" : "\(LaunchSettings.globalVramMB) MB",
                             options: [(0, "Automatic"), (512, "512 MB"), (1024, "1 GB"), (1536, "1.5 GB"), (2048, "2 GB"), (3072, "3 GB"), (4096, "4 GB")]) { v in setting(g) { $0.vramMB = v } }
@@ -354,13 +373,6 @@ struct GamePage: View {
             }
             SettingsGroup {
                 ActionRow(id: "gp-reports", symbol: "list.bullet.rectangle", title: "See reports") { ask { browsing = true } }
-                // A game nobody has reported on this version of the engine is the one worth a report most: say so, and make the button the main one.
-                let reported = compat.hasReported(g), untested = compat.badges[g.id]?.verdict == nil
-                let earlier = compat.badges[g.id]?.earlier?.reports ?? 0
-                ActionRow(id: "gp-write", symbol: "square.and.pencil",
-                          title: reported ? "Update my report" : (untested ? (earlier > 0 ? "Report how it runs on this version" : "Be the first to report") : "Write a report"),
-                          subtitle: reported ? "You reported on this version." : (untested ? "Nobody has told us how it runs on this version yet. It takes under a minute." : nil),
-                          chevron: false, prominent: untested && !reported) { ask { writing = true } }
             }
         }
     }

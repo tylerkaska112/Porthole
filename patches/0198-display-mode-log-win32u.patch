@@ -1,0 +1,24 @@
+--- a/build/win32u-unix/sysparams_ios.c	2026-11-09 00:00:48
++++ b/build/win32u-unix/sysparams_ios.c	2026-11-09 00:00:48
+@@ -4379,12 +4379,21 @@
+ 
+     {
+         int mw, mh;
++        static int enum_log;
+ 
+         if (!ios_mode_at_index( index, &mw, &mh ))
+         {
++            /* Porthole 0198: what the list ends at (a game's resolution menu is built from this walk) */
++            if (enum_log < 80)
++            {
++                enum_log++;
++                dprintf( 2, "[vmode] 0198 EnumDisplaySettings index %u: no more modes (current %dx%d, session default %dx%d, cap %s)\n",
++                         (unsigned)index, sw, sh, ios_screen_def_w, ios_screen_def_h, getenv( "MADEIRA_EXTENDED_MODES" ) ? "4x" : "1x" );
++            }
+             RtlSetLastWin32Error( ERROR_NO_MORE_FILES );
+             return FALSE;
+         }
++        if (enum_log < 80) { enum_log++; dprintf( 2, "[vmode] 0198 EnumDisplaySettings index %u = %dx%d\n", (unsigned)index, mw, mh ); }
+         devmode->dmPelsWidth = mw;
+         devmode->dmPelsHeight = mh;
+     }

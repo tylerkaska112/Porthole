@@ -1,0 +1,8 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D B0 Load module UnityPlayer.dll (unityplayer.dll-56eea47ef7d4b2ed): FB3C90000
+[09:59:01.876] [INFO] [mem-pressure] CRITICAL: app 3277 MB, free 819 MB, gpu 387 MB; malloc gave back 0 MB
+[09:59:01.886] [INFO] [mem-pressure] CRITICAL: app 3282 MB, free 814 MB, gpu 393 MB; malloc gave back 0 MB
+[09:59:04.609] [INFO] [mem-pressure] CRITICAL: app 3277 MB, free 819 MB, gpu 402 MB; malloc gave back 0 MB
+[09:59:08.799] [INFO] [mem-alert] shown to the person: Memory is almost full. Close other apps. If this keeps happening, turn on Swap in this game's settings.

@@ -1,0 +1,297 @@
+diff -ruN a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+--- a/src/winemetal/unix/winemetal_unix.c	2026-11-06 04:34:56
++++ b/src/winemetal/unix/winemetal_unix.c	2026-11-06 04:34:56
+@@ -1733,6 +1733,119 @@
+   return STATUS_SUCCESS;
+ }
+ 
++/* Porthole (Cycles on Metal), slots 161-164: ray tracing. Local rendering only. */
++static MTLAccelerationStructureDescriptor *
++wmt_accel_descriptor(const struct WMTAccelInfo *info) {
++  MTLAccelerationStructureDescriptor *desc = nil;
++  if (info->kind == WMT_ACCEL_KIND_PRIMITIVE) {
++    MTLPrimitiveAccelerationStructureDescriptor *p = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
++    NSMutableArray *geometries = [NSMutableArray arrayWithCapacity:info->count];
++    const struct WMTAccelTriangles *t = (const void *)(uintptr_t)info->geometries;
++    for (uint32_t i = 0; t && i < info->count; i++) {
++      MTLAccelerationStructureTriangleGeometryDescriptor *g = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
++      g.vertexBuffer = (id<MTLBuffer>)t[i].vertex_buffer;
++      g.vertexBufferOffset = t[i].vertex_offset;
++      g.vertexStride = t[i].vertex_stride;
++      if (t[i].index_buffer) {
++        g.indexBuffer = (id<MTLBuffer>)t[i].index_buffer;
++        g.indexBufferOffset = t[i].index_offset;
++        g.indexType = t[i].index_type ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
++      }
++      g.triangleCount = t[i].triangle_count;
++      g.opaque = (t[i].flags & 1u) != 0;
++      g.allowDuplicateIntersectionFunctionInvocation = (t[i].flags & 2u) != 0;
++      g.intersectionFunctionTableOffset = t[i].intersection_function_table_offset;
++      [geometries addObject:g];
++    }
++    p.geometryDescriptors = geometries;
++    desc = p;
++  } else {
++    MTLInstanceAccelerationStructureDescriptor *d = [MTLInstanceAccelerationStructureDescriptor descriptor];
++    d.instanceCount = info->count;
++    d.instanceDescriptorBuffer = (id<MTLBuffer>)info->instance_buffer;
++    d.instanceDescriptorBufferOffset = info->instance_buffer_offset;
++    if (info->instance_descriptor_type == 1) {
++      d.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
++      d.instanceDescriptorStride = sizeof(MTLAccelerationStructureUserIDInstanceDescriptor);
++    } else {
++      d.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeDefault;
++      d.instanceDescriptorStride = sizeof(MTLAccelerationStructureInstanceDescriptor);
++    }
++    NSMutableArray *structures = [NSMutableArray arrayWithCapacity:info->instanced_count];
++    const obj_handle_t *handles = (const void *)(uintptr_t)info->instanced_structures;
++    for (uint32_t i = 0; handles && i < info->instanced_count; i++) [structures addObject:(id<MTLAccelerationStructure>)handles[i]];
++    d.instancedAccelerationStructures = structures;
++    desc = d;
++  }
++  desc.usage = (MTLAccelerationStructureUsage)info->usage;
++  return desc;
++}
++
++static NTSTATUS
++_MTLDevice_accelerationStructureSizes(void *obj) {
++  struct unixcall_accel_sizes *params = obj;
++  const struct WMTAccelInfo *info = (const void *)(uintptr_t)params->info;
++  struct WMTAccelSizes *out = (void *)(uintptr_t)params->out;
++  if (!info || !out) return STATUS_INVALID_PARAMETER;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  @autoreleasepool {
++    MTLAccelerationStructureSizes s = [(id<MTLDevice>)params->device accelerationStructureSizesWithDescriptor:wmt_accel_descriptor(info)];
++    out->structure_size = s.accelerationStructureSize;
++    out->build_scratch_size = s.buildScratchBufferSize;
++    out->refit_scratch_size = s.refitScratchBufferSize;
++  }
++  return STATUS_SUCCESS;
++}
++
++static NTSTATUS
++_MTLDevice_newAccelerationStructure(void *obj) {
++  struct unixcall_new_accel *params = obj;
++  params->ret = 0;
++  params->ret_resource_id = 0;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  id<MTLAccelerationStructure> as = [(id<MTLDevice>)params->device newAccelerationStructureWithSize:(NSUInteger)params->size];
++  params->ret = (obj_handle_t)as;                       /* +1, released by the caller */
++  if (as) params->ret_resource_id = as.gpuResourceID._impl;
++  return STATUS_SUCCESS;
++}
++
++static NTSTATUS
++_MTLCommandBuffer_accelerationStructureCommandEncoder(void *obj) {
++  struct unixcall_generic_obj_obj_ret *params = obj;
++  params->ret = 0;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  params->ret = (obj_handle_t)[(id<MTLCommandBuffer>)params->handle accelerationStructureCommandEncoder];
++  return STATUS_SUCCESS;
++}
++
++static NTSTATUS
++_MTLAccelerationStructureCommandEncoder_build(void *obj) {
++  struct unixcall_accel_build *params = obj;
++  const struct WMTAccelInfo *info = (const void *)(uintptr_t)params->info;
++  if (!info) return STATUS_INVALID_PARAMETER;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  @autoreleasepool {
++    id<MTLAccelerationStructureCommandEncoder> enc = (id<MTLAccelerationStructureCommandEncoder>)params->encoder;
++    /* what the build reads must be resident for it: the structures an instance structure refers to, and the vertex and index buffers */
++    const obj_handle_t *uses = (const void *)(uintptr_t)info->use_resources;
++    for (uint32_t i = 0; uses && i < info->use_count; i++) [enc useResource:(id<MTLResource>)uses[i] usage:MTLResourceUsageRead];
++    if (info->kind == WMT_ACCEL_KIND_PRIMITIVE) {
++      const struct WMTAccelTriangles *t = (const void *)(uintptr_t)info->geometries;
++      for (uint32_t i = 0; t && i < info->count; i++) {
++        if (t[i].vertex_buffer) [enc useResource:(id<MTLResource>)t[i].vertex_buffer usage:MTLResourceUsageRead];
++        if (t[i].index_buffer) [enc useResource:(id<MTLResource>)t[i].index_buffer usage:MTLResourceUsageRead];
++      }
++    } else if (info->instance_buffer) {
++      [enc useResource:(id<MTLResource>)info->instance_buffer usage:MTLResourceUsageRead];
++    }
++    [enc buildAccelerationStructure:(id<MTLAccelerationStructure>)params->structure
++                         descriptor:wmt_accel_descriptor(info)
++                      scratchBuffer:(id<MTLBuffer>)params->scratch
++                scratchBufferOffset:(NSUInteger)params->scratch_offset];
++  }
++  return STATUS_SUCCESS;
++}
++
+ /* Porthole (Cycles on Metal), slot 160. Local rendering only: the remote path has no way to carry megabytes of source yet. */
+ static NTSTATUS
+ _MTLDevice_newLibraryWithSource(void *obj) {
+@@ -3298,6 +3411,11 @@
+       [encoder setTexture:(id<MTLTexture>)body->texture atIndex:body->index];
+       break;
+     }
++    case WMTComputeCommandSetAccelerationStructure: {
++      struct wmtcmd_compute_setaccel *body = (struct wmtcmd_compute_setaccel *)next;
++      [encoder setAccelerationStructure:(id<MTLAccelerationStructure>)body->accel atBufferIndex:body->index];
++      break;
++    }
+     case WMTComputeCommandUpdateFence: {
+       struct wmtcmd_compute_fence_op *body = (struct wmtcmd_compute_fence_op *)next;
+       [encoder updateFence:(id<MTLFence>)body->fence];
+@@ -8571,6 +8689,10 @@
+     NULL, /* 158 */
+     NULL, /* 159 */
+     &_MTLDevice_newLibraryWithSource,   /* 160 (Porthole) */
++    &_MTLDevice_accelerationStructureSizes,   /* 161 */
++    &_MTLDevice_newAccelerationStructure,   /* 162 */
++    &_MTLCommandBuffer_accelerationStructureCommandEncoder,   /* 163 */
++    &_MTLAccelerationStructureCommandEncoder_build,   /* 164 */
+ };
+ 
+ #ifndef DXMT_NATIVE
+@@ -8743,5 +8865,9 @@
+     NULL, /* 158 */
+     NULL, /* 159 */
+     NULL,   /* 160 (Porthole) */
++    NULL, /* 161 */
++    NULL, /* 162 */
++    NULL, /* 163 */
++    NULL, /* 164 */
+ };
+ #endif
+diff -ruN a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+--- a/src/winemetal/winemetal.h	2026-11-06 04:34:56
++++ b/src/winemetal/winemetal.h	2026-11-06 04:34:56
+@@ -598,6 +598,46 @@
+     obj_handle_t device, const char *source, uint64_t source_len, uint32_t language_version, uint32_t flags, obj_handle_t *err_out
+ );
+ 
++/* Porthole (Cycles on Metal): ray tracing, slots 161-164. The acceleration structure descriptors cross as flat records, never as Metal objects.
++ * kind 0 = a primitive structure (triangles), kind 1 = an instance structure (a top level). usage is MTLAccelerationStructureUsage (1 refit, 2 prefer fast build, 4 extended limits). */
++#define WMT_ACCEL_KIND_PRIMITIVE 0u
++#define WMT_ACCEL_KIND_INSTANCE 1u
++struct WMTAccelTriangles {
++  obj_handle_t vertex_buffer;
++  uint64_t vertex_offset;
++  uint64_t vertex_stride;
++  obj_handle_t index_buffer;       /* 0 = the vertices are the triangles in order */
++  uint64_t index_offset;
++  uint32_t index_type;             /* 0 = 16 bit, 1 = 32 bit */
++  uint32_t triangle_count;
++  uint32_t flags;                  /* bit 0: opaque; bit 1: allow duplicate intersection function invocation */
++  uint32_t intersection_function_table_offset;
++};
++struct WMTAccelInfo {
++  uint32_t kind;
++  uint32_t usage;
++  uint32_t count;                  /* primitive: WMTAccelTriangles records; instance: instances */
++  uint32_t instance_descriptor_type;  /* instance: 0 = MTLAccelerationStructureInstanceDescriptor, 1 = the user id one */
++  uint64_t geometries;             /* primitive: PE pointer to WMTAccelTriangles[count] */
++  obj_handle_t instance_buffer;    /* instance: the buffer holding the instance descriptors */
++  uint64_t instance_buffer_offset;
++  uint64_t instanced_structures;   /* instance: PE pointer to obj_handle_t[instanced_count], the structures the instances refer to by index */
++  uint32_t instanced_count;
++  uint32_t use_count;
++  uint64_t use_resources;          /* PE pointer to obj_handle_t[use_count]: structures the build reads, marked resident for it */
++};
++struct WMTAccelSizes {
++  uint64_t structure_size;
++  uint64_t build_scratch_size;
++  uint64_t refit_scratch_size;
++};
++WINEMETAL_API void MTLDevice_accelerationStructureSizes(obj_handle_t device, const struct WMTAccelInfo *info, struct WMTAccelSizes *sizes);
++/* resource_id (out, optional) is the structure's gpuResourceID, for argument buffers. */
++WINEMETAL_API obj_handle_t MTLDevice_newAccelerationStructure(obj_handle_t device, uint64_t size, uint64_t *resource_id);
++WINEMETAL_API obj_handle_t MTLCommandBuffer_accelerationStructureCommandEncoder(obj_handle_t cmdbuf);
++WINEMETAL_API void MTLAccelerationStructureCommandEncoder_build(obj_handle_t encoder, obj_handle_t structure, const struct WMTAccelInfo *info,
++                                                                obj_handle_t scratch_buffer, uint64_t scratch_offset);
++
+ WINEMETAL_API uint64_t NSString_lengthOfBytesUsingEncoding(obj_handle_t str, enum WMTStringEncoding encoding);
+ 
+ WINEMETAL_API obj_handle_t NSObject_description(obj_handle_t nserror);
+@@ -1004,6 +1044,7 @@
+   WMTComputeCommandDispatchThreads,
+   WMTComputeCommandWaitForFence,
+   WMTComputeCommandUpdateFence,
++  WMTComputeCommandSetAccelerationStructure,   /* Porthole */
+ };
+ 
+ struct wmtcmd_compute_nop {
+@@ -1080,6 +1121,14 @@
+   uint16_t reserved[3];
+   struct WMTMemoryPointer next;
+   obj_handle_t texture;
++  uint8_t index;
++};
++
++struct wmtcmd_compute_setaccel {
++  enum WMTComputeCommandType type;
++  uint16_t reserved[3];
++  struct WMTMemoryPointer next;
++  obj_handle_t accel;
+   uint8_t index;
+ };
+ 
+diff -ruN a/src/winemetal/winemetal_thunks.c b/src/winemetal/winemetal_thunks.c
+--- a/src/winemetal/winemetal_thunks.c	2026-11-06 04:34:56
++++ b/src/winemetal/winemetal_thunks.c	2026-11-06 04:34:56
+@@ -310,6 +310,49 @@
+   return params.ret_library;
+ }
+ 
++WINEMETAL_API void
++MTLDevice_accelerationStructureSizes(obj_handle_t device, const struct WMTAccelInfo *info, struct WMTAccelSizes *sizes) {
++  struct unixcall_accel_sizes params;
++  params.device = device;
++  params.info = PtrToUInt64(info);
++  params.out = PtrToUInt64(sizes);
++  UNIX_CALL(161, &params);
++}
++
++WINEMETAL_API obj_handle_t
++MTLDevice_newAccelerationStructure(obj_handle_t device, uint64_t size, uint64_t *resource_id) {
++  struct unixcall_new_accel params;
++  params.device = device;
++  params.size = size;
++  params.ret_resource_id = 0;
++  params.ret = 0;
++  UNIX_CALL(162, &params);
++  if (resource_id)
++    *resource_id = params.ret_resource_id;
++  return params.ret;
++}
++
++WINEMETAL_API obj_handle_t
++MTLCommandBuffer_accelerationStructureCommandEncoder(obj_handle_t cmdbuf) {
++  struct unixcall_generic_obj_obj_ret params;
++  params.handle = cmdbuf;
++  params.ret = 0;
++  UNIX_CALL(163, &params);
++  return params.ret;
++}
++
++WINEMETAL_API void
++MTLAccelerationStructureCommandEncoder_build(obj_handle_t encoder, obj_handle_t structure, const struct WMTAccelInfo *info,
++                                             obj_handle_t scratch_buffer, uint64_t scratch_offset) {
++  struct unixcall_accel_build params;
++  params.encoder = encoder;
++  params.structure = structure;
++  params.info = PtrToUInt64(info);
++  params.scratch = scratch_buffer;
++  params.scratch_offset = scratch_offset;
++  UNIX_CALL(164, &params);
++}
++
+ WINEMETAL_API obj_handle_t
+ MTLLibrary_newFunction(obj_handle_t library, const char *name) {
+   struct unixcall_generic_obj_uint64_obj_ret params;
+diff -ruN a/src/winemetal/winemetal_thunks.h b/src/winemetal/winemetal_thunks.h
+--- a/src/winemetal/winemetal_thunks.h	2026-11-06 04:34:56
++++ b/src/winemetal/winemetal_thunks.h	2026-11-06 04:34:56
+@@ -148,6 +148,11 @@
+   obj_handle_t ret_library;
+ };
+ 
++/* Porthole, slots 161-164. */
++struct unixcall_accel_sizes { obj_handle_t device; uint64_t info; uint64_t out; };
++struct unixcall_new_accel { obj_handle_t device; uint64_t size; uint64_t ret_resource_id; obj_handle_t ret; };
++struct unixcall_accel_build { obj_handle_t encoder; obj_handle_t structure; uint64_t info; obj_handle_t scratch; uint64_t scratch_offset; };
++
+ /* Porthole, slot 160. */
+ struct unixcall_mtldevice_newlibrarysource {
+   obj_handle_t device;

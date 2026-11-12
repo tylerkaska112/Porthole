@@ -88,7 +88,7 @@ struct SteamOwnedList: View {
     @ObservedObject var store: SteamStore
     @EnvironmentObject var model: AppModel
     @State private var search = ""
-    @State private var filter = "all"            // all, installed, controller
+    @AppStorage("f4.filter.steam") private var filter = "all"            // all, installed, controller; kept for the next visit
     @ObservedObject private var controllers = SteamControllers.shared
     @ObservedObject private var network = NetworkStatus.shared
     @State private var notice: String?
@@ -171,7 +171,7 @@ struct SteamOwnedList: View {
     }
 
     private func downloadSelected() {
-        let games = selectedGames
+        let games = selectedGames.filter { $0.id != LosslessLicence.appID }    // Lossless Scaling has its own, sealed way (Stores > Software)
         var free = SteamGameTile.freeSpace() ?? Int64.max
         free = free == Int64.max ? free : free - 500_000_000
         var used: Int64 = 0, queued = 0, skipped = 0
@@ -215,7 +215,6 @@ struct SteamOwnedList: View {
     private var listScroll: some View {
         let shown = self.shown          // once per redraw
         return StorePage {
-            StoreSwitcher()
             if !network.isOnline { OfflineChip() }
             if store.refreshing { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
             else { IconPillButton(id: "so-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { Task { await store.refresh() } } }
@@ -277,17 +276,42 @@ struct SteamOwnedList: View {
                 try await SteamRuntimeInstaller.shared.prepare(prefix: AppModel.prefix) { text in await MainActor.run { clientStatus = text } }
                 clientInstalled = MadeiraDock.clientInstalled
                 clientStatus = clientInstalled ? nil : "The download finished but the client files are not in place."
-            } catch { clientStatus = error.localizedDescription }
+            } catch { clientStatus = ErrorText.plain(error) }
             clientBusy = false
         }
     }
 }
 
 /// One Steam game: the picture takes the glow; A opens its page; X installs / pauses / resumes without opening it.
+/// "Where should this game be downloaded?", asked when the SSD is connected: on the device or on the SSD.
+struct InstallLocationDialog: ViewModifier {
+    @Binding var isPresented: Bool
+    let gameName: String
+    let choose: (String) -> Void
+    @ObservedObject private var storage = ExternalLibrary.shared
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Where should \(gameName) be downloaded?", isPresented: $isPresented, titleVisibility: .visible) {
+            Button("On this device") { choose(SteamStorageLibrary.internalID) }
+            if let ssd = storage.external { Button("On \(ssd.name)") { choose(ssd.id) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Settings > Steam can stop this question and always use one place.")
+        }
+    }
+}
+
+extension View {
+    func installLocationDialog(isPresented: Binding<Bool>, gameName: String, choose: @escaping (String) -> Void) -> some View {
+        modifier(InstallLocationDialog(isPresented: isPresented, gameName: gameName, choose: choose))
+    }
+}
+
 struct SteamGameTile: View {
     @ObservedObject var store: SteamStore
     let game: SteamStore.Owned
     @Binding var notice: String?
+    @State private var askingWhere = false
     var selecting = false
     var selected = false
     var selectable = true
@@ -335,6 +359,7 @@ struct SteamGameTile: View {
             }
             .padding(.horizontal, 4)
         }
+        .installLocationDialog(isPresented: $askingWhere, gameName: game.name) { begin(to: $0) }
     }
 
     /// One badge on the picture, only when there is something to say: a download in progress, an update, or that it is installed.
@@ -389,11 +414,19 @@ struct SteamGameTile: View {
 
     private func start() {
         notice = nil
-        if game.sizeBytes > 0, let free = Self.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
+        if store.needsLocationChoice(game.id) { askingWhere = true; return }
+        begin(to: nil)
+    }
+
+    /// `library` is the answer to "where": nil when nobody was asked (an install keeps its place, else Settings decides).
+    private func begin(to library: String?) {
+        notice = nil
+        if store.destination(for: game.id, chosen: library) == SteamStorageLibrary.internalID,
+           game.sizeBytes > 0, let free = Self.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
             notice = "Not enough free space for \(game.name): it needs about \(Self.size(game.diskBytes ?? game.sizeBytes)) on the device and it has \(Self.size(UInt64(free)))."
             return
         }
-        store.install(game.id)
+        store.install(game.id, to: library)
     }
 
     private func progressText(_ p: SteamDownloadProgress) -> String {

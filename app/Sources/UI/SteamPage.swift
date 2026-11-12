@@ -19,6 +19,7 @@ struct SteamGamePage: View {
     @State private var page: SteamStorePage?
     @State private var loading = true
     @State private var notice: String?
+    @State private var askingWhere = false
     @State private var fullAbout = false
     @State private var viewing: Int?
     @State private var reading: Reading?
@@ -108,6 +109,7 @@ struct SteamGamePage: View {
             CompatGameSheet(gameID: "steam:\(game.id)", title: game.name, game: libraryGame, scope: reportsScope) { showReports = false }.environmentObject(model)
         }
         .sheet(item: $writing) { ReportSheet(game: $0).environmentObject(model).preferredColorScheme(Theme.scheme) }
+        .installLocationDialog(isPresented: $askingWhere, gameName: game.name) { begin(to: $0) }
         .confirm("Remove \(game.name)?", message: "This deletes the game's files from the device. You can download it again.", confirmTitle: "Delete files", destructive: true, isPresented: $confirmRemove) {
             store.uninstall(game); for g in model.games where g.steamAppID == game.id { model.remove(g) }
         }
@@ -206,6 +208,9 @@ struct SteamGamePage: View {
                             if store.addToLibrary(game) { notice = nil } else { notice = store.error }
                         }
                     }
+                } else if game.id == LosslessLicence.appID {
+                    // Not installed like a game: its page checks the licence and keeps the one file it needs sealed.
+                    PillButton(id: "sp-main", title: "Set up Lossless Scaling", symbol: "wand.and.rays", style: .primary) { router.storesSelection = .softwareItem("lossless-scaling") }
                 } else {
                     PillButton(id: "sp-main", title: game.sizeBytes > 0 ? "Install \u{00B7} \(SteamGameTile.size(game.sizeBytes))" : "Install", symbol: "arrow.down.circle.fill", style: .primary) { start() }
                 }
@@ -215,7 +220,9 @@ struct SteamGamePage: View {
                 case .active: TileProgress(value: d.progress.fraction); Text(progressText(d.progress)).font(.caption).foregroundStyle(Theme.textDim)
                 case .queued: Text("Waiting\u{2026}").font(.caption).foregroundStyle(Theme.textDim)
                 case .paused: TileProgress(value: d.progress.fraction, paused: true); Text("Paused").font(.caption).foregroundStyle(Theme.textDim)
-                case .failed(let why): Text(why).font(.caption).foregroundStyle(Theme.bad)
+                case .failed(let why):
+                    Text(why).font(.caption).foregroundStyle(Theme.bad)
+                    ErrorHelpButton(message: why)
                 }
             }
             if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.warn) }
@@ -364,11 +371,19 @@ struct SteamGamePage: View {
 
     private func start() {
         notice = nil
-        if game.sizeBytes > 0, let free = SteamGameTile.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
+        if store.needsLocationChoice(game.id) { askingWhere = true; return }
+        begin(to: nil)
+    }
+
+    /// `library` is the answer to "where": nil when nobody was asked (an install keeps its place, else Settings decides).
+    private func begin(to library: String?) {
+        notice = nil
+        if store.destination(for: game.id, chosen: library) == SteamStorageLibrary.internalID,
+           game.sizeBytes > 0, let free = SteamGameTile.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
             notice = "Not enough free space: it needs about \(SteamGameTile.size(game.diskBytes ?? game.sizeBytes)) on the device and it has \(SteamGameTile.size(UInt64(free)))."
             return
         }
-        store.install(game.id)
+        store.install(game.id, to: library)
     }
 
     private func progressText(_ p: SteamDownloadProgress) -> String {

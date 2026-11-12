@@ -74,7 +74,7 @@ enum SteamInputConfig {
             if enabled, playStation, SteamSDL3.installed,
                let updated = setting("SteamController_PS4Support", "1", path: ["installconfigstore", "software", "valve", "steam"], in: text) {
                 do { try Data(updated.utf8).write(to: config, options: .atomic); changed = true; log("[steam-input] SteamController_PS4Support = 1 written to config.vdf") }
-                catch { log("[steam-input] config.vdf not written: \(error.localizedDescription)") }
+                catch { log("[steam-input] config.vdf not written: \(ErrorText.plain(error))") }
             }
         } else { log("[steam-input] no config.vdf yet (Steam has not run)") }
         // Where else the switches might live: the account files. Looked at, not changed.

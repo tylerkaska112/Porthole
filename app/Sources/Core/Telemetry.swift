@@ -159,15 +159,19 @@ final class Telemetry {
         pressureSource = source
     }
 
+    /// The memory over the run so far. Written when the run ends and once a minute while it goes on, so a run that iOS ends still leaves its latest figures in the log
+    /// (the Last time card reads the newest one).
+    private func memorySummaryText() -> String {
+        String(format: "[mem-summary] %d min: peak app %.0f MB, peak gpu %.0f MB, least free %.0f MB; %d s under 1 GB free, %d s under 500 MB; %d pressure events, malloc gave back %d MB",
+               ticks / 60, peakFootprintMB, peakGPUMB, minFreeMB == .greatestFiniteMagnitude ? 0 : minFreeMB,
+               secondsBelow1GB, secondsBelow500MB, pressureEvents, relieved >> 20)
+    }
+
     func stop() {
         timer?.invalidate(); timer = nil; if gpuMeterOn { madeira_gpu_meter_enable(0); gpuMeterOn = false }
         Task { @MainActor in CPUClampMonitor.shared.stop() }
         pressureSource?.cancel(); pressureSource = nil
-        if ticks > 0 {
-            LogStore.shared.log(String(format: "[mem-summary] %d min: peak app %.0f MB, peak gpu %.0f MB, least free %.0f MB; %d s under 1 GB free, %d s under 500 MB; %d pressure events, malloc gave back %d MB",
-                                       ticks / 60, peakFootprintMB, peakGPUMB, minFreeMB == .greatestFiniteMagnitude ? 0 : minFreeMB,
-                                       secondsBelow1GB, secondsBelow500MB, pressureEvents, relieved >> 20))
-        }
+        if ticks > 0 { LogStore.shared.log(memorySummaryText()) }
     }
 
     private func sample() {
@@ -224,6 +228,7 @@ final class Telemetry {
         ticks += 1
         if ticks % 60 == 0 { onCheckpoint?(sessionStats()) }
         if ticks % 5 == 0 { appendCSV(s.csvLine) }
+        if ticks % 60 == 0 { LogStore.shared.log(memorySummaryText()) }
         if ticks % 15 == 0 { LogStore.shared.log("[telemetry] " + s.compact + String(format: " | free %.0f MB | gpu %.0f MB | %@", s.availableMB, s.gpuMB, s.mode)) }
         onSample?(s)
     }
@@ -262,6 +267,19 @@ final class Telemetry {
         let low = sorted.isEmpty ? nil : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.05))]
         return CompatSessionStats(fpsAvg: average.map { ($0 * 10).rounded() / 10 }, fpsLow: low.map { ($0 * 10).rounded() / 10 },
                                   minutes: Int(Date().timeIntervalSince(sessionStart) / 60), thermal: Self.heatNames[sessionHeat], samples: sorted.count)
+    }
+
+    /// One line per run for comparing builds and settings (the benchmark games): the same numbers every time, with the build and the graphics choices in effect. Nil when the game drew nothing.
+    func benchmarkLine(game: String, settings: String) -> String? {
+        guard !sessionFPS.isEmpty else { return nil }
+        let sorted = sessionFPS.sorted()
+        func low(_ share: Double) -> Double { sorted[min(sorted.count - 1, Int(Double(sorted.count) * share))] }
+        let average = sorted.reduce(0, +) / Double(sorted.count)
+        let info = Bundle.main.infoDictionary
+        let build = "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+        return String(format: "[benchmark] game=\"%@\" build=%@ engine=%@ seconds=%d fps-avg=%.1f fps-1pct-low=%.1f fps-5pct-low=%.1f fps-min=%.1f peak-app-mb=%.0f peak-gpu-mb=%.0f least-free-mb=%.0f heat=%@ | %@",
+                      game, build, CompatEngine.id, Int(Date().timeIntervalSince(sessionStart)), average, low(0.01), low(0.05), sorted[0], peakFootprintMB, peakGPUMB,
+                      minFreeMB == .greatestFiniteMagnitude ? 0 : minFreeMB, Self.heatNames[sessionHeat], settings)
     }
 
     // MARK: Measurements

@@ -88,7 +88,6 @@ struct AmazonOwnedList: View {
 
     var body: some View {
         StorePage {
-            StoreSwitcher()
             if !network.isOnline { OfflineChip() }
             if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
             else { IconPillButton(id: "am-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
@@ -157,6 +156,7 @@ struct AmazonGameSheet: View {
             }
         case .failed(let why)?:
             Label(why, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.red)
+            ErrorHelpButton(message: why)
             HStack {
                 button("Try again", symbol: "arrow.clockwise", prominent: true) { installer.install(game) }
                 button("Remove", symbol: "trash", role: .destructive) { installer.cancel(game.id) }

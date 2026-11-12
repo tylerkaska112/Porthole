@@ -82,7 +82,7 @@ struct EASignInView: View {
                 dismiss()
             } catch {
                 busy = false
-                failure = error.localizedDescription
+                failure = ErrorText.plain(error)
             }
         }
     }

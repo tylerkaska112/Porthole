@@ -45,9 +45,17 @@ struct StoresHubView: View {
     let downloadsSummary: String
     /// 0...1 while something is downloading.
     let downloadsFraction: Double?
+    /// The Software card: what is installed, and 0...1 while one is coming down.
+    var softwareSummary = "Blender and other programs, downloaded when you want them"
+    var softwareFraction: Double?
     let open: (GameStore) -> Void
     let openAll: () -> Void
     let openDownloads: () -> Void
+    var openSoftware: () -> Void = {}
+    /// Stores the person hid (they are not among `cards`), the long-press "Hide" on a card, and the way to get them back.
+    var hiddenStores: [GameStore] = []
+    var hide: (GameStore) -> Void = { _ in }
+    var showHidden: () -> Void = {}
 
     private var connected: Int { cards.filter(\.signedIn).count }
     @Environment(\.verticalSizeClass) private var vSize
@@ -61,6 +69,11 @@ struct StoresHubView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], alignment: .leading, spacing: 14) {
                 ForEach(cards) { card in storeCard(card).festiveCardSitter(enabled: card.store == .steam) }
             }
+            if cards.isEmpty && !hiddenStores.isEmpty {
+                Text("Every store is hidden. Show the ones you use to see their libraries here.").font(.system(size: 14, design: .rounded)).foregroundStyle(Theme.textDim)
+            }
+            softwareCard
+            if !hiddenStores.isEmpty { hiddenRow }
             Text("More stores will show up here as Porthole learns them.").font(.footnote).foregroundStyle(Theme.textDim).padding(.top, 2)
         }
     }
@@ -75,6 +88,18 @@ struct StoresHubView: View {
                 .font(.system(size: 15, design: .rounded)).foregroundStyle(Theme.textDim)
         }
         .padding(.bottom, 2)
+    }
+
+    /// "3 stores hidden: Amazon Games, EA app" with the way back to Settings > Stores, where each can be shown again.
+    private var hiddenRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "eye.slash.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.textDim)
+            Text("\(hiddenStores.count) hidden: \(hiddenStores.map(\.title).joined(separator: ", "))")
+                .font(.system(size: 13, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(2)
+            Spacer(minLength: 6)
+            PillButton(id: "stores-show-hidden", title: "Show", symbol: "eye", action: showHidden)
+        }
+        .padding(.horizontal, 4)
     }
 
     private var allCard: some View {
@@ -135,7 +160,7 @@ struct StoresHubView: View {
                 }
                 if card.signedIn { library(card, tint: tint) } else { signInHint }
             }
-            .padding(16).frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+            .padding(16).frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
             .background {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(LinearGradient(colors: [tint.opacity(card.signedIn ? 0.24 : 0.1), Theme.panel], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -145,7 +170,11 @@ struct StoresHubView: View {
         }
         .buttonStyle(CardPress())
         .focusTarget("store-\(card.store.rawValue)", radius: 22, scale: 1.012) { open(card.store) }
+        .contextMenu {
+            Button { hide(card.store) } label: { Label("Hide \(card.store.title)", systemImage: "eye.slash") }
+        }
         .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Hide \(card.store.title)") { hide(card.store) }
     }
 
     /// How much of the library is on the device, and a download in progress.
@@ -177,6 +206,32 @@ struct StoresHubView: View {
             Text("Sign in").font(.system(size: 13, weight: .heavy, design: .rounded)).foregroundStyle(Theme.onAccent)
                 .padding(.horizontal, 12).padding(.vertical, 5).background(Theme.accentGradient, in: Capsule())
         }
+    }
+
+    private var softwareCard: some View {
+        Button(action: openSoftware) {
+            HStack(spacing: 14) {
+                Image(systemName: "shippingbox.fill").font(.system(size: 24, weight: .bold)).foregroundStyle(Theme.accentGradient).frame(width: 46, height: 46)
+                    .background(Theme.accent.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Software").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+                    Text(softwareSummary).font(.system(size: 13, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(2)
+                    if let softwareFraction {
+                        Capsule().fill(.white.opacity(0.1)).frame(height: 5)
+                            .overlay(alignment: .leading) { GeometryReader { geo in Capsule().fill(Theme.accentGradient).frame(width: max(5, geo.size.width * softwareFraction)) } }
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.subheadline.weight(.bold)).foregroundStyle(Theme.textDim)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(softwareFraction == nil ? Theme.line : Theme.accent.opacity(0.5), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(CardPress())
+        .focusTarget("store-software", radius: 20, scale: 1.012, action: openSoftware)
+        .accessibilityElement(children: .combine)
     }
 
     private var downloadsCard: some View {

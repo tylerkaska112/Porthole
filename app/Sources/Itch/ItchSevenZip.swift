@@ -119,7 +119,8 @@ enum ItchSevenZip {
         }
 
         var names: [String?] = []
-        var seen = Set<String>()
+        var seen = Set<String>()          // files
+        var seenFolders = Set<String>()   // folders (a file and a folder that differ only by case are one name on drive_c)
         for (item, path) in paths.enumerated() {
             guard var relative = path else { names.append(nil); continue }
             let directory = Int(i7z_flags(z, UInt32(item))) & I7Z_ITEM_DIR != 0
@@ -129,7 +130,14 @@ enum ItchSevenZip {
                 relative = String(relative.dropFirst(prefix.count))
             }
             if relative.isEmpty { names.append(nil); continue }
-            if !seen.insert(relative.lowercased()).inserted, !directory { throw ItchZipError.invalid("This .7z holds two files with the same name (\(relative.prefix(40))).") }
+            let key = relative.lowercased()
+            if directory {
+                if seen.contains(key) { throw ItchZipError.invalid("This .7z holds a file and a folder with the same name (\(relative.prefix(40))).") }
+                seenFolders.insert(key)
+            } else {
+                if seenFolders.contains(key) { throw ItchZipError.invalid("This .7z holds a file and a folder with the same name (\(relative.prefix(40))).") }
+                if !seen.insert(key).inserted { throw ItchZipError.invalid("This .7z holds two files with the same name (\(relative.prefix(40))).") }
+            }
             names.append(relative)
         }
 
@@ -174,6 +182,8 @@ enum ItchSevenZip {
         var unpacked = 0
         for archive in archives {
             try Task.checkCancellation()
+            // An earlier archive's files may have replaced this one (same name): there is nothing left to unpack at the old place.
+            guard fm.fileExists(atPath: archive.path) else { continue }
             let parent = archive.deletingLastPathComponent()
             let inner = parent.appendingPathComponent(".porthole-inner", isDirectory: true)
             try? fm.removeItem(at: inner)

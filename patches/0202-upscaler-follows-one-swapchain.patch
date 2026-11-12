@@ -1,0 +1,33 @@
+diff --git a/madeira-d3d12/src/pe/madeira_d3d12.c b/madeira-d3d12/src/pe/madeira_d3d12.c
+index 90144e6..de0be6e 100644
+--- a/madeira-d3d12/src/pe/madeira_d3d12.c
++++ b/madeira-d3d12/src/pe/madeira_d3d12.c
+@@ -21589,6 +21589,7 @@ static double g_up_factor = 2.0;
+ static unsigned g_up_fw, g_up_fh;
+ static int g_up_method;               /* 0 MetalFX, 1 Lossless Scaling LS1, 2 LS1 performance (through the bridge in d3d11.dll; MetalFX when that cannot) */
+ static int g_up_level = 2;            /* the Lossless Scaling sharpness, 0..4 */
++static const void *g_up_sc;           /* the one swap chain that Lossless Scaling's upscaler follows (others, such as a launcher's probe window, are left to MetalFX); pointer compare only */
+ static int g_up_ls_state;             /* 0 not tried yet, 1 the Lossless Scaling upscaler works, -1 it was given up (MetalFX) */
+ static char g_up_ls_msg[200];
+ static struct { double factor; UINT w, h, ow, oh; int valid; } g_up_info;
+@@ -21890,6 +21891,7 @@ static ULONG STDMETHODCALLTYPE swap_Release(IDXGISwapChain4 *T) {
+         t1 = mad_tick();
+         mad_swap_release_buffers(s);
+         if (g_layer_cfg_owner == s) g_layer_cfg_owner = NULL;   /* the next Present re-applies its own layer settings */
++        if (g_up_sc == (const void *)s) g_up_sc = NULL;          /* the upscaler follows the next large swap chain */
+         if (s->view) ReleaseMetalView(s->view);
+         if (s->latency_event) CloseHandle(s->latency_event);
+         if (s->factory) IDXGIFactory1_Release(s->factory);
+@@ -22137,6 +22139,12 @@ static int mad_up_before(struct mad_swapchain *s, struct mad_resource *src, stru
+     int ok;
+     if (g_up_method < 1 || !s->fx_w || !s->fx_h || g_up_ls_state < 0 || g_ups.state < 0) return 0;
+     if (!src || !src->texture) return 0;
++    if (g_up_sc && g_up_sc != (const void *)s) return 0;
++    if (!g_up_sc) {
++        if (src->width < 640 || src->height < 360) return 0;   /* a probe or helper window */
++        g_up_sc = (const void *)s;
++        d3d12_log("[ls-up] Direct3D 12: the upscaler follows swap chain %p (%ux%u)\n", (void *)s, (unsigned)src->width, (unsigned)src->height);
++    }
+     if (g_ups.state == 0) {
+         HMODULE m = LoadLibraryA("d3d11.dll");
+         if (m) {

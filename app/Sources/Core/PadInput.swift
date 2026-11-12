@@ -28,6 +28,9 @@ final class PadInput: @unchecked Sendable {
     private var hidBattery: (level: UInt8, charging: UInt8) = (UInt8(WINIOS_HIDPAD_BATTERY_UNKNOWN), 0)
     private var hidBatteryCountdown = 0
     private var published = [Bool](repeating: false, count: 4), hidPublished = false
+    // The on-screen controller (VirtualPadView): player 1 as an Xbox pad while no real controller is connected, and merged into a real one's when there is.
+    private let virtualLock = NSLock()
+    private var virtualSample: VirtualPadSample?
     private var auto: PadAuto?                          // automatic mode: Xbox pad until the game proves it does not read it (PadAuto)
     private var autoKeys: [String: String] = [:]        // the keyboard-and-mouse binds automatic mode switches to
     private var autoGameID: UUID?
@@ -115,7 +118,7 @@ final class PadInput: @unchecked Sendable {
         observe()
         refreshControllers()
         // Automatic mode: the game's controller mode is not set, nothing else decides, and keyboard and mouse is available.
-        let isAuto = Self.keyboardMouseAvailable && binds == nil && (!hid || identityHID) && game?.engine?.controllerMode == nil
+        let isAuto = Self.keyboardMouseAvailable && binds == nil && (!hid || identityHID) && game?.engine?.controllerMode == nil && game?.virtualPad != true
         var automatic: PadAuto?
         var startBinds = binds
         if isAuto {
@@ -299,6 +302,7 @@ final class PadInput: @unchecked Sendable {
         applyAssistSensors(nil); lastAssistRequest = nil
         queue.async { [self] in
             assist = nil; turboState.reset(); gyroMouseCarry.reset()
+            virtualLock.lock(); virtualSample = nil; virtualLock.unlock()
             active = false; captured = false; chord = PadChord(); releaseMask = PadReleaseMask()
             hidAvailable = false; autoHID = false
             hidReadyLock.lock(); hidReadyValue = false; hidReadyLock.unlock()
@@ -359,6 +363,13 @@ final class PadInput: @unchecked Sendable {
                 clearPad(i)
                 LogStore.shared.log("[pad] player \(i + 1) disconnected")
             }
+            // A controller that stayed connected gets its live profile again: after Control Center or the app switcher a player's pad stayed dead in the game until the app was
+            // restarted (report #164), with the controller still listed as connected and the game still asking for it. The profile held from before may have stopped updating.
+            var renewed = 0
+            for (controller, profile) in live {
+                if let i = controllers.firstIndex(where: { $0 === controller }), profiles[i] !== profile { profiles[i] = profile; renewed += 1 }
+            }
+            if renewed > 0 { LogStore.shared.log("[pad] \(renewed) controller profile(s) renewed after coming back to the app") }
             for (controller, profile) in live where !controllers.contains(where: { $0 === controller }) {
                 guard let i = controllers.firstIndex(where: { $0 == nil }) else { continue }
                 controllers[i] = controller; profiles[i] = profile
@@ -372,7 +383,7 @@ final class PadInput: @unchecked Sendable {
     private func updateTimer() {
         // Gyro aim moving the mouse needs the poll even with no controller (the device's own gyro).
         let mouseGyro = assist.map { $0.gyro && $0.output != .stick } ?? false
-        let needed = active && (profiles.contains { $0 != nil } || mouseGyro)
+        let needed = active && (profiles.contains { $0 != nil } || mouseGyro || virtualSnapshot() != nil)
         if !needed { timer?.cancel(); timer = nil; return }
         guard timer == nil else { return }
         let source = DispatchSource.makeTimerSource(queue: queue)
@@ -527,6 +538,8 @@ final class PadInput: @unchecked Sendable {
                 if i == 0, keyboardMouse != nil { releaseAll() }
                 // No controller for the game: gyro aim can still move the mouse (with nothing to hold, only "Always" does).
                 if i == 0, active, !paused, let assist, gyroMouse(padPresent: false) { gyroToMouse(assist, held: assist.when == .always) }
+                // The on-screen controller is the game's pad.
+                if i == 0, active, !paused, keyboardMouse == nil, let v = virtualSnapshot() { publishVirtual(v); continue }
                 clearPad(i)
                 if i == 0 { clearHID() }
                 continue
@@ -579,6 +592,13 @@ final class PadInput: @unchecked Sendable {
                 state.buttons = out.buttons; state.left_trigger = out.lt; state.right_trigger = out.rt
             }
             if i == 0 { applyAssist(&state, mouse: gyroMouse(padPresent: true)) }
+            if i == 0, let v = virtualSnapshot() {
+                // A thumb on the on-screen controller next to a real controller: both count (the real one's buttons are not remapped for the on-screen one, which has Xbox positions).
+                let real = VirtualPadSample(buttons: state.buttons, leftTrigger: state.left_trigger, rightTrigger: state.right_trigger, lx: state.lx, ly: state.ly, rx: state.rx, ry: state.ry)
+                let m = VirtualPadSample.merged(real, with: v)
+                state.buttons = m.buttons; state.left_trigger = m.leftTrigger; state.right_trigger = m.rightTrigger
+                state.lx = m.lx; state.ly = m.ly; state.rx = m.rx; state.ry = m.ry
+            }
             if i == 0, hidActive {
                 publishHID(state, pad: pad)
                 if !hidKeepsXInput { clearPad(0); continue }
@@ -586,6 +606,30 @@ final class PadInput: @unchecked Sendable {
             publishBattery(i, pad: pad)
             winios_gamepad_set_state(Int32(i), &state); published[i] = true
         }
+    }
+
+    // MARK: The on-screen controller
+
+    /// The on-screen controller's state (nil: it is off, so there is no such controller). Called from the main thread whenever a thumb moves.
+    func setVirtual(_ sample: VirtualPadSample?) {
+        virtualLock.lock(); virtualSample = sample; virtualLock.unlock()
+        queue.async { [self] in
+            if sample == nil, profiles[0] == nil, published[0] { clearPad(0) }
+            updateTimer(); self.sample()
+        }
+    }
+
+    private func virtualSnapshot() -> VirtualPadSample? { virtualLock.lock(); defer { virtualLock.unlock() }; return virtualSample }
+
+    /// Player 1 from the on-screen controller alone (no real controller): the menu being open shows the game a pad with nothing pressed, as for a real one.
+    private func publishVirtual(_ v: VirtualPadSample) {
+        var state = winios_gamepad()
+        state.connected = 1
+        if !captured {
+            state.buttons = v.buttons; state.left_trigger = v.leftTrigger; state.right_trigger = v.rightTrigger
+            state.lx = v.lx; state.ly = v.ly; state.rx = v.rx; state.ry = v.ry
+        }
+        winios_gamepad_set_state(0, &state); published[0] = true
     }
 
     /// Player 1 as the HID controller: the Xbox sample plus what only a HID report carries (the digital trigger bits, the touchpad click, the battery).

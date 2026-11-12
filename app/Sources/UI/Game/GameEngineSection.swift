@@ -13,6 +13,7 @@ struct GameEngineSection: View {
     @State private var shareItems: [Any]?
     @State private var workText = ""
     @State private var loaded = false
+    @ObservedObject private var lossless = LosslessScaling.shared
 
     private var game: Game? { model.games.first { $0.id == gameID } }
 
@@ -23,8 +24,24 @@ struct GameEngineSection: View {
                 SettingsGroup(title: "Compatibility") {
                     OverrideRow(id: "ge-avx", symbol: "cpu", title: "AVX and AVX2", info: "Lets the translator run programs built for AVX processors through its 128-bit emulation. A game that closes the moment it starts, or after a message about unsupported instructions, may need it. Only 64-bit games. Costs some speed.",
                                 value: e.avx, globalText: "Off", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.avx = v } }
-                    OverrideRow(id: "ge-fg", symbol: "wand.and.rays", title: "Frame generation (experimental)", info: "Shows a MetalFX-generated picture between every two frames the game draws, so the screen can show twice the game\u{2019}s frame rate. It needs a screen that can run at least twice as fast as the game: on a 120 Hz screen a game at 60 FPS or less (the screen is held at its top rate while it is on). A game faster than that, or a moment when the screen\u{2019}s picture queue is full, is shown as it is. It adds about half a game frame of delay and can smear edges and the on-screen controls. Frame limits do not apply while it is on. Needs iOS 26.",
-                                value: e.frameGeneration, globalText: "Off", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.frameGeneration = v } }
+                    OverrideRow(id: "ge-upscale", symbol: "arrow.up.left.and.arrow.down.right.circle", title: "Upscaling (MetalFX)", info: "Enlarges the picture the game draws with MetalFX\u{2019}s spatial scaler instead of the screen\u{2019}s plain stretch. \u{201C}To the screen\u{201D} works out the factor itself: it enlarges the game\u{2019}s picture to the screen\u{2019}s own pixels (at most 2\u{00D7}) and does nothing when the game already draws about as large as the screen. It pays off when the game draws smaller than the screen: set this game\u{2019}s Resolution (Settings or the game\u{2019}s Display row) to what you want it to draw at, for example 1280\u{00D7}720, and the game gets faster while the picture stays sharp. A fixed factor is there for testing. Direct3D 11 and 12 games. This is what the game starts with: the in-game menu (Upscaling) changes it while the game runs, and remembers the choice for this game. It works together with Lossless Scaling frame generation: the generated pictures are enlarged the same way. Needs a device with MetalFX.",
+                                value: e.upscaleFactor, globalText: "Off", options: [(0.0, "To the screen"), (1.5, "1.5\u{00D7}"), (2.0, "2\u{00D7}")]) { v in change(g) { $0.upscaleFactor = v } }
+                    if lossless.usable, e.upscaleFactor != nil {
+                        OverrideRow(id: "ge-upmethod", symbol: "wand.and.rays", title: "Upscaling method", info: "What enlarges the picture. MetalFX is Apple\u{2019}s spatial scaler. Lossless Scaling LS1 is the upscaler of your copy of Lossless Scaling: a small neural network that redraws the edges; the performance version uses a lighter network. Direct3D 11 and 12 games. The in-game menu changes it while the game runs.",
+                                    value: e.upscaleMethod, globalText: "MetalFX", options: [(0, "MetalFX"), (1, "Lossless Scaling LS1"), (2, "Lossless Scaling LS1 performance")]) { v in change(g) { $0.upscaleMethod = v == 0 ? nil : v } }
+                        if (e.upscaleMethod ?? 0) > 0 {
+                            OverrideRow(id: "ge-upsharp", symbol: "slider.horizontal.3", title: "Upscaler sharpness", info: "1 is the softest, 5 the sharpest (and can look over-processed).",
+                                        value: e.upscaleSharpness, globalText: "3", options: [(1, "1"), (2, "2"), (3, "3"), (4, "4"), (5, "5")]) { v in change(g) { $0.upscaleSharpness = v } }
+                        }
+                    }
+                    if lossless.usable {
+                        OverrideRow(id: "ge-lsfg", symbol: "sparkles.rectangle.stack", title: "Lossless Scaling frame generation", info: "Makes the pictures between the game\u{2019}s own frames with Lossless Scaling\u{2019}s motion-estimation shaders (from your copy of the program, set up under Stores > Lossless Scaling), so the screen can show more frames than the game draws. Like the MetalFX version it needs a screen that can run faster than the game (on a 120 Hz screen a game at 60 FPS or less), shows the game as it is when it cannot, adds about half a game frame of delay and works for Direct3D 11 games and, since 1.3.92, Direct3D 12 games too (they need more memory: the passes keep a few full-size pictures). The first seconds of a game stutter while the shaders are prepared. Not together with the MetalFX frame generation (this one wins). Experimental.",
+                                    value: e.losslessScaling, globalText: "Off", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.losslessScaling = v } }
+                        if e.losslessScaling == true {
+                            OverrideRow(id: "ge-lsfg-n", symbol: "plus.rectangle.on.rectangle", title: "Frames added between two", info: "How many pictures are made between two of the game\u{2019}s own. Each one needs its own run of the passes, so 2 and 3 cost much more graphics work than 1 and slow the game itself down. More frames also need a faster screen.",
+                                        value: e.losslessGenerated, globalText: "1", options: [(1, "1"), (2, "2"), (3, "3")]) { v in change(g) { $0.losslessGenerated = v } }
+                        }
+                    }
                     OverrideRow(id: "ge-cpu", symbol: "memorychip", title: "CPU cores reported", info: "How many processor cores this game is told about. Some games size their worker threads from it.",
                                 value: e.cpuCount, globalText: EngineOptions.value("cpu-count").isEmpty ? "the device" : EngineOptions.value("cpu-count"),
                                 options: [(1, "1"), (2, "2"), (4, "4"), (6, "6")]) { v in change(g) { $0.cpuCount = v } }
@@ -37,12 +54,40 @@ struct GameEngineSection: View {
                     OverrideRow(id: "ge-oversize", symbol: "arrow.up.left.and.arrow.down.right", title: "Large memory reservations", info: "Turn this on when a game quits at start because it reserves far more address space than iOS gives the app (64 GB or more, as Final Fantasy Tactics - The Ivalice Chronicles does). Porthole then really backs 16 GB of it and tells the game it got everything. Off (the default) leaves such a reservation to fail, as before.",
                                 value: e.largeReservations, globalText: "Off", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.largeReservations = v } }
                 }
+                SettingsGroup(title: "Graphics route (Vulkan, experimental)", note: "Which layer turns this game's Direct3D into the GPU's own language. Each row starts on Default, which is the normal route (DXMT and madeira-d3d12, both on Metal). Try a Vulkan route for a game that draws wrongly or crashes, or to compare speed.") {
+                    OverrideRow(id: "ge-d3d11", symbol: "cube.fill", title: "Direct3D 10/11 runtime", info: "Default is DXMT, which runs Direct3D 10 and 11 on Metal. DXVK runs them on Vulkan instead (through MoltenVK or KosmicKrisp). Experimental and off unless you choose it; 64-bit games only. DXVK is used together with vkd3d-proton for Direct3D 12.",
+                                value: e.d3d11Route, globalText: EngineOptions.value("d3d11").isEmpty ? "DXMT (on Metal)" : EngineOptions.value("d3d11"), options: [("dxvk", "DXVK (on Vulkan)")]) { v in change(g) { $0.d3d11Route = v } }
+                    OverrideRow(id: "ge-d3d12", symbol: "square.3.layers.3d", title: "Direct3D 12 runtime", info: "Default is madeira-d3d12, which runs Direct3D 12 on Metal. vkd3d-proton runs it on Vulkan instead. Experimental and off unless you choose it; 64-bit games only.",
+                                value: e.d3d12Route, globalText: EngineOptions.value("d3d12").isEmpty ? "madeira-d3d12 (on Metal)" : EngineOptions.value("d3d12"), options: [("vkd3d", "vkd3d-proton (on Vulkan)")]) { v in change(g) { $0.d3d12Route = v } }
+                    OverrideRow(id: "ge-vulkan", symbol: "bolt.horizontal.fill", title: "Vulkan library", info: "The library the Vulkan routes (and OpenGL through Zink) use. MoltenVK is Khronos' translator and the default when Vulkan is needed. KosmicKrisp is Mesa's Vulkan 1.4 driver for Metal 4: it needs iOS 26 or later and a newer device, and may support more of what DXVK asks for.",
+                                value: e.vulkanLibrary, globalText: EngineOptions.value("vulkan").isEmpty ? "MoltenVK" : EngineOptions.value("vulkan"), options: [("moltenvk", "MoltenVK"), ("kosmickrisp", "KosmicKrisp (iOS 26+)")]) { v in change(g) { $0.vulkanLibrary = v } }
+                }
                 SettingsGroup(title: "Keyboard and mouse") {
                     OverrideRow(id: "ge-mouse-speed", symbol: "computermouse", title: "Mouse speed", info: "How fast the mouse turns this game's camera. 1\u{00D7} sends the mouse's own movement unchanged. Applies at once.",
                                 value: e.mouseSpeed, globalText: EngineOptions.value(InputSettings.sensKey).isEmpty ? "1\u{00D7}" : EngineOptions.value(InputSettings.sensKey) + "\u{00D7}",
                                 options: [(0.25, "0.25\u{00D7}"), (0.5, "0.5\u{00D7}"), (0.75, "0.75\u{00D7}"), (1.5, "1.5\u{00D7}"), (2.0, "2\u{00D7}"), (3.0, "3\u{00D7}"), (4.0, "4\u{00D7}"), (6.0, "6\u{00D7}")]) { v in change(g) { $0.mouseSpeed = v } }
                     OverrideRow(id: "ge-mouse-look", symbol: "viewfinder", title: "Always use the mouse to look", info: "For a game that turns the camera with the mouse but never says it hides its cursor: the mouse always moves the camera and the pointer is locked to the game (Ctrl+Alt+P frees it). Off lets the game's cursor decide.",
                                 value: e.mouseLook, globalText: EngineOptions.value(InputSettings.relativeKey) == "1" ? "On" : "the game decides", options: [(true, "On"), (false, "Off")]) { v in change(g) { $0.mouseLook = v } }
+                }
+                SettingsGroup(title: "On-screen controller", note: "For a game that needs a controller on a device that has none.") {
+                    ToggleRow(id: "ge-vpad", symbol: "gamecontroller", title: "Show a game controller on the screen",
+                              info: "Draws an Xbox controller over the game: two sticks (tap one to click it), a direction pad, A B X Y, both bumpers and triggers, View and Menu. The game sees an ordinary Xbox pad. The touch layouts are put away while it is on, and a real controller works with it. You can also switch it during the game: swipe in from the right edge for the menu, then Controls > On screen.",
+                              isOn: Binding(get: { g.virtualPad == true }, set: { on in AppModel.shared.update(g) { $0.virtualPad = on ? true : nil } }))
+                    if g.virtualPad == true {
+                        ChoiceRow(id: "ge-vpad-style", symbol: "gamecontroller.fill", title: "Controller type",
+                                  info: VirtualPadStyle.allCases.map { "\($0.title): \($0.detail)" }.joined(separator: "\n\n") + "\n\nA type brings its own look and its own layout (you can pick another layout below). The game always sees an Xbox pad.",
+                                  options: VirtualPadStyle.allCases.map { ($0, $0.title) },
+                                  selection: Binding(get: { VirtualPadStyle.style(game: g.virtualPadStyle, last: UserDefaults.standard.string(forKey: VirtualPadStyle.lastKey)) },
+                                                     set: { st in
+                                                         AppModel.shared.update(g) { $0.virtualPadStyle = st.rawValue; $0.virtualPadLayout = st.nativePreset.rawValue }
+                                                         UserDefaults.standard.set(st.rawValue, forKey: VirtualPadStyle.lastKey); UserDefaults.standard.set(st.nativePreset.rawValue, forKey: VirtualPadLayout.lastKey)
+                                                     }))
+                        ChoiceRow(id: "ge-vpad-layout", symbol: "rectangle.3.group", title: "Layout",
+                                  info: VirtualPadLayout.Preset.allCases.map { "\($0.title): \($0.detail)" }.joined(separator: "\n\n"),
+                                  options: VirtualPadLayout.Preset.allCases.map { ($0, $0.title) },
+                                  selection: Binding(get: { VirtualPadLayout.preset(game: g.virtualPadLayout, last: UserDefaults.standard.string(forKey: VirtualPadLayout.lastKey)) },
+                                                     set: { p in AppModel.shared.update(g) { $0.virtualPadLayout = p.rawValue }; UserDefaults.standard.set(p.rawValue, forKey: VirtualPadLayout.lastKey) }))
+                    }
                 }
                 if PadInput.keyboardMouseAvailable {
                     SettingsGroup(title: "Controller") {
@@ -256,8 +301,10 @@ struct GameConfigSheet: View {
                             .frame(minHeight: 220).padding(10)
                             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
-                        let n = MadeiraConfig.parse(text).count
+                        let parsed = MadeiraConfig.parse(text)
+                        let n = parsed.count
                         Text(n == 0 ? "No lines yet." : "\(n) line\(n == 1 ? "" : "s") will be used.").font(.footnote).foregroundStyle(Theme.textDim)
+                        EngineLineHelp(lines: parsed)
                     }
                     .padding(.horizontal, 24).frame(maxWidth: 680).frame(maxWidth: .infinity)
                 }
@@ -275,5 +322,39 @@ struct GameConfigSheet: View {
         guard let g = game else { return }
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         model.update(g) { var e = $0.engine ?? GameEngine(); e.config = t.isEmpty ? nil : t; $0.engine = e.isEmpty ? nil : e }
+    }
+}
+
+/// Under the engine lines editor: what each line typed there does, from the engine's own list of options, with a link to its page on the website. A line the engine
+/// does not know is said so (a typo does nothing, and nothing says so otherwise).
+struct EngineLineHelp: View {
+    let lines: [String: String]
+    
+    var body: some View {
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("What these lines do").font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+                ForEach(lines.keys.sorted(), id: \.self) { key in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(key).font(.system(size: 14, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text)
+                        if let option = EngineLineCatalog.byKey[key] {
+                            if !option.title.isEmpty { Text(option.title).font(.footnote.weight(.semibold)).foregroundStyle(Theme.textDim) }
+                            if !option.note.isEmpty { Text(option.note).font(.footnote).foregroundStyle(Theme.textDim) }
+                            if !option.defaultValue.isEmpty { Text("Default: \(option.defaultValue)").font(.caption).foregroundStyle(Theme.textDim) }
+                            if DocsLink.documentedEngineLines.contains(key) { Button { if let url = DocsLink.url(forEngineLine: key) { UIApplication.shared.open(url) } } label: {
+                                Label("Read more online", systemImage: "safari").font(.footnote.weight(.semibold)).foregroundStyle(Theme.accent)
+                            }.buttonStyle(.plain) }
+                        } else if key.hasPrefix("env.") {
+                            Text("An environment variable set for this game. It is not one of the engine's own options, so it is not described here.").font(.footnote).foregroundStyle(Theme.textDim)
+                        } else {
+                            Text("Not a line the engine knows. It does nothing: check the spelling.").font(.footnote).foregroundStyle(Theme.warn)
+                        }
+                    }
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            .padding(.top, 6)
+        }
     }
 }

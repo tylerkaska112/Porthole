@@ -176,9 +176,21 @@ struct LaunchView: View {
 
     /// How the game is being started, as one quiet line: Through Steam \u{00B7} 1280 \u{00D7} 720 \u{00B7} Balanced.
     private func chips(centered: Bool) -> some View {
-        Text(data.chips.map { $0.text.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: "  \u{00B7}  ")).font(.system(size: 13, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.5))
-            .multilineTextAlignment(centered ? .center : .leading).fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+        let texts = data.chips.map(\.text)
+        return ViewThatFits(in: .horizontal) {
+            // It fits on one line: the quiet version with dots between.
+            Text(texts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: "  \u{00B7}  "))
+                .font(.system(size: 13, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+            // It does not: small tags that wrap between items, so a dot never ends or starts a line.
+            FlowLayout(spacing: 6) {
+                ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
+                    Text(text).font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                        .padding(.horizontal, 9).padding(.vertical, 3).background(.white.opacity(0.07), in: Capsule())
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     /// Why the launch failed, in a card of its own: selectable, and it stays until it is closed.
@@ -194,7 +206,13 @@ struct LaunchView: View {
     }
 
     private var buttons: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { buttonItems }
+            VStack(alignment: .leading, spacing: 10) { buttonItems }
+        }
+    }
+
+    @ViewBuilder private var buttonItems: some View {
             PillButton(id: "launch-cancel", title: failed ? "Close" : (data.cleanCancel ? "Cancel" : "Stop game"), symbol: failed ? "xmark" : "stop.fill",
                        style: failed ? .glass : .danger, action: cancel)
             if let failure = data.failure {
@@ -205,7 +223,6 @@ struct LaunchView: View {
             } else if let showSteam {
                 PillButton(id: "launch-steam", title: "Show Steam window", symbol: "rectangle.on.rectangle", action: showSteam)
             }
-        }
     }
 
     // MARK: Small parts

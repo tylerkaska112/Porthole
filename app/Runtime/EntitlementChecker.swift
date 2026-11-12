@@ -16,6 +16,20 @@ private func _SecTaskCreateFromSelf(
     _ allocator: CFAllocator?
 ) -> SecTaskRef?
 
+/// The value of a string entitlement of this process's signature, or nil.
+func appEntitlementString(_ ent: String) -> String? {
+    guard let task = _SecTaskCreateFromSelf(nil) else { return nil }
+    defer { Unmanaged<CFTypeRef>.fromOpaque(UnsafeRawPointer(task)).release() }
+    return _SecTaskCopyValueForEntitlement(task, ent as NSString, nil)?.takeRetainedValue() as? String
+}
+
+/// Whether this process's code signature carries the entitlement at all, whatever its value.
+func appEntitlementPresent(_ ent: String) -> Bool {
+    guard let task = _SecTaskCreateFromSelf(nil) else { return false }
+    defer { Unmanaged<CFTypeRef>.fromOpaque(UnsafeRawPointer(task)).release() }
+    return _SecTaskCopyValueForEntitlement(task, ent as NSString, nil) != nil
+}
+
 func checkAppEntitlement(_ ent: String) -> Bool {
     guard let task = _SecTaskCreateFromSelf(nil) else { return false }
     // The manually declared Create/Copy APIs return caller-owned CF objects.
@@ -85,7 +99,7 @@ struct SigningStatus {
 /// says by itself which device and set-up produced it. No names, identifiers or
 /// account data: the model code, versions, sizes and switches only.
 enum DeviceDiagnostics {
-    private static func machine() -> String {
+    static func machine() -> String {
         var sysinfo = utsname()
         uname(&sysinfo)
         return withUnsafePointer(to: &sysinfo.machine) {
@@ -110,7 +124,7 @@ enum DeviceDiagnostics {
     }
     /// The kind and lifetime of the embedded provisioning profile and the
     /// entitlements it grants. A 7-day lifetime is a free developer account.
-    private static func profile() -> String {
+    static func profile() -> String {
         guard let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision"),
               let data = FileManager.default.contents(atPath: path),
               let start = data.range(of: Data("<?xml".utf8)),
@@ -135,7 +149,23 @@ enum DeviceDiagnostics {
             + " profile-increased-memory=\(grants("com.apple.developer.kernel.increased-memory-limit"))"
             + " profile-extended-va=\(grants("com.apple.developer.kernel.extended-virtual-addressing"))"
     }
-    private static func signing() -> String {
+    /// The names of the entitlements the profile grants, and whether its app id is a wildcard or this app's own id, so two installs of the same build can be compared line by line. Names only: no team id, no device ids.
+    static func profileKeys() -> String {
+        guard let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision"),
+              let data = FileManager.default.contents(atPath: path),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let object = try? PropertyListSerialization.propertyList(from: data.subdata(in: start.lowerBound..<end.upperBound), options: [], format: nil),
+              let plist = object as? [String: Any],
+              let granted = plist["Entitlements"] as? [String: Any] else { return "profile-keys=none" }
+        let appID = (granted["application-identifier"] as? String).map { id in
+            id.split(separator: ".", maxSplits: 1).dropFirst().first.map { $0 == "*" ? "wildcard" : "exact" } ?? "?"
+        } ?? "none"
+        let keys = granted.keys.filter { $0 != "application-identifier" && $0 != "com.apple.developer.team-identifier" && $0 != "keychain-access-groups" }.sorted()
+        let signed = keys.filter { appEntitlementPresent($0) }
+        return "app-id=\(appID) profile-keys=[\(keys.joined(separator: ","))] signed-with=[\(signed.joined(separator: ","))]"
+    }
+    static func signing() -> String {
         let status = SigningStatus.current
         guard status.known else { return "cs-flags=unknown debugger-attached=\(isDebuggerAttached() ? 1 : 0)" }
         return String(format: "cs-flags=0x%x get-task-allow=%d cs-debugged=%d debugger-attached=%d",

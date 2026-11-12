@@ -70,9 +70,9 @@ enum GuideCatalog {
     ])
 
     static let settings = Guide(id: "settings", title: "Settings", symbol: "gearshape.fill", steps: [
-        GuideStep(symbol: "gamecontroller.fill", title: "Play",
-                  text: "The picture, speed, sound and controls every game starts with. Each game's own page can change any of them for that game only.",
-                  art: .settings, action: .openSettings(.play)),
+        GuideStep(symbol: "gamecontroller.fill", title: "Display, performance, sound and controls",
+                  text: "The picture, speed, sound and controls every game starts with, each on a page of its own. A game's own page can change many of them for that game only.",
+                  art: .settings, action: .openSettings(.display)),
         GuideStep(symbol: "storefront.fill", title: "Stores",
                   text: "Your Steam, Epic, GOG, itch.io, Amazon and EA sign-ins, and each store's library and downloads.",
                   art: .settings, action: .openSettings(.stores)),

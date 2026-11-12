@@ -1,0 +1,31 @@
+diff --git a/build/ntdll-unix/server_ios.c b/build/ntdll-unix/server_ios.c
+index 4ff59e1..8f9fe48 100644
+--- a/build/ntdll-unix/server_ios.c
++++ b/build/ntdll-unix/server_ios.c
+@@ -4844,6 +4844,8 @@ static void ios_wait_leave(void)
+     e->seq++;                       /* -> even: no longer waiting */
+ }
+ 
++extern ULONGLONG ios_qpc_raw(void);   /* sync.c, ml1190 */
++
+ unsigned int server_wait( const union select_op *select_op, data_size_t size, UINT flags,
+                           const LARGE_INTEGER *timeout )
+ {
+@@ -4855,7 +4857,7 @@ unsigned int server_wait( const union select_op *select_op, data_size_t size, UI
+     {
+         LARGE_INTEGER now;
+ 
+-        NtQueryPerformanceCounter( &now, NULL );
++        now.QuadPart = ios_qpc_raw();   /* ml1190: the real clock; a slowed program's own counter is not the server's */
+         abs_timeout -= now.QuadPart;
+     }
+ 
+@@ -4884,7 +4886,7 @@ unsigned int server_wait( const union select_op *select_op, data_size_t size, UI
+             {
+                 LARGE_INTEGER entry_now;
+                 long long req_us;
+-                NtQueryPerformanceCounter( &entry_now, NULL );
++                entry_now.QuadPart = ios_qpc_raw();
+                 /* entry_now is post-wait; reconstruct from measured wall */
+                 req_us = (abs_timeout - entry_now.QuadPart) / 10
+                        + (t1.tv_sec - t0.tv_sec) * 1000000LL

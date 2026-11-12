@@ -91,7 +91,7 @@ final class ItchAuth: ObservableObject {
                 accountName = name
                 LogStore.shared.log("[itch-auth] signed in")
             } catch {
-                signInError = error.localizedDescription
+                signInError = ErrorText.plain(error)
                 LogStore.shared.log("[itch-auth] sign-in failed: \(error.localizedDescription)", level: .error)
             }
             isBusy = false

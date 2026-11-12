@@ -19,6 +19,17 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     var onSelect: ((TouchControlSpec?) -> Void)?
     /// Called after every edit, so a panel showing the selected control can refresh (its size changed by a pinch, say).
     var onEdited: (() -> Void)?
+    /// The on-screen pad's state from the layout's pad controls (mixed layouts), whenever one changes. The HUD merges it with the game controller and hands it to PadInput.
+    var onPad: ((VirtualPadSample) -> Void)?
+    /// A layout's Keys button asks for the full keyboard (the HUD owns it).
+    var onToggleKeyboard: (() -> Void)?
+    private var padMixer = TouchPadMixer()
+    /// Whether the layout has controls that drive the pad (the game then sees an Xbox controller).
+    var usesPad: Bool { layout?.controls.contains { $0.pad != nil } == true }
+    private func padChanged(_ id: UUID, _ sample: VirtualPadSample) {
+        padMixer.set(sample, for: id.uuidString)
+        onPad?(padMixer.merged)
+    }
     /// Whether dragging on the screen currently looks around (for the look button's face), and what the look button does.
     var lookProvider: (() -> Bool)?
     var onToggleLook: (() -> Void)?
@@ -53,14 +64,25 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     private var drag: Drag?
     private var pinchStart: (id: UUID, size: Double)?
 
+    /// Every stick of the layout floats (FloatingStick), except while the layout is being edited.
+    var floatingSticks = false { didSet { applyFloating() } }
+    private func applyFloating() {
+        placed.forEach {
+            ($0.view as? CustomStick)?.floating = floatingSticks && !editing
+            ($0.view as? CustomPadStick)?.floating = floatingSticks && !editing
+        }
+    }
+
     var editing = false {
         didSet {
             guard editing != oldValue else { return }
+            applyFloating()
             release()
             if !editing { selectedID = nil; onSelect?(nil) }
             if editing { undoStack.removeAll(); redoStack.removeAll(); onHistory?() }
             [outline, rings, handle, guides].forEach { $0.isHidden = !editing }
             gestureRecognizers?.forEach { $0.isEnabled = editing }
+            placed.forEach { $0.view.alpha = editing ? 1 : CGFloat(layout?.opacity ?? 1) }      // the editor shows every control fully
             setNeedsLayout()
         }
     }
@@ -92,15 +114,21 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     private func build() {
         placed.forEach { $0.view.removeFromSuperview() }
         placed = []; releasables = []
+        padMixer.clear()
+        defer { onPad?(padMixer.merged) }          // a rebuilt layout starts with nothing pressed
         guard let layout else { return }
+        ControlHaptics.enabled = layout.haptics
         for spec in layout.controls {
             guard let v = makeView(spec) else { continue }
             v.translatesAutoresizingMaskIntoConstraints = false
+            v.alpha = editing ? 1 : CGFloat(layout.opacity)
+            if let control = v as? UIControl { control.addAction(UIAction { [weak self] _ in if self?.editing == false { ControlHaptics.tap() } }, for: .touchDown) }
             addSubview(v)
             let cx = v.centerXAnchor.constraint(equalTo: leadingAnchor, constant: 0), cy = v.centerYAnchor.constraint(equalTo: topAnchor, constant: 0)
             NSLayoutConstraint.activate([cx, cy])
             placed.append(Placed(spec: spec, view: v, cx: cx, cy: cy))
         }
+        applyFloating()
         if let id = selectedID, !placed.contains(where: { $0.spec.id == id }) { selectedID = nil; onSelect?(nil) }
         [rings, outline, handle, guides].forEach { layer.addSublayer($0) }          // above the controls
         refreshLookButtons()
@@ -179,12 +207,13 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         case .began:
             // A pan begins after the finger has moved a few points: work from where it went down, or a neighbour gets grabbed.
             let start = CGPoint(x: point.x - g.translation(in: self).x, y: point.y - g.translation(in: self).y)
-            if let id = selectedID, let p = placed.first(where: { $0.spec.id == id }), hypot(start.x - handleCentre(self.point(of: p.spec), CGFloat(p.spec.size)).x,
+            if layout?.locked != true, let id = selectedID, let p = placed.first(where: { $0.spec.id == id }), hypot(start.x - handleCentre(self.point(of: p.spec), CGFloat(p.spec.size)).x,
                                                                                             start.y - handleCentre(self.point(of: p.spec), CGFloat(p.spec.size)).y) < 28 {
                 remember(); drag = .resize(id: id); return
             }
             guard let p = control(at: start) else { drag = nil; return }
             select(p.spec.id)
+            if layout?.locked == true { drag = nil; return }      // a locked layout is only selected, never moved
             remember()
             drag = .move(id: p.spec.id, grab: CGSize(width: p.view.center.x - point.x, height: p.view.center.y - point.y))
         case .changed:
@@ -215,7 +244,7 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func pinch(_ g: UIPinchGestureRecognizer) {
-        guard editing else { return }
+        guard editing, layout?.locked != true else { return }
         switch g.state {
         case .began:
             guard let id = selectedID ?? control(at: g.location(in: self))?.spec.id, let spec = layout?.controls.first(where: { $0.id == id }) else { return }
@@ -282,13 +311,14 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     /// Adds a control for an action ("key-E", "lmb", "stick-wasd" ...) with the label and size a new control should have, at a point in this view (nil = in a free spot).
     @discardableResult
     func addControl(action: String, at point: CGPoint? = nil) -> TouchControlSpec? {
-        let stick = action == "stick-wasd" || action == "stick-arrows"
+        let pad = TouchPadControl(action: action)
+        let stick = action == "stick-wasd" || action == "stick-arrows" || pad?.isRound == true
         let f = field
         var x = 0.5, y = 0.5
         if let point { x = Double((point.x - f.minX) / max(f.width, 1)); y = Double((point.y - f.minY) / max(f.height, 1)) }
         else if let free = freeSpot() { (x, y) = free }
         let label = stick ? "" : PadActions.shortLabel(action)
-        let size = stick ? 120.0 : 54.0
+        let size = pad == .dpad ? 110.0 : (stick ? 120.0 : 54.0)
         let spec = TouchControlSpec(label: label, action: action, mode: "tap",
                                     x: min(max(x, 0.04), 0.96), y: min(max(y, 0.06), 0.94), size: size)
         guard (layout?.controls.count ?? 0) < TouchLayout.maxControls else { return nil }
@@ -316,7 +346,7 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
 
     /// The editor's size slider: `began` remembers the state for Undo, `changed` resizes live, `ended` saves.
     func adjustSelectedSize(_ size: Double, phase: UIGestureRecognizer.State) {
-        guard let id = selectedID else { return }
+        guard let id = selectedID, layout?.locked != true else { return }
         switch phase {
         case .began: remember()
         case .changed: resize(id, to: size)
@@ -332,7 +362,7 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     }
 
     func removeSelected() {
-        guard var l = layout, let id = selectedID else { return }
+        guard var l = layout, l.locked != true, let id = selectedID else { return }
         remember()
         l.controls.removeAll { $0.id == id }
         layout = l; selectedID = nil; rebuildKeepingSelection(); commit(); onSelect?(nil)
@@ -340,8 +370,51 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
 
     /// Replaces every control with a starting layout (the editor's Presets); Undo brings the old ones back.
     func replaceLayout(_ new: TouchLayout) {
+        guard layout?.locked != true else { return }      // a locked layout is not swapped out (the editor's Presets button is greyed while it is locked)
         remember()
         layout = new; selectedID = nil; build(); layoutIfNeeded(); commit(); onSelect?(nil)
+    }
+
+    /// Layout options (the editor's Options menu): how solid the controls are drawn when playing, and the tap on a press.
+    func setOpacity(_ value: Double) {
+        guard var l = layout else { return }
+        remember()
+        l.opacity = value; layout = l; rebuildKeepingSelection(); commit()
+    }
+
+    func setHaptics(_ on: Bool) {
+        guard var l = layout else { return }
+        remember()
+        l.haptics = on; layout = l; ControlHaptics.enabled = on; commit()
+    }
+
+    /// Locks the layout: controls cannot be moved, resized or deleted until it is unlocked.
+    func setLocked(_ on: Bool) {
+        guard var l = layout else { return }
+        remember()
+        l.locked = on; layout = l; commit()
+    }
+
+    /// The shape and colour of the selected key or mouse button (nil: the usual).
+    func setShape(_ shape: String?) { changeSelected { $0.shape = shape } }
+    func setColour(_ colour: String?) { changeSelected { $0.colour = colour } }
+
+    /// Which control is drawn over which is the order in the layout: the last is on top.
+    func bringSelectedToFront() { moveSelected { $0.append($1) } }
+    func sendSelectedToBack() { moveSelected { $0.insert($1, at: 0) } }
+    private func moveSelected(_ put: (inout [TouchControlSpec], TouchControlSpec) -> Void) {
+        guard var l = layout, let id = selectedID, let i = l.controls.firstIndex(where: { $0.id == id }) else { return }
+        remember()
+        let spec = l.controls.remove(at: i)
+        put(&l.controls, spec)
+        layout = l; rebuildKeepingSelection(); commit()
+    }
+
+    /// Adds or takes away one of Shift, Ctrl or Alt held together with the selected key control.
+    func toggleComboModifier(_ id: String) {
+        changeSelected { spec in
+            if let i = spec.with.firstIndex(of: id) { spec.with.remove(at: i) } else { spec.with.append(id) }
+        }
     }
 
     func setLook(_ on: Bool) {
@@ -365,8 +438,48 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         onEdited?()
     }
 
+    /// A layout's colour name as the fill of a key or mouse button.
+    private static func colour(_ name: String?) -> UIColor? {
+        switch name {
+        case "red": return UIColor.systemRed.withAlphaComponent(0.75)
+        case "orange": return UIColor.systemOrange.withAlphaComponent(0.75)
+        case "yellow": return UIColor.systemYellow.withAlphaComponent(0.75)
+        case "green": return UIColor.systemGreen.withAlphaComponent(0.75)
+        case "blue": return UIColor.systemBlue.withAlphaComponent(0.75)
+        case "purple": return UIColor.systemPurple.withAlphaComponent(0.75)
+        case "white": return UIColor(white: 1, alpha: 0.55)
+        default: return nil
+        }
+    }
+
+    private static func shape(_ name: String?, on layer: CALayer, side: CGFloat) {
+        switch name {
+        case "rounded": layer.cornerRadius = min(14, side / 3)
+        case "square": layer.cornerRadius = 4
+        default: layer.cornerRadius = side / 2
+        }
+    }
+
     private func makeView(_ spec: TouchControlSpec) -> UIView? {
         let side = CGFloat(spec.size)
+        if spec.action == "keyboard" { return CustomScreenButton(title: spec.label, symbol: "keyboard", side: side) { [weak self] in self?.onToggleKeyboard?() } }
+        if let pad = spec.pad {
+            let report: (VirtualPadSample) -> Void = { [weak self, id = spec.id] s in self?.padChanged(id, s) }
+            switch pad {
+            case .button, .trigger:
+                let b = CustomPadButton(title: spec.label, control: pad, latch: spec.mode == "latch", side: side, report: report)
+                releasables.append { b.release() }
+                return b
+            case .stick(let left):
+                let s = CustomPadStick(side: side, left: left, report: report)
+                releasables.append { s.release() }
+                return s
+            case .dpad:
+                let d = CustomPadDpad(side: side, report: report)
+                releasables.append { d.release() }
+                return d
+            }
+        }
         if spec.isStick {
             let stick = CustomStick(side: side, arrows: spec.action == "stick-arrows")
             releasables.append { stick.release() }
@@ -375,12 +488,15 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         switch PadActions.action(spec.action) {
         case .key(let vk):
             let behavior: KeyButton.Behavior = spec.mode == "latch" ? .latch(vk) : .press(vk)          // tap and hold are one behaviour: only latch is a choice
-            let b = KeyButton(spec.label, behavior, side: side)
+            let extra: [Int32] = spec.with.compactMap { if case .key(let vk) = PadActions.action($0) { return vk }; return nil }          // a combo: Shift, Ctrl and Alt held with the key
+            let b = KeyButton(spec.label, behavior, side: side, extra: extra)
+            b.baseColour = Self.colour(spec.colour); Self.shape(spec.shape, on: b.layer, side: side)
             b.titleLabel?.adjustsFontSizeToFitWidth = true; b.titleLabel?.minimumScaleFactor = 0.45
             releasables.append { b.release() }
             return b
         case .mouse(let which):
             let b = CustomMouseButton(spec.label, button: which, side: side)
+            b.baseColour = Self.colour(spec.colour); Self.shape(spec.shape, on: b.layer, side: side)
             releasables.append { b.release() }
             return b
         case .wheel(let delta):
@@ -426,6 +542,7 @@ extension PadAction {
 final class CustomMouseButton: UIButton {
     private let down: UInt32, up: UInt32
     private var isPressed = false
+    var baseColour: UIColor? { didSet { if !isPressed { backgroundColor = baseColour ?? UIColor(white: 0, alpha: 0.55) } } }
     init(_ title: String, button: Int, side: CGFloat) {
         (down, up) = button == 0 ? (0x2, 0x4) : button == 1 ? (0x8, 0x10) : (0x20, 0x40)
         super.init(frame: .zero)
@@ -441,7 +558,7 @@ final class CustomMouseButton: UIButton {
     }
     required init?(coder: NSCoder) { fatalError() }
     private func press() { isPressed = true; backgroundColor = UIColor.systemOrange.withAlphaComponent(0.8); winios_pointer(0, 0, down, 0) }
-    func release() { guard isPressed else { return }; isPressed = false; backgroundColor = UIColor(white: 0, alpha: 0.55); winios_pointer(0, 0, up, 0) }
+    func release() { guard isPressed else { return }; isPressed = false; backgroundColor = baseColour ?? UIColor(white: 0, alpha: 0.55); winios_pointer(0, 0, up, 0) }
 }
 
 /// A stick that holds W A S D or the arrow keys (eight directions).
@@ -451,6 +568,10 @@ final class CustomStick: UIView {
     private var tracking: UITouch?
     private let side: CGFloat
     private let keys: (up: Int32, down: Int32, left: Int32, right: Int32)
+    /// Floating (FloatingStick): the stick takes a touch near its place and its base is drawn under the thumb where it lands. `centre` is that place, in this view's own points.
+    var floating = false { didSet { if !floating, tracking == nil { centre = nil; drawBase() } } }
+    private var centre: CGPoint?
+    private var origin: CGPoint { centre ?? CGPoint(x: bounds.midX, y: bounds.midY) }
 
     init(side: CGFloat, arrows: Bool) {
         self.side = side
@@ -470,15 +591,34 @@ final class CustomStick: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        base.path = UIBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)).cgPath
-        moveKnob(to: CGPoint(x: bounds.midX, y: bounds.midY))
+        drawBase()
+    }
+    private func drawBase() {
+        let c = origin
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        base.path = UIBezierPath(ovalIn: CGRect(x: c.x - side / 2 + 2, y: c.y - side / 2 + 2, width: side - 4, height: side - 4)).cgPath
+        moveKnob(to: c)
+        CATransaction.commit()
+    }
+    /// The part of the screen a floating base may be drawn in (the safe area), in this view's points.
+    private func field() -> CGRect? {
+        guard let w = window else { return nil }
+        return convert(w.bounds.inset(by: w.safeAreaInsets), from: w)
+    }
+    /// A floating stick also takes a touch in its zone, unless another control is there.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) { return true }
+        guard floating, tracking == nil, let parent = superview else { return false }
+        let near = parent.subviews.filter { $0 !== self && !$0.isHidden && $0.alpha > 0.01 && $0.isUserInteractionEnabled && $0.bounds.width <= side * 2.5 && $0.bounds.height <= side * 2.5 }
+            .map { convert($0.frame, from: parent) }
+        return FloatingStick.takes(point, frame: bounds, neighbours: near)
     }
     private func moveKnob(to p: CGPoint) {
         let r = side * 0.19
         knob.path = UIBezierPath(ovalIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)).cgPath
     }
     private func update(with p: CGPoint) {
-        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        let c = origin
         var dx = p.x - c.x, dy = p.y - c.y
         let radius = side / 2, length = hypot(dx, dy)
         if length > radius { dx *= radius / length; dy *= radius / length }
@@ -496,9 +636,16 @@ final class CustomStick: UIView {
     private func end() {
         for k in held { HUDKeys.up(k) }
         held = []; tracking = nil
-        moveKnob(to: CGPoint(x: bounds.midX, y: bounds.midY))
+        centre = nil
+        drawBase()
     }
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { guard tracking == nil, let t = touches.first else { return }; tracking = t; update(with: t.location(in: self)) }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard tracking == nil, let t = touches.first else { return }
+        tracking = t
+        let p = t.location(in: self)
+        if floating { centre = FloatingStick.centre(touch: p, diameter: side, field: field()); drawBase() }
+        update(with: p)
+    }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { update(with: t.location(in: self)) } }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { end() } }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { end() } }

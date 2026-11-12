@@ -1,0 +1,12 @@
+# 0200: Lossless Scaling's own upscalers (LS1, LS1 performance) for Direct3D 11 games
+
+The user asked (2026-11-09) for Lossless Scaling's upscaler, not MetalFX. Lossless.dll holds the whole Lossless Scaling engine; the 202 compute shaders (resource ids 101-302, RCDATA) and the class that owns each were found from the DLL's RTTI vtables and from the machine code that loads the ids:
+- Anime4k_L 101-104, Anime4k_M 105-112, Anime4k_S 113-116, Anime4k_UL 117-124, Anime4k_VL 125-132 (+ 135, 251, 252)
+- Bicubic_CAS 133-134, FSR 137-140 (+ 247/248), **LS1 146-161**, **LS1_P 141-146**, NIS 243-246, SinglePass (sharp bilinear etc.) 249-250/253, LSFG2 162-242, LSFG3 254-302.
+Not done yet: Anime4K, FSR, NIS, bicubic/CAS, sharp bilinear (their dataflow is not decoded; FSR and NIS have public references).
+
+**LS1** = shaders 147+3k, 148+3k, 149+3k (k = 0..4, "sharpness"), then 146; **LS1_P** = 141+k, then 146. 16x16 groups. input -> A (w x h RGBA8) -> B (RGBA8) -> C (2w x 2h R8_SNORM: the predicted luminance) -> 146 reads C and the input (bilinear, any output size) -> output. One 48-byte constant buffer for every pass: {in_w,in_h,src_w,src_h, origin_x,origin_y,gamma,0, out_w,out_h,0,0}; one linear clamp sampler. The dispatch counts, the texture formats (RGBA8 / R8_SNORM, from CreateTexture2D descriptions in the DLL) and the pass order came from LS1's own Run code. **Checked offline** by a small DXBC interpreter run on a screenshot crop (scratchpad lsanalysis/interp.py, ls1run.py): LS1 and LS1_P give clearly sharper edges than bilinear, level 1 mild, level 5 strong.
+
+**Engine:** `d3d11_lsfg_upscale.hpp` (`Ls1Upscaler`, built on the frame generation's ShaderStore, deferred context and shader cache), `d3d11_upscale_ctl.hpp` (control file keys `method=0|1|2`, `level=0..4`), `d3d11_swapchain.cpp` (`BuildLsUpscaler`, `LsEnlarge` before the present; the generated frames of the frame generation are enlarged by the same passes; falls back to MetalFX and writes `fallback=` in the status when the shaders are missing, the swap chain is multisampled, or the passes fail). sRGB back buffers are read linear and enlarged into 16-bit floats. Direct3D 12 (madeira_d3d12.c): still MetalFX, the status says so.
+**App:** `GameEngine.upscaleMethod/upscaleSharpness`, `LiveUpscaling.Method`, menu card "Method" + "Sharpness" (only when Lossless Scaling is downloaded and licensed), game settings rows.
+Not verified on a device. `tools/engine.sh accept`.

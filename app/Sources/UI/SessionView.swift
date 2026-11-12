@@ -127,6 +127,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     // MOUSEEVENTF_*; the runtime only applies a position when MOVE comes with ABSOLUTE (0x8000), otherwise (x, y) is a relative delta.
     private let flagMove: UInt32 = 0x1 | 0x8000, ldown: UInt32 = 0x2 | 0x8000, lup: UInt32 = 0x4 | 0x8000, rdown: UInt32 = 0x8 | 0x8000, rup: UInt32 = 0x10 | 0x8000
     private let flagWheel: UInt32 = 0x800
+    private let mdown: UInt32 = 0x20 | 0x8000, mup: UInt32 = 0x40 | 0x8000
     private var gestureLogs = 0
     private(set) static var touchCount = 0
     private let engine = TouchGestureEngine()
@@ -148,12 +149,16 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) { if !HardwareInput.shared.handlesTyping { super.pressesCancelled(presses, with: event) } }
     static weak var current: GameSurfaceView?
     static var cursor = CGPoint(x: CGFloat(SessionController.desktopWidth) / 2, y: CGFloat(SessionController.desktopHeight) / 2)
+    /// The trackpad (Pointer: Trackpad in the in-game menu): one touch sequence uses it or the direct engine, chosen when the first finger goes down.
+    private let trackpad = TrackpadEngine()
+    private var usingTrackpad = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isMultipleTouchEnabled = true       // two-finger tap and pinch
         backgroundColor = .clear
         engine.sink = self
+        trackpad.sink = self
         pressSink.isUserInteractionEnabled = false; pressSink.frame = .zero; addSubview(pressSink)
         PointerFallback.install(on: self)   // hides the system pointer over the game and reports where it is (a mouse or trackpad on iPad)
         Self.current = self
@@ -288,6 +293,12 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         return (Int32(max(0, min(gw - 1, x))), Int32(max(0, min(gh - 1, y))))
     }
 
+    /// For the log: one pointer position, the view it was in, how the game's screen is fitted into it and where the game's cursor was put.
+    func mapDescription(_ p: CGPoint) -> String {
+        let r = fitRect(), (gw, gh) = guestSize()
+        func f(_ v: CGFloat) -> String { String(format: "%.1f", Double(v)) }
+        return "pointer=(\(f(p.x)),\(f(p.y))) view=\(f(bounds.width))x\(f(bounds.height)) fit=(\(f(r.minX)),\(f(r.minY)) \(f(r.width))x\(f(r.height))) game=\(Int(gw))x\(Int(gh)) scale=\(String(format: "%.3f", Double(window?.screen.scale ?? 0)))"
+    }
     /// The mouse's pointer position (view points) -> desktop pixels: the same mapping a finger gets. HardwareInput's absolute route and its drawn cursor use it.
     func mapPoint(_ p: CGPoint) -> (Int32, Int32) { desktopPoint(p) }
     /// The part of the game's screen the picture covers (all of it here): positions HardwareInput draws its cursor at.
@@ -346,6 +357,17 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
             return
         }
         engine.primary = hud.rightMode ? .right : .left
+        if !engine.isTouching && !trackpad.isTouching {
+            usingTrackpad = PointerMode.current == .trackpad && !hud.isBlender
+            if usingTrackpad { startTrackpad() }
+        }
+        if usingTrackpad {
+            trackpad.primary = hud.rightMode ? .right : .left
+            for t in touches { Self.touchCount += 1; trackpad.began(id(for: t), at: t.location(in: self), time: t.timestamp) }
+            return
+        }
+        // Blender only: more touches move the 3D view (pan, zoom, orbit). Every other program and game keeps the plain mouse behaviour.
+        if !engine.isTouching { engine.blender = hud.isBlender; engine.navMode = hud.blenderNavMode }
         for t in touches { Self.touchCount += 1; engine.began(id(for: t), at: t.location(in: self), time: t.timestamp) }
         if tickTimer == nil {
             tickTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -372,6 +394,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
             }
             return
         }
+        if usingTrackpad { for t in touches { if let i = touchIDs[ObjectIdentifier(t)] { trackpad.moved(i, to: t.location(in: self), time: t.timestamp) } }; return }
         for t in touches { if let i = touchIDs[ObjectIdentifier(t)] { engine.moved(i, to: t.location(in: self), time: t.timestamp) } }
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -388,14 +411,16 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         if let lt = lookTouch, touches.contains(lt) { lookTouch = nil; return }
         if lookTouch != nil || hud.lookActive { return }
         for t in touches {
-            if let i = touchIDs.removeValue(forKey: ObjectIdentifier(t)) { engine.ended(i, at: t.location(in: self), time: t.timestamp) }
+            if let i = touchIDs.removeValue(forKey: ObjectIdentifier(t)) {
+                if usingTrackpad { trackpad.ended(i, at: t.location(in: self), time: t.timestamp) } else { engine.ended(i, at: t.location(in: self), time: t.timestamp) }
+            }
         }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         if HardwareInput.shared.interceptTouches(touches, event, .cancelled) { return }
         if let st = menuSwipeTouch, touches.contains(st) { menuSwipeTouch = nil }
         if let lt = lookTouch, touches.contains(lt) { lookTouch = nil; return }
-        for t in touches { if let i = touchIDs.removeValue(forKey: ObjectIdentifier(t)) { engine.cancelled(i) } }
+        for t in touches { if let i = touchIDs.removeValue(forKey: ObjectIdentifier(t)) { if usingTrackpad { trackpad.cancelled(i) } else { engine.cancelled(i) } } }
     }
 
     // MARK: PointerSink
@@ -412,21 +437,43 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         if gestureLogs < 40 { gestureLogs += 1; LogStore.shared.log("[f4-touch] \(text)") }
     }
 
-    func pointerMove(_ p: CGPoint) { post(p, flagMove) }
+    func pointerMove(_ p: CGPoint) {
+        post(p, flagMove)
+        if usingTrackpad { PadPointer.shared.trackpadMoved() }
+    }
+
+    /// The trackpad starts where the game's own pointer is (the last place a touch, the mouse or the controller put it), kept on the picture, at the speed the setting gives.
+    private func startTrackpad() {
+        let r = fitRect()
+        trackpad.bounds = r
+        trackpad.config.sensitivity = PointerMode.speed.sensitivity
+        if let p = viewPoint(forDesktop: Double(hud.cursor.x), Double(hud.cursor.y)), r.contains(p) { trackpad.cursor = p }
+        else { trackpad.cursor = CGPoint(x: r.midX, y: r.midY) }
+    }
+
+    /// A Wine desktop pixel -> a point in this view (the inverse of `desktopPoint`).
+    private func viewPoint(forDesktop x: Double, _ y: Double) -> CGPoint? {
+        let r = fitRect(), (gw, gh) = guestSize()
+        guard gw > 0, gh > 0, r.width > 0 else { return nil }
+        return CGPoint(x: r.minX + CGFloat(x) / gw * r.width, y: r.minY + CGFloat(y) / gh * r.height)
+    }
+    private func downFlag(_ b: MouseButton) -> UInt32 { switch b { case .left: ldown; case .right: rdown; case .middle: mdown } }
+    private func upFlag(_ b: MouseButton) -> UInt32 { switch b { case .left: lup; case .right: rup; case .middle: mup } }
     func pointerPress(_ b: MouseButton, at p: CGPoint) {
         logGesture("press \(b) at \(desktopPoint(p))")
-        post(p, flagMove); post(p, b == .left ? ldown : rdown)
+        post(p, flagMove); post(p, downFlag(b))
     }
     func pointerRelease(_ b: MouseButton, at p: CGPoint) {
         logGesture("release \(b)")
-        post(p, b == .left ? lup : rup)
+        post(p, upFlag(b))
     }
     func pointerClick(_ b: MouseButton, at p: CGPoint) {
         logGesture("click \(b) at \(desktopPoint(p))")
-        post(p, flagMove); post(p, b == .left ? ldown : rdown)
+        post(p, flagMove); post(p, downFlag(b))
         // hold the button for 50 ms so a game that samples the mouse once per frame sees it
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.post(p, b == .left ? self!.lup : self!.rup) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in guard let self else { return }; self.post(p, self.upFlag(b)) }
     }
+    func pointerKey(_ vk: Int32, down: Bool) { down ? HUDKeys.down(vk) : HUDKeys.up(vk) }
     func pointerWheel(_ delta: Int32, at p: CGPoint) {
         logGesture("wheel \(delta)")
         post(p, flagWheel, data: UInt32(bitPattern: delta))

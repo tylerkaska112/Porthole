@@ -89,7 +89,6 @@ struct EAOwnedList: View {
 
     var body: some View {
         StorePage {
-            StoreSwitcher()
             if !network.isOnline { OfflineChip() }
             if library.isLoading { ProgressView().tint(Theme.accent).frame(width: 44, height: 44) }
             else { IconPillButton(id: "ea-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { library.refresh() } }
@@ -175,6 +174,7 @@ struct EAGameSheet: View {
             }
         case .failed(let why)?:
             Label(why, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.red)
+            ErrorHelpButton(message: why)
             HStack {
                 button("Try again", symbol: "arrow.clockwise", prominent: true) { installer.resume(game.id) }
                 button(installed ? "Stop" : "Remove", symbol: installed ? "xmark" : "trash", role: .destructive) { installer.cancel(game.id) }

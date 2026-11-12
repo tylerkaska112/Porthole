@@ -69,7 +69,7 @@ struct OnDeviceInstaller: DeviceInstaller {
                 await CellularGuard.shared.disarm()
                 throw Failure("Cancelled: your VPN stays on, and the update was not installed.")
             }
-            do { try await tunnel.connect() } catch { Self.log("tunnel failed: \(error.localizedDescription)"); throw error }
+            do { try await tunnel.connect() } catch { Self.log("tunnel failed: \(ErrorText.plain(error))"); throw error }
             Self.log(String(format: "Porthole's own tunnel up in %.1f s", Date().timeIntervalSince(began)))
         }
         defer { if !usingOtherVPN { Task { @MainActor in TunnelManager.shared.disconnect() } } }
@@ -102,7 +102,7 @@ struct OnDeviceInstaller: DeviceInstaller {
                 group.cancelAll()
             }
         } catch {
-            Self.log("failed: \(error.localizedDescription)")
+            Self.log("failed: \(ErrorText.plain(error))")
             await CellularGuard.shared.restoreNow()          // the update did not install: cellular data comes back on now (after a successful install the app restarts and does it then)
             throw error
         }
@@ -176,7 +176,7 @@ struct OnDeviceInstaller: DeviceInstaller {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            log("copying over \(streams) connections failed (\(error.localizedDescription)); copying over one")
+            log("copying over \(streams) connections failed (\(ErrorText.plain(error))); copying over one")
             let again = Date()
             try send(ipa, to: remote, over: afc, progress: { stage, fraction in activity.touch(); progress(stage, fraction) })
             log(String(format: "copied to %@ over one connection in %.1f s", remote, Date().timeIntervalSince(again)))
@@ -213,7 +213,7 @@ struct OnDeviceInstaller: DeviceInstaller {
                 let now = state.snapshot
                 if now.finished {
                     if let error = now.error {
-                        log("attempt \(index + 1) ended with an error after \(now.reports) report(s): \(error.localizedDescription)")
+                        log("attempt \(index + 1) ended with an error after \(now.reports) report(s): \(ErrorText.plain(error))")
                         lastFailure = error
                         if now.reports > 0 { throw error }          // iOS did answer and said no: another way will not change that
                         break waiting

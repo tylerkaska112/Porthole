@@ -67,7 +67,7 @@ final class GogLibrary: ObservableObject {
                 GogInstaller.shared.refreshArt(from: list)
             } catch {
                 LogStore.shared.log("[gog-library] refresh failed: \((error as? GogAuthError)?.message ?? "\(error)")", level: .error)
-                self.error = (error as? GogAuthError)?.message ?? error.localizedDescription
+                self.error = (error as? GogAuthError)?.message ?? ErrorText.plain(error)
             }
             isLoading = false
         }

@@ -1,0 +1,50 @@
+--- a/build/ntdll-unix/virtual_ios.c
++++ b/build/ntdll-unix/virtual_ios.c
+@@ -7786,6 +7786,37 @@
+      * count/patch drift (e.g. data_map alloc failing in one of the two
+      * passes) can't run the patcher out of space. */
+     return need + 0x1000;
++}
++
++/* Porthole 0179: `mrs xN, CurrentEL` in the copy of a native ARM64 image becomes `movz xN, #0`.
++ *
++ * MSVC's ARM64 runtime has a start-up stub in every DLL that reads CurrentEL and the ID registers to see whether the CPU has the atomic instructions. At EL0 that
++ * read is an illegal instruction on iOS; ill_handler emulated it (result 0) and resumed through ios_fixup_x18_for_return, which gives x17 the resume address and
++ * jumps through the x18 trampoline. The stub keeps the DLL's data page in x17 across that instruction (`adrp x17, .data; mrs x16, CurrentEL; ...; str w16, [x17, #0x90]`),
++ * so after the emulation the flag it stores (0x80000000) went to resume-address + 0x90: over the next instructions of the copy (tbb12.dll+0x1704, the start of its
++ * stack-cookie check), which then trapped as an illegal instruction and failed the DLL's initialisation (status c000001d).
++ *
++ * The emulated result is always 0, so the instruction is rewritten in the copy to produce 0 directly. Nothing traps, x17 is never touched. Only words that are not
++ * literal data (the same map the x18 patcher uses) are rewritten; xzr (a write to nowhere) is left alone. PORTHOLE_NO_CURRENTEL_PATCH=1 turns it off. */
++int ios_jit_patch_currentel(char *text_rw, size_t text_size)
++{
++    unsigned char *data_map;
++    int count = 0;
++    const char *off = getenv( "PORTHOLE_NO_CURRENTEL_PATCH" );
++
++    if (off && *off == '1') return 0;
++    data_map = ios_x18_build_data_map( text_rw, text_size );
++    for (size_t i = 0; i + 4 <= text_size; i += 4)
++    {
++        uint32_t insn = *(uint32_t *)(text_rw + i);
++        if ((insn & 0xffffffe0) != 0xd5384240 || (insn & 0x1f) == 31) continue;
++        if (data_map && IOS_X18_DATA_WORD( data_map, i )) continue;
++        *(uint32_t *)(text_rw + i) = 0xd2800000u | (insn & 0x1f);      /* movz xN, #0 */
++        count++;
++    }
++    free( data_map );
++    if (count) dprintf( 2, "[currentel] porthole-0179: %d `mrs xN, CurrentEL` rewritten to `movz xN, #0` in this copy\n", count );
++    return count;
+ }
+ 
+ int ios_jit_patch_x18(char *text_rw, char *text_rx, size_t text_size,
+@@ -21242,6 +21273,9 @@
+                     }
+                     if (text_sz > 0)
+                     {
++                        /* Porthole 0179: CurrentEL reads need no trap (see ios_jit_patch_currentel). */
++                        if (ios_jit_patch_currentel( (char *)jit_rw_base + offset + text_off, text_sz ) > 0)
++                            sys_icache_invalidate( (char *)jit_rx_base + offset + text_off, text_sz );
+                         /* Task #25: exact budget (was 100% of .text, ~99% wasted). */
+                         extern size_t ios_jit_x18_tramp_need( const char *text, size_t text_size, int stores );
+                         extern int ios_x18_patch_stores( const void *image, size_t image_size );

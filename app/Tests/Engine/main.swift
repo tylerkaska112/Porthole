@@ -23,6 +23,19 @@ func run() {
     let old = try! JSONDecoder().decode(Game.self, from: Data(#"{"exe":"C:\\a.exe","args":""}"#.utf8))
     check(old.engine == nil, "a library saved before engine settings existed still loads (no engine field)")
 
+    // MARK: graphics route (Vulkan) and the benchmark summary
+    do {
+        var r = GameEngine(); r.d3d11Route = "dxvk"; r.d3d12Route = "vkd3d"; r.vulkanLibrary = "kosmickrisp"
+        check(!r.isEmpty && GameEngine().d3d11Route == nil, "the graphics route fields start empty (the normal route) and count as a setting once chosen")
+        var rg = Game(exe: "C:\\Games\\Foo\\foo.exe"); rg.engine = r
+        let back2 = try! JSONDecoder().decode(Game.self, from: JSONEncoder().encode(rg))
+        check(back2.engine?.d3d11Route == "dxvk" && back2.engine?.d3d12Route == "vkd3d" && back2.engine?.vulkanLibrary == "kosmickrisp", "a game's graphics route survives being saved and loaded")
+        let text = EngineLaunch.summary(for: rg)
+        check(text.contains("d3d11=dxvk") && text.contains("d3d12=vkd3d") && text.contains("vulkan=kosmickrisp"), "the benchmark line names the routes in effect (\(text))")
+        let plain = EngineLaunch.summary(for: Game(exe: "C:\\a.exe"))
+        check(plain.contains("d3d11=dxmt") && plain.contains("d3d12=madeira-d3d12") && plain.contains("upscale=off") && plain.contains("framegen=off"), "and the normal route when nothing is chosen (\(plain))")
+    }
+
     // MARK: backup file names
     do {
         let s = SaveBackup.fileStamp(Date(timeIntervalSince1970: 86400 * 365))
@@ -257,7 +270,9 @@ func run() {
     // MARK: in-game editor helpers
     check(PadActions.list.filter { $0.id != "none" }.allSatisfy { !PadActions.shortLabel($0.id).isEmpty }, "every action has a short name for a control's face")
     check(PadActions.shortLabel("key-E") == "E" && PadActions.shortLabel("space") == "Space" && PadActions.shortLabel("f5") == "F5" && PadActions.shortLabel("lmb") == "LMB", "short names read as the key or button")
-    check(Set(PadActions.groups.flatMap(\.ids)) == Set((PadActions.list + PadActions.touchOnly).map(\.id)).subtracting(["none"]) && PadActions.groups.flatMap(\.ids).count == PadActions.list.count - 1 + PadActions.touchOnly.count, "the editor's menus offer every action exactly once")
+    // The menus also offer the pad's buttons and triggers (mixed layouts); its sticks and D-pad come with the stick picker.
+    let padButtons = TouchPadControl.entries.filter { !$0.control.isRound }.map(\.id)
+    check(Set(PadActions.groups.flatMap(\.ids)) == Set((PadActions.list + PadActions.touchOnly).map(\.id) + padButtons).subtracting(["none"]) && PadActions.groups.flatMap(\.ids).count == PadActions.list.count - 1 + PadActions.touchOnly.count + padButtons.count, "the editor's menus offer every action exactly once")
 
 
     // MARK: use what works for others

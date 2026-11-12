@@ -1,0 +1,10 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+[fex-arena] ml799 constrained 8GB: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @16-32G: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @8-16G: native reserve FAILED kr=3
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D B0 Load module UnityPlayer.dll (unityplayer.dll-56eea47ef7d4b2ed): 716EA90000
+00b0:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c0000005 at 000000716F02A180: top_filter=000000716EFB3B80 nested=0
+00b0:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc0000005) syscalls=0 unix_calls=8275
+0038:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=9046

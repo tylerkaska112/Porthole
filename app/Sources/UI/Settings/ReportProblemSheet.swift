@@ -21,6 +21,11 @@ struct ReportProblemPage: View {
     @State private var preview: String?
     private struct ShareFile: Identifiable { let url: URL; var id: String { url.path } }
 
+    /// Opened from a game's page: the sentence starts with the game's name, so the report says which game it is about.
+    init(game: String? = nil) {
+        if let game { _note = State(initialValue: "[Problem: \(game)] ") }
+    }
+
     private static let issues = URL(string: "https://github.com/tylerkaska112/PortHole/issues/new/choose")!
     private static let discord = URL(string: "https://discord.gg/N7PkdptTFn")!
 
@@ -118,7 +123,7 @@ struct ReportProblemPage: View {
                 sentNote = "Sent. Its status shows under My reports; the maintainer may add a note."
                 note = ""
                 await tracker.refresh()
-            } catch { sentNote = "Could not send it: \(error.localizedDescription)" }
+            } catch { sentNote = "Could not send it: \(ErrorText.plain(error))" }
             sending = false
         }
     }

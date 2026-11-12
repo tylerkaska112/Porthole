@@ -178,7 +178,7 @@ struct ReportsScreen: View {
             cachedOn = nil
             if query.isEmpty { CompatListCache.save(remote) }
         } catch {
-            self.error = error.localizedDescription
+            self.error = ErrorText.plain(error)
             if let saved = CompatListCache.load() { remote = saved.games; cachedOn = saved.date; loadedAll = true } else { remote = [] }
         }
         loading = false
@@ -191,7 +191,7 @@ struct ReportsScreen: View {
             let more = try await CompatClient.standard().games(query: query.trimmingCharacters(in: .whitespaces), sort: order == .name ? "name" : "reports", limit: 30, offset: remote.count, device: device?.id)
             remote += more
             loadedAll = more.count < 30
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = ErrorText.plain(error) }
         loading = false
     }
 }
@@ -239,13 +239,13 @@ struct MyReportsView: View {
 
     private func load() async {
         loading = true; error = nil
-        do { mine = try await CompatClient.standard().mine() } catch { self.error = error.localizedDescription }
+        do { mine = try await CompatClient.standard().mine() } catch { self.error = ErrorText.plain(error) }
         loading = false
     }
 
     private func delete(_ r: CompatMyReport) async {
         do { try await CompatClient.standard().delete(reportID: r.id); mine.removeAll { $0.id == r.id }; await compat.refreshBadges(for: model.games) }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = ErrorText.plain(error) }
     }
 }
 
@@ -380,7 +380,7 @@ struct CompatGameView: View {
                 if page.count < 50 { loadedAll = true; break }
             }
         } catch let CompatError.server(404, _) { missing = true; detail = nil; loadedAll = true }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = ErrorText.plain(error) }
         loading = false
     }
 
@@ -390,14 +390,14 @@ struct CompatGameView: View {
             let more = try await CompatClient.standard().reports(gameID: gameID, device: nil, limit: 50, offset: reports.count)
             reports += more
             loadedAll = more.count < 50
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = ErrorText.plain(error) }
         loading = false
     }
 
     /// Flags a report; returns what to tell the person.
     private func flag(_ r: CompatPublicReport) async -> String {
         do { try await CompatClient.standard().flag(reportID: r.id); return "Thanks. If other people flag it too, it's hidden until it has been looked at." }
-        catch { return error.localizedDescription }
+        catch { return ErrorText.plain(error) }
     }
 }
 

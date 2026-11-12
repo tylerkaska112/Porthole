@@ -1,0 +1,414 @@
+--- d3d11_swapchain.before0199.cpp	2026-11-09 00:31:26
++++ engine-r29/vendor-engine/dxmt/src/d3d11/d3d11_swapchain.cpp	2026-11-09 00:31:37
+@@ -15,6 +15,7 @@
+ #include "d3d11_resource.hpp"
+ #include "d3d11_device.hpp"
+ #include "d3d11_lsfg.hpp"
++#include "d3d11_upscale_ctl.hpp"
+ #include "util_cpu_fence.hpp"
+ #include "util_env.hpp"
+ #include "util_string.hpp"
+@@ -154,14 +155,15 @@
+     }
+ 
+     if constexpr (EnableMetalFX) {
+-      scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
+-      {   /* Porthole 0196: to the screen */
++      {   /* Porthole 0196/0199: the factor from the app's wish (the control file, or the old variables), for the size the game starts with */
+         UINT fw = desc_.Width, fh = desc_.Height;
+         if (!fw || !fh) wsi::getWindowSize(hWnd, &fw, &fh);
+-        if (float fit = MetalFXFitFactor(fw, fh); fit > 0) {
+-          scale_factor = fit;
+-          Logger::info(std::format("[upscale] to the screen: {}x{} -> x{:.3f} (MetalFX spatial, DXMT_METALFX_FIT)", fw, fh, fit));
+-        }
++        float f = DesiredUpscale(fw, fh);
++        upscale_on_ = f > 0;
++        scale_factor = upscale_on_ ? f : 1.0f;
++        upscale_version_ = upscale::control().version;
++        Logger::info(std::format("[upscale] {}x{}: {} (MetalFX spatial{})", fw, fh, upscale_on_ ? std::format("x{:.3f}", f) : std::string("off for now"), upscale::control().available ? ", control file" : ""));
++        UpscaleStatus(fw, fh, f);
+       }
+     }
+ 
+@@ -522,6 +524,14 @@
+       backbuffer_desc_.Height = desc_.Height;
+     }
+ 
++    if constexpr (EnableMetalFX) {   /* Porthole 0199: the factor follows the new size (to the screen) and the app's wish */
++      float f = DesiredUpscale(desc_.Width, desc_.Height);
++      upscale_on_ = f > 0;
++      scale_factor = upscale_on_ ? f : 1.0f;
++      upscale_version_ = upscale::control().version;
++      presenter->setScaleFactor(scale_factor);
++      UpscaleStatus(desc_.Width, desc_.Height, f);
++    }
+     ApplyLayerProps();
+ 
+     backbuffer_desc_.Format = desc_.Format;
+@@ -539,14 +549,28 @@
+     lsfg_dead_ = false;
+ 
+     if constexpr (EnableMetalFX) {
++      if (!BuildUpscaler())
++        return E_FAIL;
++    }
++
++    return S_OK;
++  };
++
++  /* Porthole 0199: the picture the game draws is enlarged by scale_factor (when upscale_on_): the enlarged back buffer and the scaler, made for the current size. When it is off
++   * they are dropped, so a game that is not upscaled holds no memory for them. */
++  bool BuildUpscaler() {
++    if constexpr (EnableMetalFX) {
++      upscaled_backbuffer_ = nullptr;
++      metalfx_scaler = {};
++      if (!upscale_on_)
++        return true;
+       D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
+       upscaled_desc_.Height *= scale_factor;
+       upscaled_desc_.Width *= scale_factor;
+-      upscaled_backbuffer_ = nullptr;
+       if (FAILED(dxmt::CreateDeviceTexture2D(
+               device_, &upscaled_desc_, nullptr, reinterpret_cast<ID3D11Texture2D1 **>(&upscaled_backbuffer_)
+           )))
+-        return E_FAIL;
++        return false;
+ 
+       WMTFXSpatialScalerInfo info;
+       info.input_height = desc_.Height;
+@@ -558,9 +582,74 @@
+       metalfx_scaler = device_->GetMTLDevice().newSpatialScaler(info);
+       D3D11_ASSERT(metalfx_scaler && "otherwise metalfx failed to initialize");
+     }
++    return true;
++  }
+ 
+-    return S_OK;
+-  };
++  /* Porthole 0199: the factor the app wants for a game drawing w x h now (0 = none). A launcher or helper process of the same prefix is never upscaled when the app controls it. */
++  float DesiredUpscale(UINT w, UINT h) {
++    auto &c = upscale::control();
++    if (c.available && !lsfg::processAllowed())
++      return 0;
++    return c.factorFor(w, h, std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f));
++  }
++
++  /* What the menu shows: whether the picture is enlarged, from what to what. */
++  void UpscaleStatus(UINT w, UINT h, float f) {
++    auto &c = upscale::control();
++    if (!c.available || !lsfg::processAllowed() || w < 320 || h < 240)
++      return;
++    if (f > 0)
++      c.writeStatus(std::format("state=on\nfactor={:.3f}\nfrom={}x{}\nto={}x{}\n", f, w, h, (UINT)(w * f), (UINT)(h * f)));
++    else
++      c.writeStatus(std::format("state={}\nfrom={}x{}\n", c.mode == 0 ? "off" : "same-size", w, h));
++  }
++
++  /* Porthole 0199: the person changed the choice in the in-game menu: look at the control file and, when the wish changed, rebuild the enlarged picture and the layer's size. Runs on
++   * the game's present thread, before the frame is built, after the work already submitted has finished (as a resize does). */
++  void UpscalePoll() {
++    if constexpr (EnableMetalFX) {
++      auto &c = upscale::control();
++      if (!c.available || !lsfg::processAllowed())
++        return;
++      c.poll(std::chrono::steady_clock::now());
++      if (c.version == upscale_version_ || desc_.Width == 0 || desc_.Height == 0)
++        return;
++      upscale_version_ = c.version;
++      float f = DesiredUpscale(desc_.Width, desc_.Height);
++      bool on = f > 0;
++      if (on == upscale_on_ && (!on || f == scale_factor)) {
++        UpscaleStatus(desc_.Width, desc_.Height, f);
++        return;
++      }
++      device_context_->PrepareFlush();
++      device_context_->Commit();
++      device_context_->WaitUntilGPUIdle();
++      lsfg_.reset();      /* the generated pictures are sized for the old output */
++      upscaled_generated_.clear();
++      metalfx_scaler_gen = {};
++      lsfg_gen_pf_ = WMTPixelFormatInvalid;
++      lsfg_dead_ = false;
++      bool was = upscale_on_;
++      float was_f = scale_factor;
++      upscale_on_ = on;
++      scale_factor = on ? f : 1.0f;
++      presenter->setScaleFactor(scale_factor);
++      ApplyLayerProps();
++      if (!BuildUpscaler()) {   /* no memory for the enlarged picture: back to the plain one */
++        upscale_on_ = false;
++        scale_factor = 1.0f;
++        presenter->setScaleFactor(scale_factor);
++        ApplyLayerProps();
++        BuildUpscaler();
++        c.writeStatus("state=error\nmessage=not enough memory for the enlarged picture\n");
++        Logger::info("[upscale] live: not enough memory for the enlarged picture; off");
++        return;
++      }
++      Logger::info(std::format("[upscale] live: {} -> {} ({}x{} -> {}x{})", was ? std::format("x{:.3f}", was_f) : std::string("off"), on ? std::format("x{:.3f}", f) : std::string("off"),
++                               desc_.Width, desc_.Height, (UINT)(desc_.Width * scale_factor), (UINT)(desc_.Height * scale_factor)));
++      UpscaleStatus(desc_.Width, desc_.Height, f);
++    }
++  }
+ 
+   HRESULT
+   STDMETHODCALLTYPE
+@@ -817,11 +906,14 @@
+     if (should_exit_fs)
+       SetFullscreenState(FALSE, nullptr);
+ 
++    UpscalePoll();   /* Porthole 0199 */
+     std::vector<Rc<Texture>> lsfg_frames;
+     LsfgBeforePresent(lsfg_frames);
+     std::vector<Rc<Texture>> lsfg_upscaled;   /* with the MetalFX scaler on: where each generated frame is enlarged to */
++    bool use_fx = false;
++    if constexpr (EnableMetalFX) use_fx = upscale_on_;
+     if constexpr (EnableMetalFX) {
+-      for (size_t i = 0; i < lsfg_frames.size(); i++) {
++      for (size_t i = 0; use_fx && i < lsfg_frames.size(); i++) {
+         if (!EnsureUpscaledGenerated(i, lsfg_frames[i])) { lsfg_frames.clear(); lsfg_upscaled.clear(); break; }
+         lsfg_upscaled.push_back(upscaled_generated_[i]->texture());
+       }
+@@ -866,14 +958,16 @@
+     auto present_state = presenter->synchronizeLayerProperties();
+     for (size_t i = 0; i < lsfg_frames.size(); i++) {
+       auto generated_chunk = cmd_queue.CurrentChunk();
+-      if constexpr (EnableMetalFX) {
+-        if (i >= lsfg_upscaled.size()) break;
+-        generated_chunk->emitcc([
+-          this, vsync_duration, meta = present_state.metadata, scaler = (lsfg_gen_own_scaler_ ? this->metalfx_scaler_gen : this->metalfx_scaler), src = lsfg_frames[i], dst = lsfg_upscaled[i]
+-        ](ArgumentEncodingContext &ctx) mutable {
+-          ctx.upscale(src, dst, scaler);
+-          ctx.present(dst, presenter, vsync_duration, meta);
+-        });
++      if (use_fx) {
++        if constexpr (EnableMetalFX) {
++          if (i >= lsfg_upscaled.size()) break;
++          generated_chunk->emitcc([
++            this, vsync_duration, meta = present_state.metadata, scaler = (lsfg_gen_own_scaler_ ? this->metalfx_scaler_gen : this->metalfx_scaler), src = lsfg_frames[i], dst = lsfg_upscaled[i]
++          ](ArgumentEncodingContext &ctx) mutable {
++            ctx.upscale(src, dst, scaler);
++            ctx.present(dst, presenter, vsync_duration, meta);
++          });
++        }
+       } else {
+         generated_chunk->emitcc([this, vsync_duration, meta = present_state.metadata, src = lsfg_frames[i]](ArgumentEncodingContext &ctx) mutable {
+           ctx.present(src, presenter, vsync_duration, meta);
+@@ -887,7 +981,8 @@
+       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
+       presenter->changeGammaRamp(output->GetGammaRamp());
+     }
+-    if constexpr (EnableMetalFX) {
++    if (use_fx) {
++     if constexpr (EnableMetalFX) {
+       chunk->emitcc([
+         this, vsync_duration, backbuffer = backbuffer_->texture(),
+         sync_state = SyncFrame(++presentation_count_),
+@@ -905,6 +1000,7 @@
+         ReleaseSemaphore(present_semaphore_, 1, nullptr);
+         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
+       });
++     }
+     } else {
+       chunk->emitcc([
+         this, vsync_duration, state = std::move(present_state),
+@@ -1346,6 +1442,8 @@
+   bool lsfg_gen_own_scaler_ = false;
+   std::conditional<EnableMetalFX, Com<D3D11ResourceCommon>, std::monostate>::type upscaled_backbuffer_;
+   float scale_factor = 1.0;
++  bool upscale_on_ = false;        /* Porthole 0199: the picture is enlarged now (the MetalFX variant can be off for a while) */
++  uint32_t upscale_version_ = ~0u;
+ };
+ 
+ HRESULT
+@@ -1376,7 +1474,10 @@
+   UINT fit_w = pDesc->Width, fit_h = pDesc->Height;
+   if ((!fit_w || !fit_h) && !env::getEnvVar("DXMT_METALFX_FIT").empty()) wsi::getWindowSize(hWnd, &fit_w, &fit_h);
+   bool fit_wanted = !env::getEnvVar("DXMT_METALFX_FIT").empty();
+-  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" && (!fit_wanted || MetalFXFitFactor(fit_w, fit_h) > 0)) {   /* Porthole 0196: a game that already draws at the screen's size keeps the plain swap chain */
++  /* Porthole 0199: with the app's control file the MetalFX variant is made for every game (it enlarges nothing while the menu has upscaling off), so that the menu can switch it on
++   * while the game runs; without it the variant is made when the old variables ask for upscaling that does something. */
++  bool live_ctl = upscale::control().available && lsfg::processAllowed();
++  if (live_ctl || (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" && (!fit_wanted || MetalFXFitFactor(fit_w, fit_h) > 0))) {   /* Porthole 0196: a game that already draws at the screen's size keeps the plain swap chain */
+     if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
+       *ppSwapChain = new MTLD3D11SwapChain<true>(
+           pFactory, pDevice, layer_factory.ptr(), hWnd, pDesc, pFullscreenDesc
+@@ -1384,6 +1485,7 @@
+       return S_OK;
+     } else {
+       WARN("MetalFX spatial scaler is not supported on this device");
++      if (live_ctl) upscale::control().writeStatus("state=unsupported\n");
+     }
+   }
+   *ppSwapChain = new MTLD3D11SwapChain<false>(
+diff --git a/src/dxmt/dxmt_presenter.cpp b/src/dxmt/dxmt_presenter.cpp
+index 2ab0f09..1d35395 100644
+--- a/src/dxmt/dxmt_presenter.cpp
++++ b/src/dxmt/dxmt_presenter.cpp
+@@ -19,6 +19,7 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
+   layer_props_.opaque = true;
+   layer_props_.display_sync_enabled = false;
+   layer_props_.framebuffer_only = false; // how strangely setting it true results in worse performance
++  base_contents_scale_ = layer_props_.contents_scale;
+   layer_props_.contents_scale = layer_props_.contents_scale * scale_factor;
+ 
+   WMTTextureInfo texture_info;
+@@ -36,6 +37,11 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
+   mem_census_add(MEMOWN_PRESENTER, mem_census_texture_bytes(texture_info));  /* ml677 */
+ }
+ 
++void
++Presenter::setScaleFactor(float scale_factor) {
++  layer_props_.contents_scale = base_contents_scale_ * scale_factor;
++}
++
+ bool
+ Presenter::changeLayerProperties(
+     WMTPixelFormat format, WMTColorSpace colorspace, double width, double height, uint8_t sample_count
+diff --git a/src/dxmt/dxmt_presenter.hpp b/src/dxmt/dxmt_presenter.hpp
+index 9c8420b..11d1419 100644
+--- a/src/dxmt/dxmt_presenter.hpp
++++ b/src/dxmt/dxmt_presenter.hpp
+@@ -35,6 +35,9 @@ public:
+ 
+   bool changeLayerColorSpace(WMTColorSpace colorspace);
+ 
++  /* Porthole 0199: the upscaling factor changed while the game runs; the layer's contents scale follows (applied with the next changeLayerProperties). */
++  void setScaleFactor(float scale_factor);
++
+   void changeHDRMetadata(const WMTHDRMetadata *metadata);
+ 
+   void changeGammaRamp(const DXMTGammaRamp *gamma_ramp);
+@@ -77,6 +80,7 @@ private:
+   WMT::MetalLayer layer_;
+   InternalCommandLibrary &lib_;
+   WMTLayerProps layer_props_;
++  double base_contents_scale_ = 1.0;
+   uint32_t sample_count_;
+   WMTColorSpace colorspace_ = WMTColorSpaceSRGB;
+   WMTHDRMetadata hdr_metadata_;
+--- /dev/null	2026-11-09 00:38:34
++++ engine-r29/vendor-engine/dxmt/src/d3d11/d3d11_upscale_ctl.hpp	2026-11-09 00:30:43
+@@ -0,0 +1,122 @@
++#pragma once
++/* Porthole 0199: upscaling that the in-game menu can change while the game runs.
++ *
++ * The app writes a small control file (MADEIRA_UPSCALE_CTL, C:\ProgramData\Porthole\upscale.ctl) with the lines
++ *     mode=0|1|2      0 = off, 1 = "to the screen" (the factor is worked out from fit), 2 = a fixed factor
++ *     factor=1.5      for mode 2 (1 to 2)
++ *     fit=2752x2064   the screen's pixels, for mode 1
++ * and rewrites it whenever the person changes the choice. The swap chain looks at it twice a second at most. Without the file (or without the variable) everything
++ * is as before: DXMT_METALFX_SPATIAL_SWAPCHAIN / DXMT_METALFX_FIT / d3d11.metalSpatialUpscaleFactor at the start decide, once. A status file next to it
++ * ("<control file>.status") says what the swap chain does with it, for the menu. */
++#include <windows.h>
++#include <algorithm>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++namespace dxmt::upscale {
++
++struct Control {
++  std::string ctlPath, statusPath;
++  bool available = false;        // the app set a control file up
++  int mode = 0;                  // 0 off, 1 to the screen, 2 fixed
++  float factor = 2.0f;           // for mode 2
++  unsigned fitW = 0, fitH = 0;   // for mode 1
++  uint32_t version = 0;          // raised whenever the wish changes
++  uint64_t lastWrite_ = 0;
++  std::chrono::steady_clock::time_point lastPoll_{};
++  bool seenFile_ = false;
++
++  static std::string getenvStr(const char *name) {
++    char buf[1024];
++    DWORD n = GetEnvironmentVariableA(name, buf, sizeof buf);
++    return (n > 0 && n < sizeof buf) ? std::string(buf, n) : std::string();
++  }
++
++  Control() {
++    ctlPath = getenvStr("MADEIRA_UPSCALE_CTL");
++    available = !ctlPath.empty();
++    if (available) statusPath = ctlPath + ".status";
++    /* The start-up wish from the old variables (the app sets them for the game's saved choice and writes the same into the file). */
++    if (getenvStr("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1") {
++      auto fit = getenvStr("DXMT_METALFX_FIT");
++      unsigned w = 0, h = 0;
++      if (!fit.empty() && sscanf(fit.c_str(), "%ux%u", &w, &h) == 2 && w && h) { mode = 1; fitW = w; fitH = h; }
++      else mode = 2;
++    }
++    if (available) poll(std::chrono::steady_clock::now(), true);
++  }
++
++  /// Reads the file when it changed (at most twice a second unless `now_` is forced). True when the wish changed.
++  bool poll(std::chrono::steady_clock::time_point now, bool force = false) {
++    if (!available) return false;
++    if (!force && now - lastPoll_ < std::chrono::milliseconds(500)) return false;
++    lastPoll_ = now;
++    WIN32_FILE_ATTRIBUTE_DATA info{};
++    if (!GetFileAttributesExA(ctlPath.c_str(), GetFileExInfoStandard, &info)) return false;
++    uint64_t w = ((uint64_t)info.ftLastWriteTime.dwHighDateTime << 32) | info.ftLastWriteTime.dwLowDateTime;
++    if (w == lastWrite_ && seenFile_) return false;
++    HANDLE f = CreateFileA(ctlPath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (f == INVALID_HANDLE_VALUE) return false;
++    char buf[1024];
++    DWORD got = 0;
++    BOOL ok = ReadFile(f, buf, sizeof buf - 1, &got, nullptr);
++    CloseHandle(f);
++    if (!ok) return false;
++    buf[got] = 0;
++    seenFile_ = true;
++    lastWrite_ = w;
++    int m = mode;
++    float fa = factor;
++    unsigned fw = fitW, fh = fitH;
++    for (char *line = strtok(buf, "\r\n"); line; line = strtok(nullptr, "\r\n")) {
++      char *eq = strchr(line, '=');
++      if (!eq) continue;
++      *eq = 0;
++      const char *k = line, *v = eq + 1;
++      if (!strcmp(k, "mode")) m = std::clamp(atoi(v), 0, 2);
++      else if (!strcmp(k, "factor")) fa = std::clamp((float)atof(v), 1.0f, 2.0f);
++      else if (!strcmp(k, "fit")) { unsigned a = 0, b = 0; if (sscanf(v, "%ux%u", &a, &b) == 2 && a && b) { fw = a; fh = b; } }
++    }
++    bool changed = m != mode || fa != factor || fw != fitW || fh != fitH;
++    mode = m; factor = fa; fitW = fw; fitH = fh;
++    if (changed) version++;
++    return changed;
++  }
++
++  /// The factor for a game drawing `width` x `height` (0 = no upscaling): to the screen keeps the aspect, stops at 2x, and does nothing when the game draws about as large as the screen.
++  float factorFor(unsigned width, unsigned height, float configured) const {
++    if (!width || !height) return 0;
++    if (mode == 1) {
++      if (!fitW || !fitH) return 0;
++      float f = std::min((float)fitW / (float)width, (float)fitH / (float)height);
++      if (f > 2.0f) f = 2.0f;
++      return f >= 1.1f ? f : 0;
++    }
++    if (mode == 2) {
++      float f = available ? factor : configured;
++      return f >= 1.05f ? std::min(f, 2.0f) : 0;
++    }
++    return 0;
++  }
++
++  /// For the menu: "state=...", then lines of facts. Written when the picture changes.
++  void writeStatus(const std::string &text) {
++    if (statusPath.empty()) return;
++    HANDLE f = CreateFileA(statusPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++    if (f == INVALID_HANDLE_VALUE) return;
++    DWORD put = 0;
++    WriteFile(f, text.data(), (DWORD)text.size(), &put, nullptr);
++    CloseHandle(f);
++  }
++};
++
++inline Control &control() {
++  static Control c;
++  return c;
++}
++
++} // namespace dxmt::upscale

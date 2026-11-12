@@ -31,6 +31,8 @@ final class SteamService {
 
     var isSignedIn: Bool { account.isSignedIn }
     var accountName: String? { account.displayName }
+    /// The signed-in account's SteamID (64-bit, as text); nil while signed out.
+    var steamIDText: String? { account.session?.steamID }
     func makeAuthenticator() -> SteamAuthenticator { SteamAuthenticator(api: api) }
 
     /// Keeps a finished sign-in.
@@ -325,7 +327,45 @@ final class SteamService {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             backend.start { continuation.resume(with: $0.mapError { $0 as Error }) }
         }
-        return try await SteamCloudSync.downloadMissing(appID: appID, transport: SteamCMCloudTransport(cm: backend.cm), driveC: driveC, installFolder: installFolder, progress: progress)
+        return try await SteamCloudSync.downloadMissing(appID: appID, transport: SteamCMCloudTransport(cm: backend.cm), driveC: driveC, installFolder: installFolder,
+                                                      defaultRemote: SteamCloudLocation.defaultRemoteFolder(driveC: driveC, account: accountNumber, appID: appID),
+                                                      ledgerURL: cloudLedgerURL(appID: appID), progress: progress)
+    }
+
+    /// What Upload and Download would do for one game right now, without doing it. Needs the Steam sign-in, so it is refused while a game holds it.
+    func cloudPreview(appID: Int, driveC: URL, installFolder: URL?) async throws -> SteamCloudPreview {
+        if suspended { throw SteamContentError(message: "A game is running and holds your Steam sign-in. Close the game first.") }
+        let backend = try connection()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            backend.start { continuation.resume(with: $0.mapError { $0 as Error }) }
+        }
+        let rules = (try? await appInfo(appID))?.cloudRules ?? []
+        return try await SteamCloudSync.preview(appID: appID, transport: SteamCMCloudTransport(cm: backend.cm), driveC: driveC, installFolder: installFolder,
+                                                defaultRemote: SteamCloudLocation.defaultRemoteFolder(driveC: driveC, account: accountNumber, appID: appID),
+                                                ledgerURL: cloudLedgerURL(appID: appID), rules: rules, steamID64: account.session.flatMap { UInt64($0.steamID) })
+    }
+
+    /// Where this device remembers what was last in step with Steam's cloud for one game (see SteamCloudLedger).
+    private func cloudLedgerURL(appID: Int) -> URL? {
+        guard accountNumber != "0" else { return nil }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("SteamCloud", isDirectory: true).appendingPathComponent("\(accountNumber)-\(appID).json")
+    }
+
+    /// The person asked: sends this game's save files that changed on this device to Steam Cloud (see SteamCloudUpload.swift). Never while a game runs.
+    func cloudUpload(appID: Int, driveC: URL, installFolder: URL?, machineName: String, progress: ((Int, Int, String) -> Void)? = nil) async throws -> SteamCloudUploadReport {
+        if suspended { throw SteamContentError(message: "A game is running and holds your Steam sign-in. Close the game first.") }
+        let backend = try connection()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            backend.start { continuation.resume(with: $0.mapError { $0 as Error }) }
+        }
+        var transport = SteamCMCloudTransport(cm: backend.cm)
+        transport.machineName = machineName
+        let rules = (try? await appInfo(appID))?.cloudRules ?? []
+        return try await SteamCloudSync.uploadChanged(appID: appID, transport: transport, driveC: driveC, installFolder: installFolder,
+                                                      defaultRemote: SteamCloudLocation.defaultRemoteFolder(driveC: driveC, account: accountNumber, appID: appID),
+                                                      ledgerURL: cloudLedgerURL(appID: appID), rules: rules, steamID64: account.session.flatMap { UInt64($0.steamID) },
+                                                      machineName: machineName, progress: progress)
     }
 
     // MARK: Downloads
@@ -337,6 +377,10 @@ final class SteamService {
         let installer = SteamInstaller(appid: appID, name: name, steamApps: steamApps, backend: backend)
         installer.ownerSteamID = account.session?.steamID
         installer.selection = selection
+        if ExternalLibrary.shared.isExternal(appID) {
+            installer.external = true
+            installer.slowDisk = await ExternalLibrary.shared.writeMode(for: appID) == .gentle
+        }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(URL, SteamAppInfo), Error>) in
                 var finished = false

@@ -1,0 +1,24 @@
+--- a/build/ntdll-unix/signal_arm64_ios.c	2026-11-08 23:00:23
++++ b/build/ntdll-unix/signal_arm64_ios.c	2026-11-08 23:00:23
+@@ -13746,6 +13746,21 @@
+             ERR("ILL diag: x6=0x%llx x10=0x%llx x11=0x%llx (pc==x11? %d pc==x10? %d)\n",
+                 (unsigned long long)x6, (unsigned long long)x10, (unsigned long long)x11,
+                 x11 == pc, x10 == pc);
++            /* Porthole 0194: the guest bytes at the instruction FEX could not decode ("Invalid instruction in entry block"), 16 before and 48 from it. An invalid
++             * instruction in a game that runs fine on a PC is either an instruction FEX lacks (these bytes say which) or code that was never decrypted (they look random). */
++            if (x6 >= 0x100000000ULL && x6 < 0x8000000000ULL)
++            {
++                uint8_t gb[64];
++                vm_size_t gsz = sizeof(gb);
++                char hex[64 * 3 + 1];
++                if (vm_read_overwrite(mach_task_self(), (vm_address_t)(x6 - 16), sizeof(gb), (vm_address_t)gb, &gsz) == KERN_SUCCESS)
++                {
++                    for (size_t i = 0; i < gsz && i < sizeof(gb); i++) snprintf( hex + i * 3, 4, "%02x ", gb[i] );
++                    ERR("ILL diag: [ill-guest-bytes] 0194 guest rip 0x%llx, bytes from rip-16 (the instruction starts at the 17th): %s\n", (unsigned long long)x6, hex);
++                }
++                else
++                    ERR("ILL diag: [ill-guest-bytes] 0194 guest rip 0x%llx: the bytes cannot be read\n", (unsigned long long)x6);
++            }
+             /* FEX inline L1 exit-dispatch reads {L1Ptr, L1Mask} at STATE+0xa0
+              * and the entry pair {host, guest} at L1Ptr + (rip & mask)<<?.
+              * Dump the entry for x6 so a torn pair is visible at crash time.

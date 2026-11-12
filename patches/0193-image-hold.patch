@@ -1,0 +1,174 @@
+--- a/build/ntdll-unix/virtual_ios.c	2026-11-08 22:05:22
++++ b/build/ntdll-unix/virtual_ios.c	2026-11-08 22:05:22
+@@ -26593,9 +26593,141 @@
+         if (host_base < host_end) unmap_area( host_base, host_end - host_base );
+     }
+     return status;
++}
++
++
++#ifdef WINE_IOS
++/* Porthole 0193: IMAGE HOLD (opt-in: MADEIRA_IMAGE_HOLD=1, from a game's own config line).
++ *
++ * Some copy protection (Call of Duty: Black Ops Cold War, 533 MB image) unmaps its own executable image and builds it again at the same base with
++ * NtAllocateVirtualMemory, piece by piece. On Windows the range stays the process's own for that time. Here every pseudo-process shares one address space:
++ * the range freed by the unmap went to whoever asked next (Steam's service mapped and unmapped one page at 0x7047d20000 over and over), and the game's reserve there
++ * failed with STATUS_CONFLICTING_ADDRESSES ([alloc-fail] ml814 c0000018). The protection took that for tampering, its code was never rebuilt, and the first read of the
++ * missing image ended in an exception storm and a stack overflow (0xC00000FD).
++ *
++ * When a process unmaps its main image (PEB ImageBaseAddress, 64 MB or more) the range becomes a free placeholder (the Windows 10 idea: nobody else's allocation can land
++ * in it). The process's own MEM_RESERVE with an address inside it first takes that part out of the placeholder (free_pages, under virtual_mutex, so nothing can slip in
++ * between), and the ordinary reservation follows. A hold ends after IOS_IMAGE_HOLD_LIFE_S seconds (checked at the next hold call). Logged as [image-hold]. */
++#define IOS_IMAGE_HOLD_MIN     (64ULL << 20)
++#define IOS_IMAGE_HOLD_SLOTS   4
++#define IOS_IMAGE_HOLD_LIFE_S  900
++static struct { ULONG_PTR base, size; long born; } ios_image_holds[IOS_IMAGE_HOLD_SLOTS];
++static int ios_image_hold_live;
++
++static int ios_image_hold_enabled( void )
++{
++    static int on = -1;
++    if (on < 0)
++    {
++        const char *e = getenv( "MADEIRA_IMAGE_HOLD" );
++        on = e && e[0] == '1' && !e[1];
++    }
++    return on;
++}
++
++static long ios_image_hold_now( void )
++{
++    struct timespec ts;
++    clock_gettime( CLOCK_MONOTONIC, &ts );
++    return (long)ts.tv_sec;
++}
++
++/* virtual_mutex held: gives the remaining placeholder pieces of slot `i` back and forgets it. */
++static void ios_image_hold_end( unsigned i, const char *why )
++{
++    char *cur = (char *)ios_image_holds[i].base, *hend = cur + ios_image_holds[i].size;
++    unsigned freed = 0;
++
++    while (cur < hend)
++    {
++        struct file_view *v = find_view_range( cur, hend - cur );
++        if (!v) break;
++        if (v->base > (void *)cur) cur = v->base;
++        if ((v->protect & VPROT_FREE_PLACEHOLDER) && (char *)v->base >= (char *)ios_image_holds[i].base && (char *)v->base + v->size <= hend)
++        {
++            char *next = (char *)v->base + v->size;
++            delete_view( v );
++            freed++;
++            cur = next;
++        }
++        else cur = (char *)v->base + v->size;
++    }
++    dprintf( 2, "[image-hold] 0193 hold at 0x%lx+0x%lx ended (%s): %u placeholder piece(s) given back\n",
++             (unsigned long)ios_image_holds[i].base, (unsigned long)ios_image_holds[i].size, why, freed );
++    memset( &ios_image_holds[i], 0, sizeof(ios_image_holds[i]) );
++    ios_image_hold_live--;
++}
++
++static void ios_image_hold_expire( void )
++{
++    unsigned i;
++    long now = ios_image_hold_now();
++    for (i = 0; i < IOS_IMAGE_HOLD_SLOTS; i++)
++        if (ios_image_holds[i].size && now - ios_image_holds[i].born > IOS_IMAGE_HOLD_LIFE_S) ios_image_hold_end( i, "its time is up" );
++}
++
++/* virtual_mutex held, the process's main image view already deleted: keeps its range as a free placeholder. */
++static void ios_image_hold_make( void *base, size_t size )
++{
++    struct file_view *hv;
++    NTSTATUS st;
++    unsigned i;
++
++    ios_image_hold_expire();
++    for (i = 0; i < IOS_IMAGE_HOLD_SLOTS; i++) if (!ios_image_holds[i].size) break;
++    if (i == IOS_IMAGE_HOLD_SLOTS) { dprintf( 2, "[image-hold] 0193 no free slot for %p+0x%lx\n", base, (unsigned long)size ); return; }
++    if ((st = map_fixed_area( base, size, PROT_NONE )))
++    {
++        dprintf( 2, "[image-hold] 0193 could not hold %p+0x%lx: the host range is not free (status %08x)\n", base, (unsigned long)size, (unsigned)st );
++        return;
++    }
++    if ((st = create_view( &hv, base, size, VPROT_PLACEHOLDER | VPROT_FREE_PLACEHOLDER )))
++    {
++        unmap_area( base, size );
++        dprintf( 2, "[image-hold] 0193 could not hold %p+0x%lx: view refused (status %08x)\n", base, (unsigned long)size, (unsigned)st );
++        return;
++    }
++    ios_image_holds[i].base = (ULONG_PTR)base; ios_image_holds[i].size = size; ios_image_holds[i].born = ios_image_hold_now();
++    ios_image_hold_live++;
++    dprintf( 2, "[image-hold] 0193 the process unmapped its main image: %p+0x%lx is held for it (MADEIRA_IMAGE_HOLD=1, ends after %d s)\n",
++             base, (unsigned long)size, IOS_IMAGE_HOLD_LIFE_S );
+ }
+ 
++/* virtual_mutex held: a MEM_RESERVE at `base` by the process; takes what it covers out of a hold so the ordinary reservation can follow. */
++static void ios_image_hold_carve( void *base, size_t size )
++{
++    static unsigned n;
++    char *cur = base, *end = (char *)base + ROUND_SIZE( 0, size, host_page_mask );
++    unsigned i, carved = 0;
++    NTSTATUS st = STATUS_SUCCESS;
+ 
++    ios_image_hold_expire();
++    for (i = 0; i < IOS_IMAGE_HOLD_SLOTS; i++)
++        if (ios_image_holds[i].size && (ULONG_PTR)cur < ios_image_holds[i].base + ios_image_holds[i].size && (ULONG_PTR)end > ios_image_holds[i].base) break;
++    if (i == IOS_IMAGE_HOLD_SLOTS) return;
++    while (cur < end)
++    {
++        struct file_view *v = find_view( cur, 0 );
++        char *piece_end;
++
++        if (!v || !(v->protect & VPROT_FREE_PLACEHOLDER) || (ULONG_PTR)v->base < ios_image_holds[i].base ||
++            (ULONG_PTR)v->base + v->size > ios_image_holds[i].base + ios_image_holds[i].size) break;
++        /* A request that reaches the end of the placeholder takes it to its exact end (a view's size is a multiple of 4 KB, not of the host's 16 KB page: rounding the end
++         * down left a 12 KB tail that the game's map then ran into, c0000018, 2026-11-08 second log); a request that ends inside it ends on a host page boundary. */
++        piece_end = (char *)v->base + v->size;
++        if (end < piece_end) piece_end = end;
++        if (piece_end <= cur) break;
++        if ((st = free_pages( v, cur, piece_end - cur ))) break;
++        carved++;
++        cur = piece_end;
++    }
++    if (++n <= 64 || !(n % 256))
++        dprintf( 2, "[image-hold] 0193 #%u reserve %p+0x%lx inside the hold at 0x%lx: %u piece(s) taken out of the placeholder, status %08x\n",
++                 n, base, (unsigned long)size, (unsigned long)ios_image_holds[i].base, carved, (unsigned)st );
++}
++#endif
++
++
+ /***********************************************************************
+  *           coalesce_placeholders
+  *
+@@ -32741,6 +32873,11 @@
+ 
+     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+     ios_alloc_ec_code = (attributes & MEM_EXTENDED_PARAMETER_EC_CODE) != 0;   /* see ios_guest_anon_rwx_is_host_data */
++#ifdef WINE_IOS
++    /* Porthole 0193: see ios_image_hold_carve */
++    if (ios_image_hold_live && base && (type & MEM_RESERVE) && !(type & (MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)))
++        ios_image_hold_carve( base, size );
++#endif
+ 
+     if ((type & MEM_RESERVE) || !base)
+     {
+@@ -39759,6 +39896,17 @@
+         if (view->protect & SEC_IMAGE) ios_image_lowalias_retire( (unsigned long long)(uintptr_t)view->base );
+ #endif
+         if (flags & MEM_PRESERVE_PLACEHOLDER) free_pages_preserve_placeholder( view, view->base, view->size );
++#ifdef WINE_IOS
++        else if (ios_image_hold_enabled() && (view->protect & SEC_IMAGE) && view->size >= IOS_IMAGE_HOLD_MIN &&
++                 NtCurrentTeb() && NtCurrentTeb()->Peb && view->base == NtCurrentTeb()->Peb->ImageBaseAddress)
++        {
++            void *hold_base = view->base;
++            size_t hold_size = view->size;
++
++            delete_view( view );
++            ios_image_hold_make( hold_base, hold_size );   /* Porthole 0193 */
++        }
++#endif
+         else delete_view( view );
+     }
+     else FIXME( "failed to unmap %p %x\n", view->base, status );

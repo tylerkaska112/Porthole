@@ -182,6 +182,6 @@ struct ReportSheet: View {
             if attached == nil { attached = await CompatLog.gather(for: game) }
             outcome = try await compat.submit(game: game, rating: rating, stability: stability, tags: tags.sorted { $0.rawValue < $1.rawValue },
                                               source: fromSteam ? .steam : (source ?? .other), stats: stats, shareNumbers: includeMeasured, shareSettings: shareSettings, comment: comment, log: attached)
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = ErrorText.plain(error) }
     }
 }

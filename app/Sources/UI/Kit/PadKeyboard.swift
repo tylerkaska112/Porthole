@@ -278,5 +278,6 @@ struct SearchField: View {
         .onTapGesture { if TextEntry.padMode { padOpen = true } }
         .focusTarget(id, radius: 20, scale: 1.02, label: "Type", action: { if TextEntry.padMode { padOpen = true } else { focused = true } })
         .sheet(isPresented: $padOpen) { PadKeyboardSheet(title: "Search", text: $text) }
+        .layoutValue(key: ControlsFlow.Flexible.self, value: true)    // in a store's controls it takes the room left on its line
     }
 }

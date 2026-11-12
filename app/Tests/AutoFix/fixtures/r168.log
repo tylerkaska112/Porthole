@@ -1,0 +1,4 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[21:25:05.866] [INFO] [mem-pressure] CRITICAL: app 5067 MB, free 1077 MB, gpu 2146 MB; malloc gave back 0 MB
+00b4:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=49523

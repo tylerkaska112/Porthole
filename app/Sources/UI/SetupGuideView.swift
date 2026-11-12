@@ -69,10 +69,11 @@ struct SetupGuideView: View {
     @State private var stikAvailable = StikJITHelper.isAvailable
     // Connection
     @AppStorage("f4.tunnelAllowed") private var tunnelAllowed = false
+    @AppStorage(TunnelManager.useLocalDevVPNKey) private var useLocalDevVPN = false
     @State private var tunnelMessage: String?
     @State private var tunnelBusy = false
     /// An install without the tunnel extension (or one told to use LocalDevVPN) has no private link of its own to allow.
-    private var tunnelNeeded: Bool { InstallCheck.hasTunnel && !TunnelManager.useLocalDevVPN }
+    private var tunnelNeeded: Bool { InstallCheck.hasTunnel && !useLocalDevVPN }
     private var jitReady: Bool {
         switch method {
         case .inApp: hasPairing
@@ -223,7 +224,7 @@ struct SetupGuideView: View {
     private var primaryTitle: String {
         switch step {
         case .welcome: "Let's start"
-        case .done: jitReady && tunnelAllowed ? "Start playing" : "Finish for now"
+        case .done: jitReady && (!tunnelNeeded || tunnelAllowed) ? "Start playing" : "Finish for now"
         default: complete(step) ? "Continue" : "Skip for now"
         }
     }
@@ -319,26 +320,30 @@ struct SetupGuideView: View {
                 ActionRow(id: "su-other-methods", symbol: "ellipsis.circle", title: "Use a different method", chevron: false) { showMethods = true }
             }
             if !InstallCheck.hasTunnel {
-                SettingsGroup(title: "Private link") {
-                    ValueRow(id: "su-tunnel-none", symbol: "link", title: "Comes from LocalDevVPN", value: "Nothing to allow", statusColor: Theme.good)
+                SettingsGroup(title: "Connection to your device") {
+                    ValueRow(id: "su-tunnel-none", symbol: "checkmark.circle.fill", title: "Comes from LocalDevVPN", value: "Nothing to allow", statusColor: Theme.good)
                 }
                 Text("This install has no tunnel of its own, which saves an App ID and leaves your own VPN alone. If your JIT tool needs a private link, turn LocalDevVPN on before you press Play.")
                     .font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
-            } else if TunnelManager.useLocalDevVPN {
-                SettingsGroup(title: "Private link") {
-                    ValueRow(id: "su-tunnel-localdev", symbol: "link", title: "Comes from LocalDevVPN", value: "Nothing to allow", statusColor: Theme.good)
+            } else if useLocalDevVPN {
+                SettingsGroup(title: "Connection to your device", note: "Turn LocalDevVPN on before you press Play and leave it on while the game runs.") {
+                    ValueRow(id: "su-tunnel-localdev", symbol: "checkmark.circle.fill", title: "Using LocalDevVPN", value: "Nothing to allow", statusColor: Theme.good)
+                    ActionRow(id: "su-tunnel-own-instead", symbol: "arrow.uturn.backward", title: "Use Porthole's own private link instead", subtitle: "Needs one permission from iOS", chevron: false) { useLocalDevVPN = false }
                 }
             } else {
-            SettingsGroup(title: "Private link") {
-                ValueRow(id: "su-tunnel-state", symbol: tunnelAllowed ? "checkmark.circle.fill" : "circle.dashed", title: tunnelAllowed ? "Allowed" : "Not allowed yet", value: tunnelAllowed ? "Done" : "Needed", statusColor: tunnelAllowed ? Theme.good : Theme.warn)
-                ActionRow(id: "su-tunnel", symbol: "link", title: tunnelBusy ? "Checking\u{2026}" : (tunnelAllowed ? "Check it again" : "Allow the private link"),
+            SettingsGroup(title: "Connection to your device", note: "To switch JIT on, Porthole reaches your device through a private connection. Either of these does it; you only need one.") {
+                ValueRow(id: "su-tunnel-state", symbol: tunnelAllowed ? "checkmark.circle.fill" : "circle.dashed", title: tunnelAllowed ? "Porthole's own private link is allowed" : "Choose LocalDevVPN or the private link", value: tunnelAllowed ? "Done" : "One of the two", statusColor: tunnelAllowed ? Theme.good : Theme.warn)
+                ActionRow(id: "su-tunnel-localdev-use", symbol: "network", title: "Use LocalDevVPN", subtitle: "A free app; nothing to allow in Porthole",
+                          info: "LocalDevVPN is a free app that makes the same private connection. Install it, switch it on before you press Play, and leave it on while the game runs. Porthole then does not start any connection of its own, and your own VPN is left alone.\n\nYou can change this later in Settings > JIT and connection.",
+                          chevron: false, prominent: !tunnelAllowed) { useLocalDevVPN = true }
+                ActionRow(id: "su-tunnel", symbol: "link", title: tunnelBusy ? "Checking\u{2026}" : (tunnelAllowed ? "Check it again" : "Or allow Porthole's own private link"),
                           info: "To switch JIT on, Porthole reaches your device's own debug service through a small private link that exists only inside your device.\n\niOS will ask whether Porthole may add a VPN configuration. That is how iOS describes this link. It is not a real VPN: nothing goes over the internet and none of your other traffic is touched. Tap Allow.\n\niOS allows one VPN at a time, so another VPN app pauses for a few seconds; Porthole asks first and helps you turn it back on.",
-                          chevron: false, prominent: !tunnelAllowed) {
+                          chevron: false) {
                     guard !tunnelBusy else { return }
                     tunnelBusy = true; tunnelMessage = nil
                     Task {
                         do { try await TunnelManager.shared.connect(); TunnelManager.shared.disconnect(); tunnelAllowed = true }
-                        catch { tunnelMessage = error.localizedDescription }
+                        catch { tunnelMessage = ErrorText.plain(error) }
                         tunnelBusy = false
                     }
                 }
@@ -402,7 +407,7 @@ struct SetupGuideView: View {
             if !short { header(ready ? "You're all set" : "Almost there") }
             if !ready { Text("Games won't start until full speed is set up.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
             SettingsGroup {
-                summaryRow(.speed, jitReady && (!tunnelNeeded || tunnelAllowed) ? "Full speed: \(method.title)" : (jitReady ? "Private link not allowed" : "Full speed isn't set up"))
+                summaryRow(.speed, jitReady && (!tunnelNeeded || tunnelAllowed) ? "Full speed: \(method.title)" : (jitReady ? "Connection not chosen yet (LocalDevVPN or the private link)" : "Full speed isn't set up"))
                 summaryRow(.downloads, runtimeReady ? "Windows components ready" : "Windows components missing")
                 summaryRow(.games, anyStore || !model.games.isEmpty ? "Games: \([steam.signedIn ? "Steam" : nil, epic.signedIn ? "Epic Games" : nil, gog.signedIn ? "GOG" : nil, itch.signedIn ? "itch.io" : nil, amazon.signedIn ? "Amazon Games" : nil, ea.signedIn ? "EA app" : nil, model.games.isEmpty ? nil : "\(model.games.count) imported"].compactMap { $0 }.joined(separator: ", "))" : "No games added yet")
             }

@@ -27,6 +27,9 @@ The Windows-on-iPhone backend is **[Madeira](https://github.com/willfaust/Madeir
   thunks, LuaJIT substitution for LOVE games). The fork's author notes it was written with AI assistance. Ported here as patches 0082 and 0083 (`docs/OPENGL.md`).
 - **[Mesa](https://gitlab.freedesktop.org/mesa/mesa)** (OSMesa, Zink; MIT), **[MoltenVK](https://github.com/KhronosGroup/MoltenVK)** (Khronos; Apache-2.0) with [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross), [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools) and [cereal](https://github.com/USCiLab/cereal), and **[LuaJIT](https://github.com/LuaJIT/LuaJIT)** (MIT).
 
+- **[DXVK](https://github.com/doitsujin/dxvk)** by Philip Rebohle and contributors (zlib licence; Direct3D 10/11 on Vulkan) with **[dxbc-spirv](https://github.com/doitsujin/dxbc-spirv)** (MIT) and **[libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info)** (MIT), and **[vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton)** by Hans-Kristian Arntzen, Valve and contributors (LGPL-2.1-or-later; Direct3D 12 on Vulkan): the opt-in Vulkan route (`d3d11 = dxvk`, `d3d12 = vkd3d`), built here with the scripts in Madeira's tree (`build/dxvk`, `build/vkd3d-proton`; their patches are listed in each folder's PATCHES.md). Licence texts are in Settings > Licenses.
+- **KosmicKrisp** (Mesa 26.2.4, `src/kosmickrisp`; MIT, like Mesa; written by LunarG and Mesa contributors): a Vulkan 1.4 driver on Metal 4, the alternative Vulkan library for that route (`vulkan = kosmickrisp`), built here for iOS with the engine's `build/mesa-ios/build-kosmickrisp.sh` and its iOS patches.
+
 ## Madeira pull requests taken on 2026-10-12 (patches 0119, 0120)
 Open pull requests of <https://github.com/willfaust/Madeira>, taken with their authors' names (each is GPL-3.0-or-later with Madeira's converter exception): **#235 external SSD Steam
 library** (David Brookes; `docs/EXTERNAL_STORAGE.md`), **#207 Epic Games** (125hz, a port of [Legendary](https://github.com/derrod/legendary) by derrod and contributors; `docs/EPIC.md`),
@@ -37,6 +40,11 @@ lock), **#214/#215** (Kesavamoorthig06: tar extraction hardening), **#210** (Mir
 ## On-device pairing file (iOS 27)
 - **[idevice](https://github.com/jkcoxson/idevice)** documented the remote-pairing "pairable host" conversation; **[StikPair](https://github.com/StikDebug/StikPair)** (MIT non-commercial) showed it working on iPhones.
   Our implementation (`app/Sources/Pairing`) is a separate Swift rewrite and uses none of their code.
+
+## Ideas from other projects (no code copied)
+The on-screen controls of 1.3 were shaped by looking at how two other Madeira-based apps solve the same problems. Nothing below was copied: each piece was written for Porthole from the idea.
+- **[Playport](https://github.com/playportdev/playport)** (GPL-3.0-or-later): floating sticks, the offer to switch to keyboard-and-mouse controls when a game never asks for a controller, a trackpad-style pointer with tap, tap-and-drag and two-finger scroll, and a full touch keyboard with sticky modifiers.
+- **[BCD](https://github.com/thebcd69/bcd-games)** by thebcd69 (GPL-3.0 with additional terms): controls that hide when they are not touched, and layouts that mix controller and keyboard controls.
 
 ## Our own
 - App, Library, setup guide, installers, game importer, Steam store/downloads UI, tunnel, updater: this project. The on-device signer and update pipeline (`Packages/LauncherCore`) were written for this author's companion signing app and are included here.

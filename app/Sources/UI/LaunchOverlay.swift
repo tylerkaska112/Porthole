@@ -6,6 +6,7 @@ import UIKit
 /// What the launch screen shows, read live from the session.
 struct LaunchHost: View {
     @ObservedObject var session: SessionController
+    @ObservedObject private var menu = MenuPresence.shared
     let scope: FocusScope
 
     var body: some View {
@@ -20,6 +21,9 @@ struct LaunchHost: View {
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 8)
+                // The in-game menu opens over the right side: the pill stays in what is left of the screen instead of covering the menu's title.
+                .padding(.trailing, menu.panelWidth)
+                .animation(.spring(response: 0.32, dampingFraction: 0.9), value: menu.panelWidth)
             } else if let data = session.launchData {
                 LaunchView(data: data, scope: scope, cancel: { session.cancelLaunch() }, showSteam: session.canPeekAtSteam ? { session.launchPeeking = true } : nil)
                     .environment(\.artLoader, AppArt.loader)
@@ -83,7 +87,8 @@ final class PassthroughWindow: UIWindow {
     override var canBecomeKey: Bool { false }
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard pillOnly else { return super.hitTest(point, with: event) }
-        let pill = CGRect(x: bounds.midX - 120, y: 0, width: 240, height: 64)
+        let free = max(240, bounds.width - MenuPresence.shared.panelWidth)          // the part of the screen the open menu leaves
+        let pill = CGRect(x: free / 2 - 120, y: 0, width: 240, height: 64)
         return pill.contains(point) ? super.hitTest(point, with: event) : nil
     }
 }

@@ -1,0 +1,62 @@
+--- a/src/d3d11/d3d11_swapchain.cpp	2026-11-08 23:41:30
++++ b/src/d3d11/d3d11_swapchain.cpp	2026-11-08 23:41:30
+@@ -822,7 +822,7 @@
+     std::vector<Rc<Texture>> lsfg_upscaled;   /* with the MetalFX scaler on: where each generated frame is enlarged to */
+     if constexpr (EnableMetalFX) {
+       for (size_t i = 0; i < lsfg_frames.size(); i++) {
+-        if (!EnsureUpscaledGenerated(i)) { lsfg_frames.clear(); lsfg_upscaled.clear(); break; }
++        if (!EnsureUpscaledGenerated(i, lsfg_frames[i])) { lsfg_frames.clear(); lsfg_upscaled.clear(); break; }
+         lsfg_upscaled.push_back(upscaled_generated_[i]->texture());
+       }
+     }
+@@ -869,7 +869,7 @@
+       if constexpr (EnableMetalFX) {
+         if (i >= lsfg_upscaled.size()) break;
+         generated_chunk->emitcc([
+-          this, vsync_duration, meta = present_state.metadata, scaler = this->metalfx_scaler, src = lsfg_frames[i], dst = lsfg_upscaled[i]
++          this, vsync_duration, meta = present_state.metadata, scaler = (lsfg_gen_own_scaler_ ? this->metalfx_scaler_gen : this->metalfx_scaler), src = lsfg_frames[i], dst = lsfg_upscaled[i]
+         ](ArgumentEncodingContext &ctx) mutable {
+           ctx.upscale(src, dst, scaler);
+           ctx.present(dst, presenter, vsync_duration, meta);
+@@ -935,9 +935,30 @@
+   /* Porthole: feeds this frame to the Lossless Scaling passes and returns the frames to show before it. Called before the device lock is taken
+    * (the passes go through the ordinary D3D11 interface, which takes it). */
+   /* Porthole: the enlarged picture for generated frame `i` (MetalFX variant), made the way upscaled_backbuffer_ is. */
+-  bool EnsureUpscaledGenerated(size_t i) {
++  bool EnsureUpscaledGenerated(size_t i, Rc<Texture> &generated) {
++    /* Porthole 0197: with an sRGB back buffer the generated pictures are 16-bit floats (see lsfg::FrameGen), not the back buffer's format; the scaler of the game's own picture was
++     * made for that format and gave flickering garbage for every generated frame (2026-11-08, Schedule I with upscaling and frame generation). They get a scaler and enlarged
++     * pictures of their own in their own format; the presenter samples either the same way. */
++    auto gen_pf = generated->pixelFormat();
++    DXGI_FORMAT gen_fmt = lsfg_ ? lsfg_->generatedFormat() : backbuffer_desc_.Format;
++    bool own = gen_pf != backbuffer_->texture()->pixelFormat();
++    if (own && (!metalfx_scaler_gen || lsfg_gen_pf_ != gen_pf)) {
++      WMTFXSpatialScalerInfo info;
++      info.input_height = desc_.Height;
++      info.input_width = desc_.Width;
++      info.output_height = desc_.Height * scale_factor;
++      info.output_width = desc_.Width * scale_factor;
++      info.color_format = gen_pf;
++      info.output_format = gen_pf;
++      metalfx_scaler_gen = device_->GetMTLDevice().newSpatialScaler(info);
++      if (!metalfx_scaler_gen) return false;
++      lsfg_gen_pf_ = gen_pf;
++      upscaled_generated_.clear();
++    }
++    lsfg_gen_own_scaler_ = own;
+     while (upscaled_generated_.size() <= i) {
+       D3D11_TEXTURE2D_DESC1 d = backbuffer_desc_;
++      if (own) d.Format = gen_fmt;
+       d.Height *= scale_factor;
+       d.Width *= scale_factor;
+       Com<D3D11ResourceCommon> tex;
+@@ -1320,6 +1341,9 @@
+   double lsfg_stat_cpu_ms_ = 0;
+ 
+   std::conditional<EnableMetalFX, WMT::Reference<WMT::FXSpatialScaler>, std::monostate>::type metalfx_scaler;
++  WMT::Reference<WMT::FXSpatialScaler> metalfx_scaler_gen;   /* Porthole 0197: for generated pictures whose format is not the back buffer's */
++  WMTPixelFormat lsfg_gen_pf_ = WMTPixelFormatInvalid;
++  bool lsfg_gen_own_scaler_ = false;
+   std::conditional<EnableMetalFX, Com<D3D11ResourceCommon>, std::monostate>::type upscaled_backbuffer_;
+   float scale_factor = 1.0;
+ };

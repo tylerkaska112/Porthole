@@ -18,12 +18,19 @@ if [ -L "$top" ]; then
   target="$(readlink "$top")"
   case "$target" in "$HERE"/*|"$ROOT"/*) ;; /*) echo "✗ app/RuntimeStage -> $target"; bad=$((bad + 1)) ;; esac
 fi
+# A worktree whose vendor/Madeira is a link to a shared engine clone: staged files that point into another worktree's link to the same clone are this checkout's engine too.
+VENDOR_REAL="$(cd "$HERE/vendor/Madeira" 2>/dev/null && pwd -P || true)"
 while IFS= read -r link; do
   target="$(readlink "$link")"
   case "$target" in
-    "$HERE"/*|"$ROOT"/*) ;;                                  # this checkout's own files, or this build folder
-    /*) echo "✗ ${link#$HERE/} -> $target"; bad=$((bad + 1)) ;;
+    "$HERE"/*|"$ROOT"/*) continue ;;                         # this checkout's own files, or this build folder
+    /*) ;;
+    *) continue ;;
   esac
+  if [ -n "$VENDOR_REAL" ] && [ -e "$target" ]; then
+    case "$(cd "$(dirname "$target")" && pwd -P)/" in "$VENDOR_REAL"/*) continue ;; esac
+  fi
+  echo "✗ ${link#$HERE/} -> $target"; bad=$((bad + 1))
 done < <(find -H "$HERE/app/RuntimeStage" -type l)
 if [ "$bad" -gt 0 ]; then
   echo "✗ $bad staged file(s) come from outside this checkout and outside $ROOT: the runtime was staged for another build."

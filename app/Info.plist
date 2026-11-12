@@ -40,8 +40,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GCSupportsGameMode</key>
 	<true/>
-	<key>UIApplicationSupportsIndirectInputEvents</key>
-	<true/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.games</string>
 	<key>LSApplicationQueriesSchemes</key>
@@ -86,6 +84,8 @@
 	<string>$(PORTHOLE_SOURCE_URL)</string>
 	<key>PortholeStorageFolder</key>
 	<string>$(PORTHOLE_STORAGE_FOLDER)</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -111,5 +111,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UISupportsDocumentBrowser</key>
+	<true/>
 </dict>
 </plist>

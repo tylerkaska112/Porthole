@@ -144,7 +144,7 @@ struct GogGalaxyTokens: GalaxyTokenSource {
             let changed = try SteamInstallRegistry.write(values, prefix: AppModel.prefix)
             if changed > 0 { log("[galaxy] GalaxyCommunication service registered values=\(changed)") }
         } catch {
-            log("[galaxy] GalaxyCommunication service not registered: \(error.localizedDescription)")
+            log("[galaxy] GalaxyCommunication service not registered: \(ErrorText.plain(error))")
         }
     }
 }

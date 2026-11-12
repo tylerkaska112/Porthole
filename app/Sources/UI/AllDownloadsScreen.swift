@@ -384,6 +384,7 @@ struct AllDownloadsScreen: View {
         let line = item.failure ?? (item.progress.totalBytes > 0 ? "Paused at \(Int(item.progress.fraction * 100))%" : "Paused")
         return row(item, line: line, lineColor: failed ? Theme.bad : Theme.textDim) {
             PillButton(id: "dl-resume-\(item.id)", title: failed ? "Try again" : "Resume", symbol: failed ? "arrow.clockwise" : "play.fill", style: .primary) { Downloads.resume(item) }
+            if let why = item.failure { PillButton(id: "dl-help-\(item.id)", title: "What does this mean?", symbol: "questionmark.circle") { DocsLink.open(why) } }
             PillButton(id: "dl-cancel-\(item.id)", title: "Cancel", symbol: "xmark", style: .danger) { Downloads.cancel(item) }
         }
     }

@@ -72,15 +72,27 @@ enum HUDKeys {
 
 /// A small translucent button that sends a key. `.hold` keeps the key down while the finger is down, `.tap` sends a press and release,
 /// `.latch` toggles the key down/up on each tap (for Shift, Ctrl, Alt).
+/// The light tap of a pressed on-screen control (a layout can switch it off).
+enum ControlHaptics {
+    static var enabled = true
+    private static let generator = UIImpactFeedbackGenerator(style: .light)
+    static func tap() { if enabled { generator.impactOccurred(intensity: 0.6) } }
+}
+
 final class KeyButton: UIButton {
     /// `.press`: the key goes down when the finger does and up when it lifts, but never sooner than a tap's length, so a quick tap is a tap and holding it is a hold.
     enum Behavior { case hold(Int32), tap(Int32), latch(Int32), press(Int32) }
     private var pressedAt: CFAbsoluteTime = 0
     private let behavior: Behavior
+    /// Keys held down together with this one (a combo: Shift+Space), pressed first and let go last.
+    private let extra: [Int32]
     private var latched = false { didSet { refresh() } }
+    /// A layout's colour for this key (nil: the usual dark one).
+    var baseColour: UIColor? { didSet { refresh() } }
 
-    init(_ title: String, _ behavior: Behavior, side: CGFloat? = nil) {
+    init(_ title: String, _ behavior: Behavior, side: CGFloat? = nil, extra: [Int32] = []) {
         self.behavior = behavior
+        self.extra = extra
         super.init(frame: .zero)
         setTitle(title, for: .normal)
         setTitleColor(.white, for: .normal)
@@ -102,28 +114,30 @@ final class KeyButton: UIButton {
         refresh()
         switch behavior {
         case .hold(let vk):
-            addAction(UIAction { _ in HUDKeys.down(vk) }, for: .touchDown)
-            addAction(UIAction { _ in HUDKeys.up(vk) }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+            addAction(UIAction { [extra] _ in extra.forEach { HUDKeys.down($0) }; HUDKeys.down(vk) }, for: .touchDown)
+            addAction(UIAction { [extra] _ in HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) } }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
         case .press(let vk):
-            addAction(UIAction { [weak self] _ in self?.pressedAt = CFAbsoluteTimeGetCurrent(); HUDKeys.down(vk) }, for: .touchDown)
-            addAction(UIAction { [weak self] _ in
+            addAction(UIAction { [weak self, extra] _ in self?.pressedAt = CFAbsoluteTimeGetCurrent(); extra.forEach { HUDKeys.down($0) }; HUDKeys.down(vk) }, for: .touchDown)
+            addAction(UIAction { [weak self, extra] _ in
                 let wait = max(0, 0.07 - (CFAbsoluteTimeGetCurrent() - (self?.pressedAt ?? 0)))
-                if wait == 0 { HUDKeys.up(vk) } else { DispatchQueue.main.asyncAfter(deadline: .now() + wait) { HUDKeys.up(vk) } }
+                let up = { HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) } }
+                if wait == 0 { up() } else { DispatchQueue.main.asyncAfter(deadline: .now() + wait) { up() } }
             }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
         case .tap(let vk):
-            addAction(UIAction { _ in HUDKeys.tap(vk) }, for: .touchUpInside)
+            // The modifiers stay down until after the key is up again (HUDKeys.tap holds it 0.07 s): a game that polls once a frame must see both together.
+            addAction(UIAction { [extra] _ in extra.forEach { HUDKeys.down($0) }; HUDKeys.tap(vk); if !extra.isEmpty { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { extra.reversed().forEach { HUDKeys.up($0) } } } }, for: .touchUpInside)
         case .latch(let vk):
-            addAction(UIAction { [weak self] _ in
+            addAction(UIAction { [weak self, extra] _ in
                 guard let self else { return }
                 self.latched.toggle()
-                self.latched ? HUDKeys.down(vk) : HUDKeys.up(vk)
+                if self.latched { extra.forEach { HUDKeys.down($0) }; HUDKeys.down(vk) } else { HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) } }
             }, for: .touchUpInside)
         }
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private func refresh() { backgroundColor = latched ? UIColor.systemGreen.withAlphaComponent(0.8) : UIColor(white: 0, alpha: 0.55) }
+    private func refresh() { backgroundColor = latched ? UIColor.systemGreen.withAlphaComponent(0.8) : (baseColour ?? UIColor(white: 0, alpha: 0.55)) }
 
     /// Releases a latched key (when the game ends).
-    func release() { if latched, case .latch(let vk) = behavior { HUDKeys.up(vk); latched = false } }
+    func release() { if latched, case .latch(let vk) = behavior { HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) }; latched = false } }
 }

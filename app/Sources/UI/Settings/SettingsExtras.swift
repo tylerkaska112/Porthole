@@ -6,7 +6,11 @@ import LauncherCore
 // MARK: - Updates
 
 struct UpdatesPage: View {
+    /// The Updates page and the Signing page are two pages of Settings made of the same view: they share the certificate and update state.
+    enum Mode { case updates, signing }
+    var mode: Mode = .updates
     @Environment(UpdateService.self) private var updates
+    @Environment(AppRouter.self) private var router
     private enum Pick { case certificate, profile }
     @State private var picking: Pick?
     @State private var pendingP12: Data?
@@ -29,41 +33,8 @@ struct UpdatesPage: View {
     private static let perPage = 5
 
     var body: some View {
-        PageScaffold(title: "Updates", symbol: "arrow.triangle.2.circlepath", subtitle: "Keep Porthole up to date") {
-            SettingsGroup(title: "This app", note: "The version you are on and whether a newer one is ready.") {
-                ValueRow(id: "up-version", symbol: "app.badge.fill", title: "Installed", value: "\(updates.version) (\(updates.build))")
-                statusRow
-                ActionRow(id: "up-check", symbol: "arrow.clockwise", title: "Check for updates", chevron: false) { Task { await updates.check() } }
-                if let release = updates.available {
-                    if updates.vault.canSign {
-                        ActionRow(id: "up-install", symbol: "arrow.down.circle.fill", title: "Update to \(release.title)", subtitle: release.summary.isEmpty ? nil : release.summary, chevron: false) {
-                            if !updates.pipeline.isBusy { updates.startUpdate(release) }
-                        }
-                    } else {
-                        ActionRow(id: "up-install", symbol: "arrow.down.circle.fill", title: "Download \(release.title)", subtitle: release.summary.isEmpty ? "The file, to install yourself" : release.summary,
-                                  detail: downloadingBuild == release.build ? "\(Int(downloadFraction * 100))%" : nil, chevron: false) { download(release) }
-                    }
-                }
-                if downloadingBuild != nil, !updates.vault.canSign { progressRow("Downloading", downloadFraction) }
-                if let downloadError { Text(downloadError).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
-                jobRows
-            }
-            allVersions
-            SettingsGroup(title: "Signing", note: "The certificate and profile used to install and update. A free Apple account's signature lasts seven days.") {
-                ForEach(updates.vault.certificates) { c in
-                    ActionRow(id: "up-cert-\(c.id)", symbol: "person.text.rectangle.fill", title: c.label, subtitle: "Certificate", detail: "Remove", destructive: true, chevron: false) { updates.vault.removeCertificate(id: c.id) }
-                }
-                ForEach(updates.vault.profiles) { p in
-                    ActionRow(id: "up-prof-\(p.id)", symbol: "doc.badge.gearshape.fill", title: p.profile.name, subtitle: profileDetail(p.profile), detail: "Remove", destructive: true, chevron: false) { updates.vault.removeProfile(id: p.id) }
-                }
-                ForEach(updates.vault.problems(), id: \.id) { problem in
-                    Text("\(problem.subject): \(problem.message)").font(.footnote).foregroundStyle(Theme.warn).padding(.horizontal, 6)
-                }
-                ActionRow(id: "up-explain", symbol: "questionmark.circle.fill", title: "What is this?", subtitle: "Why the app needs a certificate and a profile to update itself", chevron: false) { explaining = true }
-                ActionRow(id: "up-import-cert", symbol: "square.and.arrow.down", title: "Import a certificate (.p12)") { picking = .certificate }
-                ActionRow(id: "up-import-prof", symbol: "square.and.arrow.down", title: "Import a profile (.mobileprovision)") { picking = .profile }
-                if let message = updates.message { Text(message).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
-            }
+        Group {
+            if mode == .updates, router.settingsSub == .olderVersions { SubPage(sub: .olderVersions, symbol: "clock.arrow.circlepath") { allVersions } } else { main }
         }
         .task { await updates.check() }
         .sheet(isPresented: $explaining) { SigningExplainerView() }
@@ -97,6 +68,55 @@ struct UpdatesPage: View {
         } message: { Text("The password you set when you exported the .p12.") }
     }
 
+    private var main: some View {
+        PageScaffold(title: mode == .updates ? "Updates" : "Signing", symbol: mode == .updates ? "arrow.triangle.2.circlepath" : "person.text.rectangle.fill",
+                     subtitle: mode == .updates ? "Keep Porthole up to date" : "The certificate and profile that install and update Porthole") {
+            if mode == .updates {
+            SettingsGroup(title: "This app", note: "The version you are on and whether a newer one is ready.") {
+                ValueRow(id: "up-version", symbol: "app.badge.fill", title: "Installed", value: "\(updates.version) (\(updates.build))")
+                statusRow
+                ActionRow(id: "up-check", symbol: "arrow.clockwise", title: "Check for updates", chevron: false) { Task { await updates.check() } }
+                if let release = updates.available {
+                    if updates.vault.canSign {
+                        ActionRow(id: "up-install", symbol: "arrow.down.circle.fill", title: "Update to \(release.title)", subtitle: release.summary.isEmpty ? nil : release.summary, chevron: false) {
+                            if !updates.pipeline.isBusy { updates.startUpdate(release) }
+                        }
+                    } else {
+                        ActionRow(id: "up-install", symbol: "arrow.down.circle.fill", title: "Download \(release.title)", subtitle: release.summary.isEmpty ? "The file, to install yourself" : release.summary,
+                                  detail: downloadingBuild == release.build ? "\(Int(downloadFraction * 100))%" : nil, chevron: false) { download(release) }
+                    }
+                }
+                if downloadingBuild != nil, !updates.vault.canSign { progressRow("Downloading", downloadFraction) }
+                if let downloadError { Text(downloadError).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
+                jobRows
+            }
+            if let releases = updates.status?.releases, !releases.isEmpty {
+                SettingsGroup(title: "Versions", note: "Every build on the update server, so you can go back to an older one.") {
+                    ActionRow(id: SettingsSub.olderVersions.rowID, symbol: "clock.arrow.circlepath", title: "Older versions", subtitle: "Read what each build changed, or go back to one",
+                              detail: "\(releases.count)") { router.settingsSub = .olderVersions }
+                }
+            }
+            }
+            if mode == .signing {
+            SettingsGroup(title: "Signing", note: "The certificate and profile used to install and update. A free Apple account's signature lasts seven days.") {
+                ForEach(updates.vault.certificates) { c in
+                    ActionRow(id: "up-cert-\(c.id)", symbol: "person.text.rectangle.fill", title: c.label, subtitle: "Certificate", detail: "Remove", destructive: true, chevron: false) { updates.vault.removeCertificate(id: c.id) }
+                }
+                ForEach(updates.vault.profiles) { p in
+                    ActionRow(id: "up-prof-\(p.id)", symbol: "doc.badge.gearshape.fill", title: p.profile.name, subtitle: profileDetail(p.profile), detail: "Remove", destructive: true, chevron: false) { updates.vault.removeProfile(id: p.id) }
+                }
+                ForEach(updates.vault.problems(), id: \.id) { problem in
+                    Text("\(problem.subject): \(problem.message)").font(.footnote).foregroundStyle(Theme.warn).padding(.horizontal, 6)
+                }
+                ActionRow(id: "up-explain", symbol: "questionmark.circle.fill", title: "What is this?", subtitle: "Why the app needs a certificate and a profile to update itself", chevron: false) { explaining = true }
+                ActionRow(id: "up-import-cert", symbol: "square.and.arrow.down", title: "Import a certificate (.p12)") { picking = .certificate }
+                ActionRow(id: "up-import-prof", symbol: "square.and.arrow.down", title: "Import a profile (.mobileprovision)") { picking = .profile }
+                if let message = updates.message { Text(message).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
+            }
+            }
+        }
+    }
+
     private struct PickWrapper: Identifiable { let pick: Pick; var id: Int { pick == .certificate ? 0 : 1 } }
 
     /// Without a certificate there is nothing to sign with: fetch the file as the server has it and hand it to the share sheet (Save to Files, AirDrop, another app).
@@ -107,7 +127,7 @@ struct UpdatesPage: View {
             do {
                 let url = try await client.download(release, to: FileStorage.cacheURL("Downloads")) { fraction in Task { @MainActor in downloadFraction = fraction } }
                 downloaded = DownloadedFile(url: url)
-            } catch { downloadError = error.localizedDescription }
+            } catch { downloadError = ErrorText.plain(error) }
             downloadingBuild = nil
         }
     }
@@ -200,7 +220,7 @@ struct UpdatesPage: View {
     }
 
     private func handle(_ url: URL?, as kind: Pick) {
-        guard let url, let data = try? Data(contentsOf: url) else { updates.message = "Could not read that file."; return }
+        guard let url, let data = try? Data(contentsOf: url) else { updates.message = "Porthole could not read that file. If it is in Files or iCloud, make sure it has finished downloading, then choose it again."; return }
         SecretFiles.discard(url)          // the picker's copy; what matters is kept in the Keychain
         updates.message = nil
         switch kind {
@@ -209,13 +229,13 @@ struct UpdatesPage: View {
             pendingP12 = data; password = ""; askPassword = true
         case .profile:
             guard url.hasExtension("mobileprovision") else { updates.message = "That is not a .mobileprovision file."; return }
-            do { _ = try updates.vault.importProfile(data) } catch { updates.message = error.localizedDescription }
+            do { _ = try updates.vault.importProfile(data) } catch { updates.message = ErrorText.plain(error) }
         }
     }
 
     private func importCertificate() {
         guard let data = pendingP12 else { return }
-        do { _ = try updates.vault.importCertificate(data, password: password) } catch { updates.message = error.localizedDescription }
+        do { _ = try updates.vault.importCertificate(data, password: password) } catch { updates.message = ErrorText.plain(error) }
         pendingP12 = nil; password = ""
     }
 }
@@ -223,14 +243,22 @@ struct UpdatesPage: View {
 // MARK: - Compatibility reports
 
 struct ReportsSettingsPage: View {
+    /// Compatibility reports and Fixing problems are two pages of Settings made of the same view (they share the switches and the reporting key).
+    enum Mode { case reports, fixing }
+    var mode: Mode = .reports
     @Environment(AppRouter.self) private var router
     @ObservedObject private var compat = CompatStore.shared
     @AppStorage(CompatStore.showBadgesKey) private var showBadges = true
     @AppStorage(CompatStore.askKey) private var ask = true
+    @AppStorage(AutoFixStore.enabledKey) private var autofix = true
+    @AppStorage(AutoFixStore.askKey) private var autofixAsk = true
+    @ObservedObject private var fixes = AutoFixStore.shared
     @State private var confirmReset = false
 
     var body: some View {
-        PageScaffold(title: "Compatibility reports", symbol: "checkmark.seal.fill", subtitle: "How reports and badges work for you") {
+        PageScaffold(title: mode == .reports ? "Compatibility reports" : "Fixing problems", symbol: mode == .reports ? "checkmark.seal.fill" : "wand.and.stars",
+                     subtitle: mode == .reports ? "How reports and badges work for you" : "What Porthole may change when a game stops for a known cause") {
+            if mode == .reports {
             SettingsGroup(title: "Reports tab", note: "How your games run on this version of the engine, what other people reported, and the reports you sent.") {
                 ActionRow(id: "rp-open", symbol: "checkmark.seal.fill", title: "Open the Reports tab", subtitle: "Your games and everything people reported") { router.openReports(.mine) }
                 ActionRow(id: "rp-mine", symbol: "paperplane.fill", title: "My reports",
@@ -241,12 +269,63 @@ struct ReportsSettingsPage: View {
                           info: "Badges come from reports other people sent. After a game you can send one yourself; it takes under a minute.", isOn: $showBadges)
                 ToggleRow(id: "rp-ask", symbol: "questionmark.bubble.fill", title: "Ask me how a game ran", isOn: $ask)
             }
+            }
+            if mode == .fixing {
+            SettingsGroup(title: "Fixing problems", note: "When a game stops and its log clearly shows a known cause, Porthole can suggest changing one setting of that game. By default it asks first and changes nothing until you say yes. It never touches app-wide settings and you can undo a change. Nothing is sent anywhere.") {
+                ToggleRow(id: "rp-autofix", symbol: "wand.and.stars", title: "Look for known problems",
+                          info: "Examples: a game that needs AVX could get AVX turned on; a game that ran out of memory could get a swap file. Porthole reads the game's log after it stops and shows what it found on the Home screen. A game gets each fix once.", isOn: $autofix)
+                if autofix {
+                    ToggleRow(id: "rp-autofix-ask", symbol: "questionmark.bubble.fill", title: "Ask me before changing a game",
+                              info: "On (the default): a fix is only suggested, with Apply on the Home screen, and nothing about the game changes until you tap it. Off: the fix is made at once and the Home screen shows it with an Undo button.", isOn: $autofixAsk)
+                }
+            }
+            fixHistory
+            }
+            if mode == .reports {
             SettingsGroup(title: "Privacy", note: "Reports carry a random key kept on this device, not your name, and the game's log, which only the developer can read.") {
                 ActionRow(id: "rp-forget", symbol: "person.fill.xmark", title: "Forget my reporting identity",
                           info: "Reports are tied to a random key kept on this device, not to you. Forgetting it starts fresh: your old reports stay up but you can no longer edit or delete them.", destructive: true, chevron: false) { confirmReset = true }
             }
+            }
         }
         .confirm("Forget this device's reporting identity?", confirmTitle: "Forget", destructive: true, isPresented: $confirmReset) { compat.forgetLocalData() }
+    }
+
+    // MARK: What was changed
+
+    /// What the automatic fixes did, newest first, with what the run after each one showed and an Undo while one can still be taken back.
+    @ViewBuilder private var fixHistory: some View {
+        let recent = Array(fixes.entries.reversed().prefix(10))
+        SettingsGroup(title: "What was changed", note: recent.isEmpty ? "Nothing yet. When a game stops for a known cause and Porthole suggests or makes a change, it is listed here." : "The last \(recent.count == 10 ? "ten" : "\(recent.count)"), newest first.") {
+            ForEach(recent) { entry in
+                let asking = entry.state != nil
+                let undoable = !asking && !entry.undone && entry.adviceOnly != true && entry.outcome != "failed"
+                ActionRow(id: "rp-fix-\(entry.id.uuidString)", symbol: asking ? "questionmark.circle" : (entry.undone || entry.outcome == "failed" ? "arrow.uturn.backward.circle" : (entry.adviceOnly == true ? "info.circle" : "wand.and.stars")),
+                          tint: entry.outcome == "worked" ? Theme.good : Theme.accent,
+                          title: "\(entry.gameName): \(entry.title.lowercased())", subtitle: "\(Self.status(entry)) \u{00B7} \(Self.day(entry.at))",
+                          detail: asking ? "Apply" : (undoable ? "Undo" : nil), info: "\(entry.reason) \(entry.done)", chevron: false) {
+                    if asking { fixes.accept(entry) } else if undoable { fixes.undo(entry) }
+                }
+            }
+        }
+    }
+
+    private static func status(_ entry: AutoFixStore.Entry) -> String {
+        if entry.state == "proposed" { return "Waiting for your answer, nothing changed" }
+        if entry.state == "declined" { return "You said no, nothing changed" }
+        if entry.adviceOnly == true { return "Explained only, nothing changed" }
+        if entry.outcome == "failed" { return "Taken back: the next run did not help" }
+        if entry.undone { return "Put back by you" }
+        switch entry.outcome {
+        case "worked": return "Worked" + (entry.outcomeNote.map { " (\($0))" } ?? "")
+        case "unclear": return "Kept, the next run was not clear" + (entry.outcomeNote.map { " (\($0))" } ?? "")
+        default: return entry.tryStarted == true ? "Waiting for the run to be judged" : "Start the game again to test it"
+        }
+    }
+
+    private static func day(_ date: Date) -> String {
+        let f = RelativeDateTimeFormatter(); f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -287,7 +366,7 @@ struct LicencesSheet: View {
             AmbientBackdrop(animated: false)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Licences and source code").font(.system(size: 24, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
+                    Text("Licences and credits").font(.system(size: 24, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
                     Spacer()
                     PillButton(id: "lic-close", title: "Close", symbol: "xmark") { dismiss() }
                 }
@@ -299,6 +378,14 @@ struct LicencesSheet: View {
                             ForEach(LegalLibrary.porthole) { doc($0) }
                             if let source = BuildIdentity.sourceURL { ActionRow(id: "lic-src", symbol: "arrow.up.right.square", title: "Source code online", subtitle: source.absoluteString, chevron: false) { UIApplication.shared.open(source) } }
                             if let site = URL(string: "https://portholehq.site") { ActionRow(id: "lic-site", symbol: "globe", title: "Project website", subtitle: "portholehq.site", chevron: false) { UIApplication.shared.open(site) } }
+                        }
+                        SettingsGroup(title: "Inspired by and built on") {
+                            credit("madeira", "Madeira", "https://github.com/willfaust/Madeira", "The Windows-on-iPhone runtime this app is built on: Wine, FEX-Emu and DXMT, and Madeira Dock.")
+                            credit("iridium", "Iridium", "https://github.com/intraducine/iridium", "The idea of switching JIT on from inside the app with a helper extension.")
+                            credit("stik", "StikDebug", "https://github.com/StikDebug/StikDebug", "The debugger that enables JIT, with the StikJIT library.")
+                            credit("idevice", "idevice", "https://github.com/jkcoxson/idevice", "The device protocols behind pairing and installing.")
+                            credit("pair", "StikPair", "https://github.com/StikDebug/StikPair", "Showed how a pairing file can be made on the device itself.")
+                            credit("gl", "OpenGL support for Madeira", "https://github.com/c-gow/Madeira", "A Madeira fork whose OpenGL work Porthole builds on.")
                         }
                         SettingsGroup(title: "Built on") {
                             ForEach(LegalLibrary.credits) { doc($0) }
@@ -319,6 +406,14 @@ struct LicencesSheet: View {
         .sheet(item: $reading) { document in
             TextReaderSheet(title: document.title, text: document.text.map { document.keepsLayout ? $0 : LegalDocument.reflowed($0) } ?? "This document is not in the app.",
                             monospaced: document.keepsLayout, scope: readerScope) { reading = nil }
+        }
+    }
+
+    /// A project we took inspiration from: the row opens its page on GitHub.
+    private func credit(_ id: String, _ name: String, _ link: String, _ what: String) -> some View {
+        RowBase(id: "ab-\(id)", symbol: "heart.fill", tint: .pink, title: name, subtitle: what,
+                action: { if let url = URL(string: link) { UIApplication.shared.open(url) } }) {
+            Image(systemName: "arrow.up.right").font(.footnote.weight(.bold)).foregroundStyle(Theme.textDim)
         }
     }
 

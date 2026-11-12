@@ -133,31 +133,7 @@ struct PerformancePage: View {
     }
 }
 
-// MARK: - Controls and sound
-
-struct ControlsPage: View {
-    @State private var look = LaunchSettings.globalLookSensitivity
-
-    var body: some View {
-        PageScaffold(title: "Controls", symbol: "hand.tap.fill") {
-            SettingsGroup(title: "Controller", note: "The controller connected to this device.") {
-                ValueRow(id: "ct-pad", symbol: "gamecontroller.fill", title: "Connected controller",
-                         value: ControllerInput.shared.kind == .none ? "None" : ControllerInput.shared.kind.displayName,
-                         statusColor: ControllerInput.shared.kind == .none ? Theme.textDim : Theme.good)
-                Text(ControllerInput.shared.kind == .none
-                     ? "Pair a controller in the iOS Bluetooth settings. Porthole names its buttons the way they are printed on it."
-                     : "Buttons are named as printed on this controller (\(ControllerInput.shared.kind.glyph("A")) select, \(ControllerInput.shared.kind.glyph("B")) back, \(ControllerInput.shared.kind.glyph("LB")) \(ControllerInput.shared.kind.glyph("RB")) switch section). Hold \(ControllerInput.shared.kind.menuChordName) in a game to open Porthole's menu.")
-                    .font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
-            }
-            SettingsGroup(title: "First person", note: "Looking around by dragging on the screen.") {
-                SliderRow(id: "ct-look", symbol: "scope", title: "Look sensitivity",
-                          info: "How fast dragging on the screen turns the view in first-person games. A game can set its own on its page, and the in-game Menu has quick Faster and Slower buttons.",
-                          value: Binding(get: { look }, set: { look = $0; LaunchSettings.globalLookSensitivity = $0 }), range: LaunchSettings.lookRange, step: 0.1,
-                          format: { String(format: "%.1f\u{00D7}", $0) })
-            }
-        }
-    }
-}
+// MARK: - Sound
 
 /// One engine option (Settings > Advanced > Engine options has them all) as a row of its own, wherever it fits best. Nothing is written until the person changes it.
 struct EngineChoiceRow: View {
@@ -176,14 +152,24 @@ struct EngineChoiceRow: View {
 
 struct SoundPage: View {
     @AppStorage(SessionController.audioCushionKey) private var audioCushion = 80
+    @AppStorage(SessionController.mixAudioKey) private var mixAudio = false
+    @AppStorage("f4.advanced") private var advanced = false
     var body: some View {
         PageScaffold(title: "Sound", symbol: "speaker.wave.2.fill") {
             SettingsGroup(title: "Audio", note: "Applies the next time a game starts.") {
-                ChoiceRow(id: "sd-buffer", symbol: "waveform", title: "Audio buffer",
-                          info: "Extra buffered sound, in milliseconds. Bigger means fewer crackles but effects lag a little more. Applies on the next game start.",
-                          options: [(0, "Off"), (40, "40 ms"), (80, "80 ms"), (160, "160 ms"), (300, "300 ms")], selection: $audioCushion)
+                ToggleRow(id: "sd-mix", symbol: "music.note.list", title: "Keep other apps' sound playing",
+                          subtitle: "Music or a video in another app plays together with the game",
+                          info: "Normally Porthole takes over the sound and other apps go quiet. With this on, a song, a podcast or a video playing in another app (on a second screen, in Split View or in Picture in Picture) keeps playing next to the game's own sound. Programs from the Software section, such as Blender, always do this. Applies the next time a game starts.",
+                          isOn: $mixAudio)
                 EngineChoiceRow(id: "sd-volume", key: "env.MADEIRA_AUDIO_GAIN", symbol: "speaker.wave.3.fill", title: "Game volume")
-                EngineChoiceRow(id: "sd-resume", key: "env.MADEIRA_AUDIO_RESUME", symbol: "phone.arrow.down.left", title: "Bring sound back after a call")
+            }
+            if advanced {
+                SettingsGroup(title: "Sound fixes", note: "For crackling, or sound that does not come back. Most people never change these.") {
+                    ChoiceRow(id: "sd-buffer", symbol: "waveform", title: "Audio buffer",
+                              info: "Extra buffered sound, in milliseconds. Bigger means fewer crackles but effects lag a little more. Applies on the next game start.",
+                              options: [(0, "Off"), (40, "40 ms"), (80, "80 ms"), (160, "160 ms"), (300, "300 ms")], selection: $audioCushion)
+                    EngineChoiceRow(id: "sd-resume", key: "env.MADEIRA_AUDIO_RESUME", symbol: "phone.arrow.down.left", title: "Bring sound back after a call")
+                }
             }
         }
     }
@@ -211,6 +197,7 @@ struct InstallCheckGroup: View {
 // MARK: - JIT and tunnel
 
 struct ConnectionPage: View {
+    @Environment(AppRouter.self) private var router
     @EnvironmentObject private var session: SessionController
     @State private var jitMethod = JITMethod.current
     @State private var hasPairing = BuiltinJIT.hasPairing
@@ -219,14 +206,13 @@ struct ConnectionPage: View {
     @State private var pairingMessage: String?
     @State private var resetDone = false
     @AppStorage("f4.advanced") private var advanced = false
-    @AppStorage(TunnelManager.useLocalDevVPNKey) private var useLocalDevVPN = false
-    @AppStorage(VPNGuard.askKey) private var vpnAsk = true
-    @AppStorage(VPNGuard.shortcutKey) private var vpnShortcut = ""
-    @AppStorage(VPNGuard.earlyKey) private var vpnEarly = true
-    @AppStorage(CellularGuard.enabledKey) private var cellularAuto = true
     private let tunnel = TunnelManager.shared
 
     var body: some View {
+        if router.settingsSub == .connectionExtras { ConnectionExtrasPage() } else { main }
+    }
+
+    private var main: some View {
         PageScaffold(title: "JIT and connection", symbol: "bolt.horizontal.fill", subtitle: "What gives games full speed") {
             InstallCheckGroup()
             SettingsGroup(title: "How JIT is switched on", note: "JIT lets the emulator run at full speed. It has to be switched on every time a game starts.") {
@@ -245,7 +231,58 @@ struct ConnectionPage: View {
                 }
             }
             if InstallCheck.hasTunnel {
-            SettingsGroup(title: "Tunnel", note: "The private connection the JIT helper uses to reach this device.") {
+            SettingsGroup(title: "More") {
+                ActionRow(id: SettingsSub.connectionExtras.rowID, symbol: "network", title: "VPN and cellular options",
+                          subtitle: "LocalDevVPN, your own VPN and cellular data") { router.settingsSub = .connectionExtras }
+            }
+            }
+            if InstallCheck.hasTunnel {
+            SettingsGroup(title: "Troubleshooting", note: "If Play says the tunnel will not connect.") {
+                ActionRow(id: "cn-reset", symbol: "arrow.counterclockwise", title: "Reset the tunnel", detail: resetDone ? "Done" : nil,
+                          info: "If Play says the tunnel won't connect, this deletes the app's VPN setting and makes a fresh one. Your games and settings are not touched. iOS asks you to allow the VPN again.") {
+                    Task {
+                        await tunnel.resetConfiguration()
+                        tunnel.message = "Reset. The next time you press Play, iOS asks you to allow the VPN again."
+                        resetDone = true
+                    }
+                }
+                if resetDone, let message = tunnel.message { Text(message).font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
+            }
+            }
+            if advanced {
+                SettingsGroup(title: "Status") {
+                    ValueRow(id: "cn-jit", symbol: "bolt.fill", title: "JIT", value: session.jitEnabled ? "Enabled" : "Not enabled", statusColor: session.jitEnabled ? Theme.good : Theme.warn)
+                    if !session.jitEnabled { ActionRow(id: "cn-jit-on", symbol: "power", title: "Enable JIT") { session.enableJIT() } }
+                    if let note = session.jitNote { Text(note).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
+                    ValueRow(id: "cn-tunnel", symbol: "network", title: "Tunnel", value: tunnel.statusText, statusColor: tunnel.isConnected ? Theme.good : Theme.textDim)
+                    if tunnel.isConnected { ActionRow(id: "cn-tun-off", symbol: "power", title: "Turn the tunnel off") { tunnel.disconnect() } }
+                    else if InstallCheck.hasTunnel { ActionRow(id: "cn-tun-on", symbol: "power", title: "Turn the tunnel on") { Task { do { try await tunnel.connect() } catch { tunnel.message = ErrorText.plain(error) } } } }
+                    if let message = tunnel.message { Text(message).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
+                }
+            }
+        }
+        .sheet(isPresented: $pickPairing) {
+            FilePickerSheet(onPick: { urls in
+                pickPairing = false
+                do { try BuiltinJIT.importPairing(from: urls[0]); pairingMessage = nil } catch { pairingMessage = "That is not a valid pairing file." }
+                hasPairing = BuiltinJIT.hasPairing
+            }, onCancel: { pickPairing = false })
+        }
+        .sheet(isPresented: $pairHere, onDismiss: { hasPairing = BuiltinJIT.hasPairing }) { PairOnDeviceView() }
+    }
+}
+
+/// JIT and connection > VPN and cellular options: for people who run their own VPN, use LocalDevVPN or play on cellular data. Everyone else never needs this page.
+struct ConnectionExtrasPage: View {
+    @AppStorage(TunnelManager.useLocalDevVPNKey) private var useLocalDevVPN = false
+    @AppStorage(VPNGuard.askKey) private var vpnAsk = true
+    @AppStorage(VPNGuard.shortcutKey) private var vpnShortcut = ""
+    @AppStorage(VPNGuard.earlyKey) private var vpnEarly = true
+    @AppStorage(CellularGuard.enabledKey) private var cellularAuto = true
+
+    var body: some View {
+        SubPage(sub: .connectionExtras, symbol: "network") {
+            SettingsGroup(title: "Connection to this device", note: "The JIT helper reaches this device through a private connection. Porthole can make its own, or you can use LocalDevVPN; you only need one.") {
                 ToggleRow(id: "cn-localdev", symbol: "network", title: "Use LocalDevVPN instead",
                           info: "Does not start this app's own tunnel. LocalDevVPN (or another VPN with the same 10.7.0.x addresses) has to be switched on before you press Play; it keeps running while the game does. Turn this on if the app's own tunnel sometimes fails to come up. Off: the app starts and stops its own tunnel, which replaces any other VPN while it is on.",
                           isOn: $useLocalDevVPN)
@@ -286,39 +323,7 @@ struct ConnectionPage: View {
                          statusColor: CellularGuard.shared.paused ? Theme.warn : (CellularGuard.shared.shortcutsHaveRun ? Theme.good : Theme.textDim))
                 if let problem = CellularGuard.shared.lastProblem { Text(problem).font(.footnote).foregroundStyle(Theme.warn).padding(.horizontal, 6) }
             }
-            }
-            if InstallCheck.hasTunnel {
-            SettingsGroup(title: "Troubleshooting", note: "If Play says the tunnel will not connect.") {
-                ActionRow(id: "cn-reset", symbol: "arrow.counterclockwise", title: "Reset the tunnel", detail: resetDone ? "Done" : nil,
-                          info: "If Play says the tunnel won't connect, this deletes the app's VPN setting and makes a fresh one. Your games and settings are not touched. iOS asks you to allow the VPN again.") {
-                    Task {
-                        await tunnel.resetConfiguration()
-                        tunnel.message = "Reset. The next time you press Play, iOS asks you to allow the VPN again."
-                        resetDone = true
-                    }
-                }
-                if resetDone, let message = tunnel.message { Text(message).font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
-            }
-            }
-            if advanced {
-                SettingsGroup(title: "Status") {
-                    ValueRow(id: "cn-jit", symbol: "bolt.fill", title: "JIT", value: session.jitEnabled ? "Enabled" : "Not enabled", statusColor: session.jitEnabled ? Theme.good : Theme.warn)
-                    if !session.jitEnabled { ActionRow(id: "cn-jit-on", symbol: "power", title: "Enable JIT") { session.enableJIT() } }
-                    ValueRow(id: "cn-tunnel", symbol: "network", title: "Tunnel", value: tunnel.statusText, statusColor: tunnel.isConnected ? Theme.good : Theme.textDim)
-                    if tunnel.isConnected { ActionRow(id: "cn-tun-off", symbol: "power", title: "Turn the tunnel off") { tunnel.disconnect() } }
-                    else { ActionRow(id: "cn-tun-on", symbol: "power", title: "Turn the tunnel on") { Task { do { try await tunnel.connect() } catch { tunnel.message = error.localizedDescription } } } }
-                    if let message = tunnel.message { Text(message).font(.footnote).foregroundStyle(Theme.bad).padding(.horizontal, 6) }
-                }
-            }
         }
-        .sheet(isPresented: $pickPairing) {
-            FilePickerSheet(onPick: { urls in
-                pickPairing = false
-                do { try BuiltinJIT.importPairing(from: urls[0]); pairingMessage = nil } catch { pairingMessage = "That is not a valid pairing file." }
-                hasPairing = BuiltinJIT.hasPairing
-            }, onCancel: { pickPairing = false })
-        }
-        .sheet(isPresented: $pairHere, onDismiss: { hasPairing = BuiltinJIT.hasPairing }) { PairOnDeviceView() }
     }
 }
 
@@ -340,7 +345,10 @@ struct SteamSettingsPage: View {
     @State private var bigPictureError: String?
     @ObservedObject private var storage = ExternalLibrary.shared
     @AppStorage(ExternalLibrary.newDownloadsKey) private var newToSSD = false
-    @State private var pickingFolder = false
+    @AppStorage(ExternalLibrary.askWhereKey) private var askWhere = true
+    @State private var confirmForgetSSD = false
+    @State private var speedTesting = false
+    @State private var speedResult: String?
     @State private var storageBusy = false
     @State private var storageError: String?
 
@@ -417,20 +425,45 @@ struct SteamSettingsPage: View {
                     if let problem = storage.problem, storage.availability != .available {
                         ValueRow(id: "st-ssd-why", symbol: "exclamationmark.triangle.fill", title: "Why", value: problem, statusColor: Theme.warn)
                     }
+                    ToggleRow(id: "st-ssd-ask", symbol: "questionmark.circle", title: "Ask where each game goes",
+                              info: "Pressing Download asks whether the game goes on the device or on the SSD, while the SSD is connected. Off: new downloads go where the next switch says.",
+                              isOn: $askWhere)
                     ToggleRow(id: "st-ssd-new", symbol: "arrow.down.to.line", title: "New downloads go to the SSD",
                               info: "A game you download from now on is saved on the SSD instead of the device. A game that is already installed (or half downloaded) stays where it is; Windows, Steam's client files and the usual Windows user folders stay on the device.",
                               isOn: $newToSSD)
                     ActionRow(id: "st-ssd-check", symbol: "arrow.triangle.2.circlepath", title: "Check the SSD connection", chevron: false) { Task { await storage.check() } }
                         .disabled(storage.checking || storageBusy)
+                    ActionRow(id: "st-ssd-speed", symbol: "speedometer", title: "Test the drive's speed",
+                              info: "Writes and reads a 64 MB file and makes 60 small files on the drive, then deletes them. It tells you how fast the drive really is for Porthole: a game downloads no faster than the drive can write it.",
+                              chevron: false) {
+                        speedTesting = true; speedResult = nil
+                        Task {
+                            defer { speedTesting = false }
+                            do { let result = try await storage.measureSpeed(); speedResult = result.summary; SteamLog.event("[steam-storage] speed test: \(result.summary)") }
+                            catch { speedResult = ErrorText.plain(error); SteamLog.event("[steam-storage] speed test failed: \(ErrorText.plain(error))") }
+                        }
+                    }
+                    .disabled(speedTesting || storage.checking || storageBusy)
+                    if speedTesting { ValueRow(id: "st-ssd-speed-busy", symbol: "hourglass", title: "Testing the drive", value: "This takes a few seconds\u{2026}") }
+                    if let speedResult { ValueRow(id: "st-ssd-speed-result", symbol: "speedometer", title: "Drive speed", value: speedResult) }
                     ActionRow(id: "st-ssd-again", symbol: "folder.badge.gearshape", title: "Select the library folder again",
-                              info: "Renews access to the same folder (after iOS forgot it). Choosing a different folder does not bring these games back.") { pickingFolder = true }
+                              info: "Renews access to the same folder (after iOS forgot it). Choosing a different folder does not bring these games back.") { chooseFolder() }
+                        .disabled(storageBusy)
+                    ActionRow(id: "st-ssd-forget", symbol: "externaldrive.badge.minus", title: "Use a different folder",
+                              info: "Stops using this folder so you can choose another one. Nothing is deleted from the drive. Games that were put on this folder are no longer listed as installed here.") { confirmForgetSSD = true }
                         .disabled(storageBusy)
                 } else {
-                    ActionRow(id: "st-ssd-choose", symbol: "externaldrive.badge.plus", title: "Choose an SSD library folder",
-                              info: "Pick a folder on a drive plugged into the device (a dedicated folder). Steam games you download to it keep their files, download progress and caches there. Cloud folders and network shares are not supported. If you unplug the drive during a game, the game ends.") { pickingFolder = true }
+                    ActionRow(id: "st-ssd-choose", symbol: "externaldrive.badge.plus", title: "Choose an SSD library folder", subtitle: "Make a folder on the drive first, then open that folder",
+                              info: "In the picker, open the drive, make a new folder on it (for example \u{201C}Porthole\u{201D}: the \u{22EF} menu, New Folder), open that folder and press Open. Choosing the drive\u{2019}s top level may not work: on some drives iOS gives Open no answer there. Pick a folder on a drive plugged into the device (a dedicated folder). Steam games you download to it keep their files, download progress and caches there. Cloud folders and network shares are not supported. If you unplug the drive during a game, the game ends.") { chooseFolder() }
                         .disabled(storageBusy)
                 }
+                if storageBusy { ValueRow(id: "st-ssd-busy", symbol: "hourglass", title: "Checking the folder", value: "Please wait\u{2026}") }
                 if let storageError { ValueRow(id: "st-ssd-err", symbol: "xmark.octagon.fill", title: "Problem", value: storageError, statusColor: Theme.warn) }
+                if let mismatch = InstallCheck.idMismatch {
+                    ValueRow(id: "st-ssd-id", symbol: "exclamationmark.triangle.fill", title: "This copy's app id does not match",
+                             value: "Its signature names \u{201C}\(mismatch.signed)\u{201D} but the app says \u{201C}\(mismatch.bundle)\u{201D}. iOS may then give the folder chooser no answer. Sign Porthole again with the Launcher\u{2019}s \u{201C}Use the profile\u{2019}s app id\u{201D} option (it installs as a new copy, so the games are downloaded again), or ask your signing service for a profile whose app id is the app\u{2019}s.",
+                             statusColor: Theme.warn)
+                }
             }
             if advanced {
                 SettingsGroup(title: "Steam games window", note: "How Steam games are drawn on the screen.") {
@@ -440,23 +473,34 @@ struct SteamSettingsPage: View {
                 }
             }
         }
+        .confirm("Stop using \(storage.external?.name ?? "this folder")?",
+                 message: storage.gamesOnExternal == 0 ? "Nothing is deleted. You can then choose another folder."
+                     : "\(storage.gamesOnExternal) game(s) on it will no longer be listed as installed here. Their files stay on the drive and are not deleted.",
+                 confirmTitle: "Stop using it", destructive: true, isPresented: $confirmForgetSSD) {
+            do { try storage.forgetExternal(); storageError = nil; SteamLog.event("[steam-storage] folder forgotten") }
+            catch { storageError = ErrorText.plain(error) }
+        }
         .confirm("Sign out of Steam?", message: "Your downloaded games stay on this device.", confirmTitle: "Sign out", destructive: true, isPresented: $confirmSignOut) { steam.signOut() }
-        .sheet(isPresented: $pickingFolder) {
-            ExternalFolderPicker { result in
-                pickingFolder = false
-                switch result {
-                case .success(let url):
-                    storageBusy = true
-                    Task {
-                        defer { storageBusy = false }
-                        do { try await storage.register(url); storageError = nil; await storage.scan() }
-                        catch { storageError = error.localizedDescription }
-                    }
-                case .failure(let failure): if !(failure is CancellationError) { storageError = failure.localizedDescription }
+        .task { if storage.external != nil { await storage.check() } }
+    }
+
+    /// Opens the system folder picker from UIKit and registers what is chosen.
+    private func chooseFolder() {
+        ExternalFolderPresenter.present { result in
+            switch result {
+            case .success(let url):
+                storageBusy = true
+                SteamLog.event("[steam-storage] folder picked: \(url.lastPathComponent)")
+                Task {
+                    defer { storageBusy = false }
+                    do { try await storage.register(url); storageError = nil; await storage.scan(); SteamLog.event("[steam-storage] folder registered") }
+                    catch { storageError = ErrorText.plain(error); SteamLog.event("[steam-storage] folder refused: \(ErrorText.plain(error))") }
                 }
+            case .failure(let failure):
+                SteamLog.event("[steam-storage] folder picker closed without a folder")
+                if !(failure is CancellationError) { storageError = ErrorText.plain(failure) }
             }
         }
-        .task { if storage.external != nil { await storage.check() } }
     }
 
     private func downloadClient() {
@@ -466,7 +510,7 @@ struct SteamSettingsPage: View {
                 try await SteamRuntimeInstaller.shared.prepare(prefix: AppModel.prefix) { text in await MainActor.run { clientStatus = text } }
                 clientInstalled = MadeiraDock.clientInstalled
                 clientStatus = clientInstalled ? nil : "The download finished but the client files are not in place."
-            } catch { clientStatus = error.localizedDescription }
+            } catch { clientStatus = ErrorText.plain(error) }
             clientBusy = false
         }
     }
@@ -516,6 +560,7 @@ struct GuidesPage: View {
 
 struct AboutPage: View {
     @State private var licences = false
+    @AppStorage("f4.advanced") private var advanced = false
     /// Seven taps on the version reveal a way to look at a holiday out of season (for testing). It is not listed anywhere, so a holiday look is a surprise when its week comes.
     @State private var versionTaps = 0
     @AppStorage(SteamBigPicture.shownKey) private var bigPictureShown = false
@@ -526,8 +571,8 @@ struct AboutPage: View {
         PageScaffold(title: "About and credits", symbol: "info.circle.fill") {
             SettingsGroup(title: "About Porthole", note: "Which version this is and what it is made of.") {
                 ValueRow(id: "ab-version", symbol: "app.badge.fill", title: "Version", value: "\(version) (\(build))") { versionTaps += 1 }
-                ValueRow(id: "ab-bundle", symbol: "shippingbox.fill", title: "Bundle", value: Bundle.main.bundleIdentifier ?? "?")
-                ActionRow(id: "ab-licences", symbol: "doc.plaintext.fill", title: "Licences and source code", subtitle: "Free software, GPL-3.0-or-later") { licences = true }
+                if advanced { ValueRow(id: "ab-bundle", symbol: "shippingbox.fill", title: "Bundle", value: Bundle.main.bundleIdentifier ?? "?") }
+                ActionRow(id: "ab-licences", symbol: "doc.plaintext.fill", title: "Licences and credits", subtitle: "Free software, GPL-3.0-or-later, and who it is built on") { licences = true }
             }
             if versionTaps >= 7 {
                 SettingsGroup(title: "Experiments", note: "Not listed anywhere else.") {
@@ -541,25 +586,11 @@ struct AboutPage: View {
                     }
                 }
             }
-            SettingsGroup(title: "Built on other people's work") {
-                credit("madeira", "Madeira", "https://github.com/willfaust/Madeira", "The Windows-on-iPhone runtime this app is built on: Wine, FEX-Emu and DXMT, and Madeira Dock.")
-                credit("iridium", "Iridium", "https://github.com/intraducine/iridium", "The idea of switching JIT on from inside the app with a helper extension.")
-                credit("stik", "StikDebug", "https://github.com/StikDebug/StikDebug", "The debugger that enables JIT, with the StikJIT library.")
-                credit("idevice", "idevice", "https://github.com/jkcoxson/idevice", "The device protocols behind pairing and installing.")
-                credit("pair", "StikPair", "https://github.com/StikDebug/StikPair", "Showed how a pairing file can be made on the device itself.")
-                credit("gl", "OpenGL support for Madeira", "https://github.com/c-gow/Madeira", "A Madeira fork whose OpenGL work Porthole builds on.")
+            SettingsGroup(title: "Credits and notices", note: "Who made the parts Porthole is built on is under Licences and credits.") {
                 Text("Steam and its artwork belong to Valve. Epic Games, GOG, and every game or launcher you run belong to their owners. This app is not affiliated with or endorsed by any of them.")
                     .font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
             }
         }
         .sheet(isPresented: $licences) { LicencesSheet() }
-    }
-
-    /// A project we took inspiration from: the row opens its page on GitHub.
-    private func credit(_ id: String, _ name: String, _ link: String, _ what: String) -> some View {
-        RowBase(id: "ab-\(id)", symbol: "heart.fill", tint: .pink, title: name, subtitle: what,
-                action: { if let url = URL(string: link) { UIApplication.shared.open(url) } }) {
-            Image(systemName: "arrow.up.right").font(.footnote.weight(.bold)).foregroundStyle(Theme.textDim)
-        }
     }
 }

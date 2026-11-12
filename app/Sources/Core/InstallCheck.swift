@@ -121,6 +121,23 @@ enum InstallCheck {
     }
 
     private static func has(_ key: String) -> Bool { (entitlement(key) as? NSNumber)?.boolValue ?? false }
+    /// Whether this install may map the large address space the engine reserves for the emulator ("Extended Virtual Addressing"); the same test as the install check's row.
+    static var largeAddressSpaceAllowed: Bool { has("com.apple.developer.kernel.extended-virtual-addressing") }
+
+    /// Whether this install may use more memory than an ordinary app ("Increased Memory Limit"). A free Apple account cannot have it, and nearly every report of a game that closed on its own came from one without it.
+    static var extraMemoryAllowed: Bool { has("com.apple.developer.kernel.increased-memory-limit") }
+
+    /// Why no game can start in this copy, or nil. JIT needs a debugger to attach, which needs get-task-allow; a distribution or enterprise signature has none, and no tool can switch JIT on then.
+    /// (When JIT is already on, by whatever means, there is nothing to refuse.)
+    static var jitBlocker: String? {
+        guard !SigningStatus.current.debuggable, !jit_check_debugged() else { return nil }
+        return "This copy of Porthole was signed without the \u{201C}debuggable\u{201D} permission (get-task-allow), which comes with a distribution or enterprise certificate. No tool can switch JIT on for it, so no game can start. Sign Porthole again with a development certificate (a free or paid Apple ID, through AltStore, SideStore, the Launcher or Sideloadly) and open it again."
+    }
+
+    /// One sentence for a run that ended badly in an install without extra memory (nil when it has it).
+    static var memoryNote: String? {
+        extraMemoryAllowed ? nil : "This copy of Porthole is signed without Extra memory (a free Apple account cannot have it), so iOS lets a game use much less memory and closes it sooner. A paid Apple Developer account can add \u{201C}Increased Memory Limit\u{201D} to the App ID."
+    }
 
     private static func strings(_ key: String) -> [String] { entitlement(key) as? [String] ?? [] }
 
@@ -189,8 +206,10 @@ enum InstallCheck {
             let extOK = ext.map { hasPacketTunnel($0.stringValues("com.apple.developer.networking.networkextension")) } ?? false
             if !appOK || !extOK {
                 let who = !appOK && !extOK ? "the app and its tunnel extension" : (!appOK ? "the app" : "its tunnel extension")
-                out.append(.init(id: "tunnel", level: UserDefaults.standard.bool(forKey: "f4.useLocalDevVPN") ? .info : .problem, title: "The private link cannot start",
-                                 detail: "\(who.prefix(1).uppercased() + who.dropFirst()) was signed without the \u{201C}Network Extensions\u{201D} permission, so iOS will not run Porthole's own tunnel. Turn on \u{201C}Use LocalDevVPN instead\u{201D} and run LocalDevVPN, or install again without the tunnel extension to save an App ID."))
+                // Porthole's own tunnel is one of two ways to reach the device (the other is LocalDevVPN), so not being able to start it is not a fault by itself.
+                let usingLocalDev = UserDefaults.standard.bool(forKey: "f4.useLocalDevVPN")
+                out.append(.init(id: "tunnel", level: usingLocalDev ? .info : .warning, title: "Porthole's own private link is not available",
+                                 detail: "\(who.prefix(1).uppercased() + who.dropFirst()) was signed without the \u{201C}Network Extensions\u{201D} permission, so iOS will not run Porthole's own tunnel. You do not need it: use LocalDevVPN instead (turn on \u{201C}Use LocalDevVPN instead\u{201D} in Settings \u{203A} JIT and connection, and switch LocalDevVPN on before you press Play)\(usingLocalDev ? "." : ", or install again without the tunnel extension to save an App ID.")"))
             } else if let ext, let appProfile, ext.teamID != appProfile.teamID {
                 out.append(.init(id: "tunnel", level: .problem, title: "The private link was signed by another team",
                                  detail: "The tunnel extension and the app were signed with different profiles, so iOS will not start it. Sign both with the same certificate and team."))
@@ -251,8 +270,22 @@ enum InstallCheck {
     /// A stable key for the Home notice, so a dismissal holds until the signature changes.
     static func noticeKey(_ items: [Finding]) -> String { "install:" + items.map(\.id).sorted().joined(separator: ",") }
 
+    /// The app id this copy is signed under (the team prefix removed) and the bundle id the app declares, when they differ. A signing service's profile
+    /// may name an id of its own: iOS installs that, but a system folder picker then gets no answer (the bookmark of the chosen folder cannot be resolved).
+    static var idMismatch: (signed: String, bundle: String)? {
+        guard let full = appEntitlementString("application-identifier"), let bundle = Bundle.main.bundleIdentifier,
+              let dot = full.firstIndex(of: ".") else { return nil }
+        let signed = String(full[full.index(after: dot)...])
+        return signed == bundle || signed == "*" ? nil : (signed, bundle)
+    }
+
     /// One log line per fact, written at start so a bug report shows how the app was installed and signed.
     static func logReport() {
+        if let mismatch = idMismatch {
+            LogStore.shared.log("[install] app id: the signature names \u{201C}\(mismatch.signed)\u{201D} but the app says \u{201C}\(mismatch.bundle)\u{201D}: a folder chosen in the system picker (the SSD library) may get no answer", level: .info)
+        }
+        let process = ProcessInfo.processInfo
+        LogStore.shared.log("[install] device: model=\(DeviceDiagnostics.machine()) os=\(process.operatingSystemVersionString) signing: \(DeviceDiagnostics.signing()) \(DeviceDiagnostics.profile()) \(DeviceDiagnostics.profileKeys())")
         LogStore.shared.log("[install] \(layoutTitle): JIT helper \(hasJITHelper ? "yes" : "no"), tunnel \(hasTunnel ? "yes" : "no"), download card \(hasActivityExtension ? "yes" : "no"), donor memory \(hasMemoryHost ? "yes" : "no")")
         for f in findings() where f.level != .info {
             let level: LogStore.LogEntry.Level = f.level == .problem ? .error : (f.level == .good ? .success : .info)

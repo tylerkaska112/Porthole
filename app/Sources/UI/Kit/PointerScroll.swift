@@ -40,6 +40,7 @@ final class PointerScrollSupport: NSObject, UIGestureRecognizerDelegate {
         objc_setAssociatedObject(scroll, key, support, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         let pointer = NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)
         let pan = scroll.panGestureRecognizer
+        pan.addTarget(support, action: #selector(observeScroll(_:)))
         if !pan.allowedTouchTypes.contains(pointer) { pan.allowedTouchTypes = pan.allowedTouchTypes + [pointer] }
         // The scroll view's own wheel and trackpad scrolling stays exactly as UIKit has it.
         pan.allowedScrollTypesMask = [.discrete, .continuous]
@@ -60,6 +61,14 @@ final class PointerScrollSupport: NSObject, UIGestureRecognizerDelegate {
 
     func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool { scroll.map(Self.sidewaysOnly) ?? false }
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+    /// The scroll view's own recognizer, seen from the side: a turn of the wheel (no finger on the screen) moves it, in the direction the system's scrolling setting gives. HardwareInput
+    /// compares that with the wheel pad's report of the same turn, so a game's wheel can turn the same way (ScrollSense).
+    @objc private func observeScroll(_ g: UIPanGestureRecognizer) {
+        guard g.state == .changed, g.numberOfTouches == 0, let scroll else { return }
+        let dy = g.translation(in: scroll).y
+        if dy != 0 { HardwareInput.shared.noteSystemScroll(dyPoints: Double(dy)) }
+    }
 
     @objc private func wheel(_ g: UIPanGestureRecognizer) {
         guard let scroll else { return }

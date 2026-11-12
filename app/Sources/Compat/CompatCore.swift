@@ -10,10 +10,11 @@ import UIKit
 
 // MARK: - Vocabulary (the same words the server accepts)
 
-/// Playtime needed before a game can be reported as working. The server enforces the same number (COMPAT_MIN_MINUTES, default 5).
-/// It was set to 0 for one test build (0.50.203); keep both in step if it is ever changed again.
+/// Playtime needed before a game can be reported as working: none (2026-11-05, the owner: the five minutes put people off and cost more reports than it kept bad ones out).
+/// The server enforces the same number (COMPAT_MIN_MINUTES, default 0 since the same day); keep both in step if it is ever changed again. Porthole 1.2.1 and older still
+/// stop a short report on the phone with 5.
 enum CompatRules {
-    static let minMinutesForWorking = 5
+    static let minMinutesForWorking = 0
 }
 
 enum CompatStability: String, Codable, CaseIterable, Identifiable {
@@ -385,7 +386,7 @@ struct CompatClient: Sendable {
         var message = Data("\(method)\n\(target)\n\(time)\n".utf8)
         if let body { message.append(body) }
         let key = CompatIdentity.privateKey()
-        guard let signature = try? key.signature(for: message) else { throw CompatError.notAvailable("Couldn't sign the request.") }
+        guard let signature = try? key.signature(for: message) else { throw CompatError.notAvailable("Porthole could not sign the request, so nothing was sent. Close Porthole completely and try again; if it repeats, use Forget my reporting identity in Settings \u{203A} Compatibility reports.") }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body

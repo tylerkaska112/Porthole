@@ -12,8 +12,8 @@ packages:
     path: "../Packages/LauncherCore"
 settings:
   base:
-    MARKETING_VERSION: 1.2.1          # one version for the app and its extension
-    CURRENT_PROJECT_VERSION: 688
+    MARKETING_VERSION: 1.3.0          # one version for the app and its extension
+    CURRENT_PROJECT_VERSION: 870
     SWIFT_VERSION: "5.0"
     SWIFT_OPTIMIZATION_LEVEL: "-O"      # also in Debug builds (the release scripts build Release; Debug is still available): the pairing maths is ~15x slower unoptimised, and the iPhone will not wait for it
     CLANG_CXX_LANGUAGE_STANDARD: gnu++20
@@ -40,12 +40,16 @@ targets:
       - { path: RuntimeStage/Resources/licenses,           type: folder, buildPhase: resources }
       - { path: RuntimeStage/Resources/i386-windows,       type: folder, buildPhase: resources }
       - { path: RuntimeStage/Resources/d3d12,              type: folder, buildPhase: resources }
+      # Vulkan for x64 programs (opt-in per game): winevulkan, vulkan-1, vkd3d-proton (d3d12 = vkd3d) and DXVK (d3d11 = dxvk).
+      - { path: RuntimeStage/Resources/vulkan,             type: folder, buildPhase: resources }
       # OpenGL (patch 0082): the desktop OpenGL libraries and the LuaJIT used by LOVE games.
       - { path: RuntimeStage/Resources/gl,                 type: folder, buildPhase: resources }
       - { path: RuntimeStage/Resources/compat,             type: folder, buildPhase: resources }
       - { path: RuntimeStage/Resources/prefix-template.tar.gz, buildPhase: resources }
       - { path: RuntimeStage/Resources/cacert.pem,         buildPhase: resources }
       - { path: RuntimeStage/Resources/madeira-jit.js,     buildPhase: resources }
+      # Libraries put next to a program that needs one the Windows layer lacks (Sources/Core/SideBySide.swift).
+      - { path: Extras, type: folder, buildPhase: resources }
       - { path: "Shortcuts/Porthole Cellular Off.shortcut", buildPhase: resources }
       - { path: "Shortcuts/Porthole Cellular On.shortcut",  buildPhase: resources }
       # The licences and credits that travel with the app (shown in Settings > About > Licences).
@@ -95,6 +99,7 @@ targets:
         UIRequiredDeviceCapabilities: [arm64]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        UISupportsDocumentBrowser: true
         CADisableMinimumFrameDurationOnPhone: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]

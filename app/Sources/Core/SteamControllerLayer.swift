@@ -34,7 +34,7 @@ final class SteamControllerLayer: ObservableObject {
                 if installed { try SteamSDL3.remove() } else { try await SteamSDL3.install { text in await MainActor.run { self.status = text } } }
                 installed = SteamSDL3.installed
                 status = nil
-            } catch { status = error.localizedDescription }
+            } catch { status = ErrorText.plain(error) }
             busy = false
         }
     }

@@ -1,0 +1,2 @@
+I 24 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D 24 Load module UnityPlayer.dll (unityplayer.dll-5613b47ecb18b5db): 71FCD30000

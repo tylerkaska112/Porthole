@@ -31,7 +31,7 @@ enum TunnelDiagnostics {
         await withCheckedContinuation { continuation in
             connection.fetchLastDisconnectError { error in
                 guard let error = error as NSError? else { continuation.resume(returning: nil); return }
-                continuation.resume(returning: "\(error.domain) \(error.code): \(error.localizedDescription)")
+                continuation.resume(returning: "\(error.domain) \(error.code): \(ErrorText.plain(error))")
             }
         }
     }

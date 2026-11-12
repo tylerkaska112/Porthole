@@ -103,7 +103,7 @@ import UIKit
             do {
                 try FileManager.default.createDirectory(at: Self.support, withIntermediateDirectories: true)
                 try JSONEncoder().encode(store).write(to: Self.storeURL, options: .atomic)
-            } catch { self.error = "Could not save EA installs: " + error.localizedDescription }
+            } catch { self.error = "Could not save EA installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -254,7 +254,7 @@ import UIKit
                     if installs[id]?.state != .queued { installs[id]?.state = .paused }
                     LogStore.shared.log("[ea-download] paused id=\(id)")
                 } else {
-                    let message = error.localizedDescription
+                    let message = ErrorText.plain(error)
                     installs[id]?.state = .failed(message)
                     outcome = .failed(message)
                     EALibrary.note(error, context: "download id=\(id)")

@@ -1,0 +1,11 @@
+I 24 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D 24 Load module UnityPlayer.dll (unityplayer.dll-5545847efcd3f7c7): 71FBFD0000
+[17:29:21.857] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2396 MB; malloc gave back 0 MB
+[17:29:21.862] [INFO] [mem-pressure] CRITICAL: app 4917 MB, free 1227 MB, gpu 2395 MB; malloc gave back 0 MB
+[17:29:21.862] [INFO] [mem-pressure] CRITICAL: app 4917 MB, free 1227 MB, gpu 2395 MB; malloc gave back 0 MB
+[17:29:48.833] [INFO] [mem-pressure] CRITICAL: app 4916 MB, free 1228 MB, gpu 2401 MB; malloc gave back 0 MB
+[17:29:48.845] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2401 MB; malloc gave back 0 MB
+[17:30:49.230] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2401 MB; malloc gave back 0 MB
+[17:30:49.722] [INFO] [launch] stop requested while the game was starting: closing the app
+[17:30:49.733] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2401 MB; malloc gave back 0 MB
+[17:30:49.775] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2401 MB; malloc gave back 0 MB

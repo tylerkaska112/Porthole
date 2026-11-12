@@ -1,0 +1,228 @@
+diff --git a/madeira-d3d12/src/pe/madeira_d3d12.c b/madeira-d3d12/src/pe/madeira_d3d12.c
+index 3785bbc..90144e6 100644
+--- a/madeira-d3d12/src/pe/madeira_d3d12.c
++++ b/madeira-d3d12/src/pe/madeira_d3d12.c
+@@ -21587,7 +21587,11 @@ static int g_up_init, g_up_have;       /* the variable was set / the file has be
+ static int g_up_mode;                  /* 0 off, 1 to the screen, 2 fixed */
+ static double g_up_factor = 2.0;
+ static unsigned g_up_fw, g_up_fh;
+-static int g_up_method;               /* 0 MetalFX, 1/2 Lossless Scaling (Direct3D 11 only: this path always uses MetalFX, and says so in the status) */
++static int g_up_method;               /* 0 MetalFX, 1 Lossless Scaling LS1, 2 LS1 performance (through the bridge in d3d11.dll; MetalFX when that cannot) */
++static int g_up_level = 2;            /* the Lossless Scaling sharpness, 0..4 */
++static int g_up_ls_state;             /* 0 not tried yet, 1 the Lossless Scaling upscaler works, -1 it was given up (MetalFX) */
++static char g_up_ls_msg[200];
++static struct { double factor; UINT w, h, ow, oh; int valid; } g_up_info;
+ static FILETIME g_up_ft;
+ static ULONGLONG g_up_next;
+ static LONG g_up_version;
+@@ -21614,7 +21618,7 @@ static int mad_up_poll(int force) {
+     if (!ok) { ok = g_up_have; ReleaseSRWLockExclusive(&g_up_lock); return ok; }
+     buf[got] = 0;
+     {
+-        int m = g_up_mode; double fa = g_up_factor; unsigned fw = g_up_fw, fh = g_up_fh; int me = g_up_method;
++        int m = g_up_mode; double fa = g_up_factor; unsigned fw = g_up_fw, fh = g_up_fh; int me = g_up_method, lv = g_up_level;
+         for (line = buf; line && *line; line = save) {
+             char *eq, *nl = line + strcspn(line, "\r\n");
+             save = *nl ? nl + 1 : NULL;
+@@ -21624,11 +21628,13 @@ static int mad_up_poll(int force) {
+             *eq = 0;
+             if (!strcmp(line, "mode")) { m = atoi(eq + 1); if (m < 0) m = 0; if (m > 2) m = 2; }
+             else if (!strcmp(line, "factor")) { fa = strtod(eq + 1, NULL); if (fa < 1.0) fa = 1.0; if (fa > 2.0) fa = 2.0; }
++            else if (!strcmp(line, "level")) { lv = atoi(eq + 1); if (lv < 0) lv = 0; if (lv > 4) lv = 4; }
+             else if (!strcmp(line, "method")) { me = atoi(eq + 1); if (me < 0) me = 0; if (me > 2) me = 2; }
+             else if (!strcmp(line, "fit")) { unsigned a = 0, b = 0; if (sscanf(eq + 1, "%ux%u", &a, &b) == 2 && a && b) { fw = a; fh = b; } }
+         }
+-        if (!g_up_have || m != g_up_mode || fa != g_up_factor || fw != g_up_fw || fh != g_up_fh || me != g_up_method) InterlockedIncrement(&g_up_version);
+-        g_up_mode = m; g_up_factor = fa; g_up_fw = fw; g_up_fh = fh; g_up_method = me;
++        if (!g_up_have || m != g_up_mode || fa != g_up_factor || fw != g_up_fw || fh != g_up_fh || me != g_up_method || lv != g_up_level) InterlockedIncrement(&g_up_version);
++        if (me != g_up_method || (me && lv != g_up_level)) g_up_ls_state = 0;   /* a new choice gets a new try */
++        g_up_mode = m; g_up_factor = fa; g_up_fw = fw; g_up_fh = fh; g_up_method = me; g_up_level = lv;
+     }
+     g_up_ft = info.ftLastWriteTime;
+     g_up_have = 1;
+@@ -21659,6 +21665,16 @@ static void mad_up_status(const char *text) {
+     CloseHandle(f);
+ }
+ 
++/* What the menu shows when the picture is enlarged: by whom, from what to what. */
++static void mad_up_write_status(void) {
++    char st[480]; const char *method = "metalfx";
++    if (!g_up_info.valid || !g_up_path[0]) return;
++    if (g_up_method > 0 && g_up_ls_state >= 0) method = g_up_method == 2 ? "ls1p" : "ls1";
++    snprintf(st, sizeof st, "state=on\nmethod=%s\nlevel=%d\nfactor=%.3f\nfrom=%ux%u\nto=%ux%u\n%s%s%s", method, g_up_level + 1, g_up_info.factor, g_up_info.w, g_up_info.h, g_up_info.ow, g_up_info.oh,
++             (g_up_method > 0 && g_up_ls_state < 0) ? "fallback=" : "", (g_up_method > 0 && g_up_ls_state < 0) ? g_up_ls_msg : "", (g_up_method > 0 && g_up_ls_state < 0) ? "\n" : "");
++    mad_up_status(st);
++}
++
+ /* MetalFX spatial upscaling. The game renders at its own resolution (the
+  * virtual monitor's size); Present scales the back buffer by `metalfx-upscale`
+  * (madeira.cfg or the game's own lines, 1.1-3) with Apple's spatial scaler
+@@ -21674,6 +21690,7 @@ static void mad_swap_make_fx(struct mad_swapchain *s) {
+     char st[200];
+     s->up_version = g_up_version;
+     mad_up_spec(v, sizeof v);
++    g_up_info.valid = 0;
+     if (!v[0]) { if (g_up_path[0]) mad_up_status("state=off\n"); return; }
+     if (!strncmp(v, "fit:", 4)) {   /* Porthole 0196: "fit:<screen width>x<screen height>" -- the factor that brings the picture to the screen (aspect kept) */
+         unsigned sw = 0, sh = 0;
+@@ -21725,11 +21742,8 @@ static void mad_swap_make_fx(struct mad_swapchain *s) {
+     }
+     s->fx_w = ow; s->fx_h = oh;
+     d3d12_log("[madeira-d3d12] metalfx-upscale %s: %ux%u -> %ux%u (MetalFX spatial)\n", v, s->desc.Width, s->desc.Height, ow, oh);
+-    if (g_up_path[0]) {
+-        snprintf(st, sizeof st, "state=on\nmethod=metalfx\nfactor=%.3f\nfrom=%ux%u\nto=%ux%u\n%s", (double)ow / (double)s->desc.Width, s->desc.Width, s->desc.Height, ow, oh,
+-                 g_up_method ? "fallback=Lossless Scaling upscaling works in Direct3D 11 games only\n" : "");
+-        mad_up_status(st);
+-    }
++    g_up_info.factor = (double)ow / (double)s->desc.Width; g_up_info.w = s->desc.Width; g_up_info.h = s->desc.Height; g_up_info.ow = ow; g_up_info.oh = oh; g_up_info.valid = 1;
++    mad_up_write_status();
+ }
+ 
+ /* Porthole 0199: the menu changed the choice. Called by Present before the layer is checked: when the control file's wish changed, the scaler and its textures are made again for the
+@@ -22079,7 +22093,23 @@ struct lsfg_bridge_frame {
+     UINT64 out_texture[3];
+     UINT64 out_event, out_value;
+     UINT64 done_event, done_value;
++    UINT out_width, out_height;   /* set by Run when Lossless Scaling's upscaler already enlarged the generated pictures (0 = game size) */
++};
++/* Porthole 0201: Lossless Scaling's upscaler through the same bridge (struct DXMTUpscaleFrame in d3d11_lsfg_bridge.cpp). */
++struct upscale_bridge_frame {
++    UINT size, width, height, dxgi_format, out_width, out_height, method, level, flags, reserved;
++    UINT64 input_texture, input_event, input_value;
++    UINT64 out_texture, out_event, out_value;
++    UINT64 done_event, done_value;
+ };
++static struct {
++    int state;   /* 0 = not looked at yet, 1 = available, -1 = not available in this process */
++    int (*begin)(struct upscale_bridge_frame *);
++    int (*run)(struct upscale_bridge_frame *);
++    void (*abort_)(struct upscale_bridge_frame *);
++    int (*failed)(char *, UINT);
++    unsigned warm;   /* frames that were waited for on the CPU (the first run of each shader is compiled: seconds) */
++} g_ups;
+ static struct {
+     int state;   /* 0 = not looked at yet, 1 = available, -1 = off for this process */
+     int (*begin)(struct lsfg_bridge_frame *);
+@@ -22098,6 +22128,78 @@ static void mad_blit_texture(obj_handle_t enc, obj_handle_t src, obj_handle_t ds
+     t2t.dst = dst;
+     MTLBlitCommandEncoder_encodeCommands(enc, (const struct wmtcmd_base *)&t2t);
+ }
++/* Porthole 0201: before the game's picture is presented. When Lossless Scaling's upscaler is chosen and works, the picture is copied to the bridge, enlarged there by the passes, and
++ * `uf` describes the enlarged picture (returns 1); otherwise returns 0 and the MetalFX scaler (or the plain copy) does it. The first frames wait for the passes on the CPU for a moment
++ * (the shaders are compiled then); later the present's own command buffer waits for them on the GPU. */
++static int mad_up_before(struct mad_swapchain *s, struct mad_resource *src, struct upscale_bridge_frame *uf) {
++    struct mad_device *dv;
++    obj_handle_t cb, enc;
++    int ok;
++    if (g_up_method < 1 || !s->fx_w || !s->fx_h || g_up_ls_state < 0 || g_ups.state < 0) return 0;
++    if (!src || !src->texture) return 0;
++    if (g_ups.state == 0) {
++        HMODULE m = LoadLibraryA("d3d11.dll");
++        if (m) {
++            g_ups.begin = (int (*)(struct upscale_bridge_frame *))(void *)GetProcAddress(m, "DXMTUpscaleBegin");
++            g_ups.run = (int (*)(struct upscale_bridge_frame *))(void *)GetProcAddress(m, "DXMTUpscaleRun");
++            g_ups.abort_ = (void (*)(struct upscale_bridge_frame *))(void *)GetProcAddress(m, "DXMTUpscaleAbort");
++            g_ups.failed = (int (*)(char *, UINT))(void *)GetProcAddress(m, "DXMTUpscaleFailed");
++        }
++        if (!g_ups.begin || !g_ups.run || !g_ups.abort_ || !g_ups.failed) {
++            d3d12_log("[ls-up] Direct3D 12: Lossless Scaling's upscaler is not available: d3d11.dll has no bridge (%s); MetalFX is used\n", m ? "functions missing" : "d3d11.dll did not load");
++            g_ups.state = -1;
++            g_up_ls_state = -1;
++            snprintf(g_up_ls_msg, sizeof g_up_ls_msg, "this build has no Direct3D 12 bridge for it");
++            mad_up_write_status();
++            return 0;
++        }
++        g_ups.state = 1;
++        d3d12_log("[ls-up] Direct3D 12: bridge found in d3d11.dll\n");
++    }
++    dv = s->queue->device;
++    if (!dv->mtl_queue) return 0;
++    memset(uf, 0, sizeof *uf);
++    uf->size = sizeof *uf; uf->width = src->width; uf->height = src->height; uf->dxgi_format = (UINT)s->desc.Format;
++    uf->out_width = s->fx_w; uf->out_height = s->fx_h; uf->method = (UINT)g_up_method; uf->level = (UINT)g_up_level;
++    uf->flags = g_ups.warm < 8 ? 1u : 0u;
++    ok = g_ups.begin(uf);
++    if (!ok) {
++        char why[200] = "";
++        if (g_ups.failed(why, sizeof why)) {
++            d3d12_log("[ls-up] Direct3D 12: Lossless Scaling's upscaler cannot be used (%s); MetalFX is used\n", why);
++            g_up_ls_state = -1;
++            snprintf(g_up_ls_msg, sizeof g_up_ls_msg, "%s", why[0] ? why : "it could not start");
++            mad_up_write_status();
++        }
++        return 0;
++    }
++    cb = MTLCommandQueue_commandBuffer(dv->mtl_queue);
++    enc = cb ? MTLCommandBuffer_blitCommandEncoder(cb) : 0;
++    if (!enc) { g_ups.abort_(uf); return 0; }
++    g_enc_seq++;
++    if (g_f6_used && dv->enc_fence) { obj_handle_t df = dv->enc_fence; f6_encode(enc, F6_BLIT, &df, 1, 0); }
++    mad_blit_texture(enc, src->texture, (obj_handle_t)uf->input_texture, src->width, src->height);
++    MTLCommandEncoder_endEncoding(enc);
++    MTLCommandBuffer_encodeSignalEvent(cb, (obj_handle_t)uf->input_event, uf->input_value);
++    MTLCommandBuffer_commit(cb);
++    if (!g_ups.run(uf)) return 0;
++    if (g_ups.warm < 8) {
++        if (!MTLSharedEvent_waitUntilSignaledValue((obj_handle_t)uf->out_event, uf->out_value, 40)) {
++            static LONG said;
++            if (InterlockedIncrement(&said) <= 3) d3d12_log("[ls-up] Direct3D 12: the passes were not done after 40 ms; this frame is enlarged by MetalFX\n");
++            MTLSharedEvent_signalValue((obj_handle_t)uf->done_event, uf->done_value);
++            return 0;
++        }
++        g_ups.warm++;
++    }
++    if (g_up_ls_state == 0) {
++        g_up_ls_state = 1;
++        d3d12_log("[ls-up] Direct3D 12: Lossless Scaling's upscaler is working (%ux%u -> %ux%u, %s, sharpness %d)\n", (unsigned)src->width, (unsigned)src->height, (unsigned)s->fx_w, (unsigned)s->fx_h,
++                  g_up_method == 2 ? "LS1 performance" : "LS1", g_up_level + 1);
++        mad_up_write_status();
++    }
++    return 1;
++}
+ /* Before the game's picture is presented: returns how many generated pictures are to be shown first (lf describes them). */
+ static UINT mad_lsfg_before(struct mad_swapchain *s, struct mad_resource *src, struct lsfg_bridge_frame *lf) {
+     struct mad_device *dv;
+@@ -22168,7 +22270,9 @@ static void mad_lsfg_show(struct mad_swapchain *s, struct lsfg_bridge_frame *lf,
+         {
+             obj_handle_t copy_src = (obj_handle_t)lf->out_texture[i];
+             UINT cw = w, ch = h;
+-            if (s->fx_scaler && s->fx_out) {   /* Porthole 0196: the generated picture is enlarged like the game's own (the scaler takes any texture of its input format) */
++            if (lf->out_width && lf->out_height) {   /* already enlarged by Lossless Scaling's upscaler */
++                cw = lf->out_width; ch = lf->out_height;
++            } else if (s->fx_scaler && s->fx_out) {   /* Porthole 0196: the generated picture is enlarged like the game's own (the scaler takes any texture of its input format) */
+                 obj_handle_t ff = (g_f6_used && s->queue->device->enc_fence) ? s->queue->device->enc_fence : 0;
+                 MTLCommandBuffer_encodeSpatialScale(cb, s->fx_scaler, copy_src, s->fx_out, ff);
+                 copy_src = s->fx_out; cw = s->fx_w; ch = s->fx_h;
+@@ -22310,6 +22414,8 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
+         mad_swd_step(s->queue, 'A');
+         mad_swap_apply_layer(s);
+     }
++    struct upscale_bridge_frame uf;
++    int ls_up = mad_up_before(s, src, &uf);   /* Porthole 0201: Lossless Scaling's upscaler (first, so that the generated pictures can be enlarged by it too) */
+     {   /* Porthole: Lossless Scaling frame generation (Direct3D 12 bridge) */
+         struct lsfg_bridge_frame lf;
+         UINT ngen = mad_lsfg_before(s, src, &lf);
+@@ -22333,7 +22439,10 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
+     if (cb && tex) {
+         obj_handle_t copy_src = src->texture;
+         UINT copy_w = src->width, copy_h = src->height;
+-        if (s->fx_scaler && s->fx_out && s->fx_view[idx]) {   /* MetalFX spatial, then the copy below */
++        if (ls_up) {   /* enlarged by Lossless Scaling's passes in the bridge: wait for them on the GPU, then the copy below */
++            MTLCommandBuffer_encodeWaitForEvent(cb, (obj_handle_t)uf.out_event, uf.out_value);
++            copy_src = (obj_handle_t)uf.out_texture; copy_w = s->fx_w; copy_h = s->fx_h;
++        } else if (s->fx_scaler && s->fx_out && s->fx_view[idx]) {   /* MetalFX spatial, then the copy below */
+             /* After fence-chain 6 work the scaler waits for the frame's batches on
+              * the device fence and updates it, so the blit's wait below orders after it. */
+             obj_handle_t ff = (g_f6_used && s->queue->device->enc_fence) ? s->queue->device->enc_fence : 0;
+@@ -22358,9 +22467,11 @@ static void mad_present_run(struct mad_swapchain *s, UINT idx) {
+         }
+         /* Submitted after the frame's own command buffers on the same queue,
+          * which is what orders the copy after the rendering. */
++        if (ls_up) { MTLCommandBuffer_encodeSignalEvent(cb, (obj_handle_t)uf.done_event, uf.done_value); ls_up = 0; }   /* the bridge may write the enlarged picture again */
+         MTLCommandBuffer_presentDrawable(cb, drawable);
+         MTLCommandBuffer_commit(cb);
+     }
++    if (ls_up) MTLSharedEvent_signalValue((obj_handle_t)uf.done_event, uf.done_value);   /* no copy was queued: the next run must not wait for it */
+     InterlockedExchangeAdd64(&g_xp.t_cmt, mad_qpc() - tc); }
+     mad_swd_step(s->queue, 0);
+     /* ml1056: no release -- the drawable was never ours (see swap_Present). */

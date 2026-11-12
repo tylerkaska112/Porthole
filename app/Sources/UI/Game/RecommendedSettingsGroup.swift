@@ -14,7 +14,7 @@ struct RecommendedSettingsGroup: View {
         case idle, loading, none, failed(String)
         case ready(Plan)
     }
-    private struct Plan: Equatable { var recommended: RecommendedSettings.Values; var changes: [RecommendedSettings.Change]; var reports: Int; var earlierEngine: Bool }
+    private typealias Plan = CommunitySettings.Plan
 
     private var game: Game? { model.games.first { $0.id == gameID } }
 
@@ -57,43 +57,6 @@ struct RecommendedSettingsGroup: View {
     private func load(_ g: Game, force: Bool = false) async {
         if !force, state != .idle { return }
         state = .loading
-        let ids = compat.candidateIDs(for: g).isEmpty ? await compat.ensureFingerprint(for: g).map { ["file:\($0.prefix(32))"] } ?? [] : compat.candidateIDs(for: g)
-        guard !ids.isEmpty else { state = .none; return }
-        let client = CompatClient.standard()
-        guard client.baseURL != nil else { state = .failed("This build is not connected to a community server, so there is nothing to compare with."); return }
-        do {
-            for id in ids {
-                let path = "/compat/games/" + (id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)
-                // The engine you run first; if nobody has reported on it yet, what people used on earlier versions.
-                var earlier = false
-                var detail = try? await client.get(path, [("engine", CompatEngine.id)], as: CompatGameDetail.self)
-                if detail?.settingsSummary == nil { detail = try? await client.get(path, [], as: CompatGameDetail.self); earlier = true }
-                guard let summary = detail?.settingsSummary else { continue }
-                state = .ready(plan(for: g, summary: summary, earlier: earlier))
-                return
-            }
-            state = .none
-        } catch { state = .failed(error.localizedDescription) }
-    }
-
-    private func plan(for g: Game, summary: CompatSettingsSummary, earlier: Bool) -> Plan {
-        var rec = RecommendedSettings.Values(), counts: [String: Int] = [:]
-        for item in summary.items {
-            counts[item.key] = item.count
-            switch (item.key, item.value) {
-            case ("launch", .string(let v)): rec.launch = v
-            case ("power", .string(let v)): rec.power = v
-            case ("swapMB", .int(let v)): rec.swapMB = v
-            case ("swapCoverage", .string(let v)): rec.swapCoverage = v
-            case ("vramMB", .int(let v)): rec.vramMB = v
-            case ("preciseMath", .bool(let v)): rec.preciseMath = v
-            case ("desktopDisplay", .bool(let v)): rec.desktopDisplay = v
-            default: break
-            }
-        }
-        let now = compat.currentSettings(for: g)
-        let cur = RecommendedSettings.Values(launch: now.launch, power: now.power, swapMB: now.swapMB, swapCoverage: now.swapCoverage, vramMB: now.vramMB, preciseMath: now.preciseMath, desktopDisplay: now.desktopDisplay)
-        let changes = RecommendedSettings.changes(recommended: rec, counts: counts, reports: summary.reports, current: cur, steamGame: g.dockAppID != nil)
-        return Plan(recommended: rec, changes: changes, reports: summary.reports, earlierEngine: earlier)
+        do { state = try await CommunitySettings.load(for: g).map { .ready($0) } ?? .none } catch { state = .failed(ErrorText.plain(error)) }
     }
 }

@@ -97,6 +97,114 @@ n = wheel.add(1, 0)
 check(n.count == 1 && n[0].flags == WheelAccumulator.hwheel && n[0].delta == 120, "wheel: sideways")
 wheel.reset()
 check(wheel.add(0, 0.4).isEmpty && wheel.add(0, 0.4).isEmpty && wheel.add(0, 0.4).count == 1, "wheel: smooth scrolling adds up to a notch")
+// a notched wheel that reads 0.3 per click: a lone click is one notch, and two alike lone clicks teach the size of a click
+var click = WheelAccumulator()
+check(click.add(0, 0.3, at: 10.0).isEmpty, "wheel: a click of 0.3 is not a notch by itself")
+var flushed = click.flushIdle()
+check(flushed.count == 1 && flushed[0].flags == WheelAccumulator.wheel && flushed[0].delta == 120, "wheel: ...but after the pause it is sent as one notch")
+check(click.flushIdle().isEmpty, "wheel: a second look sends nothing more")
+check(click.add(0, -0.3, at: 11.0).isEmpty, "wheel: the next lone click")
+flushed = click.flushIdle()
+check(flushed.count == 1 && flushed[0].delta == -120 && click.clickUnit != nil && abs(click.clickUnit! - 0.3) < 0.01, "wheel: two alike lone clicks teach a click size of 0.3")
+var spin = click.add(0, 0.3, at: 12.00) + click.add(0, 0.3, at: 12.02) + click.add(0, 0.3, at: 12.04)
+check(spin.count == 3 && click.flushIdle().isEmpty, "wheel: a fast spin now sends every click, and the pause adds none")
+// a smooth scroll (many tiny readings) keeps adding up to whole notches and gets no extra notch at the end
+var smooth = WheelAccumulator()
+var sent = 0
+for i in 0..<50 { sent += smooth.add(0, 0.05, at: 20.0 + Double(i) * 0.01).count }
+check(sent == 2 && smooth.flushIdle().isEmpty, "wheel: smooth scrolling is unchanged (50 x 0.05 = 2 notches, none added at the end)")
+// the leftover of one turn does not leak into the next turn
+var leak = WheelAccumulator()
+_ = leak.add(0, 0.9, at: 30.0); _ = leak.flushIdle()
+check(leak.add(0, 0.5, at: 31.0).isEmpty, "wheel: the next turn starts clean")
+// --- A wheel click as iPadOS reports it (readings from a Logitech G502 X): a climbing run that is the distance so far, about 94.5 at the peak
+func click(_ g: inout WheelGesture, _ values: [Double], from t0: Double, step: Double = 0.010) -> Int {
+    var total = 0
+    for (i, v) in values.enumerated() { total += g.add(v, at: t0 + Double(i) * step) }
+    return total + g.flushIdle()
+}
+var axesA = WheelAxes()
+let a1 = axesA.map(-29.3, 0)
+check(axesA.secondIsVertical == false && a1.vertical == -29.3 && a1.horizontal == 0, "wheel axes: a wheel in the first value is vertical, negative up")
+var axesB = WheelAxes()
+let b1 = axesB.map(0, 26.0)
+check(axesB.secondIsVertical == true && b1.vertical == -26.0 && b1.horizontal == 0, "wheel axes: a wheel in the second value is vertical too, positive up becomes negative up")
+var axesC = WheelAxes()
+_ = axesC.map(-0.017, 0)
+check(axesC.secondIsVertical == nil, "wheel axes: the 0.017 start-of-gesture reading decides nothing")
+var axesD = WheelAxes()
+_ = axesD.map(-50, 0)
+var flipped = false
+for _ in 0..<12 { flipped = axesD.map(0, 80).changed || flipped }
+check(axesD.secondIsVertical == true && flipped, "wheel axes: the choice changes when the other axis carries far more (the display changed)")
+var axesE = WheelAxes()
+_ = axesE.map(-90, 0)
+for _ in 0..<3 { _ = axesE.map(-90, 0) }
+_ = axesE.map(0, 120)
+check(axesE.secondIsVertical == false, "wheel axes: a single sideways click does not change it")
+func real(_ g: inout WheelGesture, _ values: [(Double, Double)], from t0: Double) -> Int {
+    var total = 0
+    for (dt, v) in values { total += g.add(v, at: t0 + dt / 1000) }
+    return total + g.flushIdle()
+}
+var axesN = WheelAxes()
+_ = axesN.map(0, 0.017); _ = axesN.map(0, -2.67); _ = axesN.map(0, -7.3)
+check(axesN.secondIsVertical == nil, "wheel axes: a few points on the other value at the start decide nothing")
+_ = axesN.map(-8.5, 0); _ = axesN.map(-30.9, 0)
+check(axesN.secondIsVertical == false, "wheel axes: the first real turn decides (the first value here)")
+// A slow click arrives as ONE reading of about 0.017 (its sign the direction) and nothing after it: 6 up and 14 down in the 1.3.16 log were not counted at all.
+var lone = WheelGesture()
+check(lone.add(0.0173, at: 500.0) == 0 && lone.flushIdle(at: 500.05) == 0 && lone.flushIdle(at: 500.19) == 1, "wheel gesture: a lone 0.017 is one notch up once nothing followed it for 180 ms")
+check(lone.flushIdle(at: 500.5) == 0, "wheel gesture: ...and only once")
+var loneRun = 0
+for (i, v) in [-0.0173, -0.0173, -0.39, -0.0173, -0.069, -0.0173].enumerated() { loneRun += lone.add(v, at: 510.0 + Double(i) * 0.3) }
+loneRun += lone.flushIdle(at: 520.0)
+check(loneRun == -6, "wheel gesture: six slow clicks 300 ms apart are six notches down (got \(loneRun))")
+var loneBoth = WheelGesture()
+var mixed = loneBoth.add(0.0173, at: 530.0) + loneBoth.add(-0.0173, at: 530.2) + loneBoth.add(0.0173, at: 530.4) + loneBoth.flushIdle(at: 531)
+check(mixed == 1, "wheel gesture: up, down, up slow clicks cancel to one notch up (got \(mixed))")
+// the axis of a lone slow click, before any run has decided it
+var axesL = WheelAxes()
+let l1 = axesL.map(0, -0.0173)
+check(axesL.secondIsVertical == nil && l1.vertical == 0.0173 && l1.horizontal == 0, "wheel axes: a lone 0.017 in the second value is vertical for now (positive there is up)")
+var axesM = WheelAxes()
+let m1 = axesM.map(0, 4.9)
+check(m1.vertical == -4.9 && m1.horizontal == 0, "wheel axes: the first small run in the second value does not go sideways")
+let m2 = axesM.map(0, 33.8)
+check(axesM.secondIsVertical == true && !m2.changed, "wheel axes: deciding what was already assumed changes nothing")
+// --- Counted clicks (Factorio, 2026-11-05): one deliberate click is a lone 0.017; quick clicks are a ramp whose size says how many there were
+func ramp(_ values: [Double], gap: Double = 0.016) -> Int {
+    var g = WheelGesture(), total = 0
+    for (i, v) in values.enumerated() { total += g.add(v, at: 700.0 + Double(i) * gap) }
+    return total + g.flushIdle()
+}
+check(ramp([0.0173]) == 1 && ramp([-0.0173]) == -1, "wheel ramp: one deliberate click is one notch, either way")
+check(ramp([-0.0173, -7.95]) == -1, "wheel ramp: two clicks (0.017, 8): at least a notch; a touch under 4 points is none")
+check(ramp([-0.0173, -2.0]) == 0 || ramp([-0.0173, -2.0]) == -1, "wheel ramp: a touch of the wheel is at most one notch")
+check(ramp([0.0173, 8.9, 31.4]) == 3, "wheel ramp: three clicks (0.017, 8.9, 31.4) are three notches")
+check(ramp([0.0173, 9.1, 35.4, 50.9, 55.6]) == 5, "wheel ramp: five clicks (five readings up to 55) are five notches")
+let tenClicks: [Double] = [0.0173, 7.9, 31.7, 49.3, 59.5, 65.4, 69.3, 70.1, 80.0]
+check(abs(ramp(tenClicks)) >= 8 && abs(ramp(tenClicks)) <= 11, "wheel ramp: ten clicks (nine readings, sum 433) are about ten notches (got \(ramp(tenClicks)))")
+let twentyClicks: [Double] = [0.0173, 5.5, 21.4, 37.1, 51.4, 59.5, 65.5, 71.2, 82.3, 85.3, 85.9, 86.3, 86.5, 86.2]
+check(abs(ramp(twentyClicks)) >= 14 && abs(ramp(twentyClicks)) <= 22, "wheel ramp: twenty clicks (14 readings, sum 824) are 14 to 22 notches (got \(ramp(twentyClicks)))")
+let burstOne: [Double] = [0.0173, 9.0, 93.0, 63.9, 70.9, 77.2, 174.8]
+let burstTwo: [Double] = [0.0173, 8.9, 37.1, 55.4, 63.6, 148.0, 83.0, 91.6, 92.2, 91.8, 89.8]
+check(abs(ramp(burstOne)) >= 9 && abs(ramp(burstOne)) <= 13, "wheel ramp: the user's first fast turn of 10 to 15 clicks is 9 to 13 notches (got \(ramp(burstOne)))")
+check(abs(ramp(burstTwo)) >= 13 && abs(ramp(burstTwo)) <= 19, "wheel ramp: the user's second fast turn of 10 to 15 clicks is 13 to 19 notches (got \(ramp(burstTwo)))")
+check(ramp([-0.0173, -8.9, -31.4, -50.9, -55.6]) == -5, "wheel ramp: the other direction is negative")
+// the ramp is counted as it grows, not at its end
+var growing = WheelGesture()
+var sentSoFar = 0
+for (i, v) in burstTwo.enumerated() { sentSoFar += growing.add(v, at: 710.0 + Double(i) * 0.016); if i == 5 { check(sentSoFar >= 5, "wheel ramp: half way through a turn its first clicks are already sent (\(sentSoFar))") } }
+// two turns a second apart are two ramps, a flick too
+var twoTurns = WheelGesture()
+let t1 = click(&twoTurns, [0.0173, 8.9, 31.4], from: 720.0, step: 0.016), t2 = click(&twoTurns, [0.0173, 9.1, 35.4, 50.9, 55.6], from: 721.0, step: 0.016)
+check(t1 == 3 && t2 == 5, "wheel ramp: a second turn starts from nothing (\(t1), \(t2))")
+check(abs(ramp([185.2, 540.5, 582.6, 290.5])) >= 30, "wheel ramp: a hard flick (185, 540, 582, 290) adds up to many notches")
+check(abs(ramp((0..<400).map { _ in 86.0 })) <= WheelGesture.maxClicks, "wheel ramp: the count is capped")
+
+var nan = WheelGesture()
+check(nan.add(.nan, at: 130) == 0 && nan.add(.infinity, at: 130.01) == 0, "wheel gesture: not-a-number readings are ignored")
 let w = GCMouseWheel.axes(-1, 0)
 check(w.dy == 1 && w.dx == 0, "wheel: a turn away from the user is up")
 check(wheel.add(0, 1000).count == WheelAccumulator.maxNotchesPerEvent, "wheel: a huge burst is capped")
@@ -156,6 +264,23 @@ q.append("hi")
 check(q.next?.vk == 0x48 && q.next?.shift == false, "paste: starts with the first character")
 q.advance(); q.advance()
 check(q.next == nil, "paste: ends after the last character")
+
+// --- A gesture that never got a reading (the pointer is not on a game) must be safe to summarise: 1.3.16-1.3.20 trapped on Int(-infinity) at every scroll outside a game
+var idle = WheelGesture()
+let idleSummary = idle.summary
+check(idleSummary.readings == 0 && idleSummary.ms == 0 && idleSummary.notches == 0, "a wheel gesture with no reading summarises as empty (no trap)")
+check(idle.flushIdle(at: 0) == 0 && idle.summary.ms == 0, "flushing a gesture with no reading is empty")
+
+// --- The system's scroll sense is learned from turns seen by both UIKit and the pad
+var sense = ScrollSense()
+check(sense.same == 1, "scroll sense starts as iPadOS's default (UIKit and the pad agree in sign)")
+check(!sense.observe(uikit: -12, pad: -40) && sense.same == 1, "a turn that agrees keeps the sense")
+check(!sense.observe(uikit: 12, pad: -40) && !sense.observe(uikit: 12, pad: -40) && sense.same == 1, "two turns against the sense are not enough")
+check(sense.observe(uikit: 12, pad: -40) && sense.same == -1, "three in a row flip it")
+check(!sense.observe(uikit: 0, pad: 5) && !sense.observe(uikit: 3, pad: 0) && !sense.observe(uikit: .infinity, pad: 1), "zero and non-finite readings are ignored")
+var sense2 = ScrollSense()
+_ = sense2.observe(uikit: 1, pad: -1); _ = sense2.observe(uikit: 1, pad: -1); _ = sense2.observe(uikit: 1, pad: 1)
+check(sense2.same == 1 && !sense2.observe(uikit: 1, pad: -1), "an agreeing turn in between starts the count again")
 
 // --- Cursor and stick helpers
 let c = DesktopCursor.advance(x: 10, y: 10, dx: -50, dy: 5000, width: 1280, height: 720)

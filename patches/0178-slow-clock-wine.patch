@@ -1,0 +1,275 @@
+diff --git a/dlls/ntdll/time.c b/dlls/ntdll/time.c
+index 9945e28d..85e9d70e 100644
+--- a/dlls/ntdll/time.c
++++ b/dlls/ntdll/time.c
+@@ -395,6 +395,47 @@ LONGLONG WINAPI RtlGetSystemTimePrecise( void )
+ static ULONGLONG qpc_freq, qpc_last_sync;
+ static LONGLONG qpc_offset;
+ static LONG qpc_disabled;
++static LONG qpc_slow_checked;
++
++/* ml1190 (Porthole 1.2.133): a program named in MADEIRA_SLOW_CLOCK ("Launcher.exe:0.4;...", the same list as madeira.cfg
++ * slow-clock) must read the counter the unix side slows down (NtQueryPerformanceCounter), not this user-mode copy of the
++ * generic timer, which always runs at real speed.  Returns 1 = named, 0 = not named, -1 = the process parameters do not exist yet. */
++static int qpc_slow_program(void)
++{
++    static const WCHAR varW[] = {'M','A','D','E','I','R','A','_','S','L','O','W','_','C','L','O','C','K',0};
++    RTL_USER_PROCESS_PARAMETERS *pp = NtCurrentTeb()->Peb->ProcessParameters;
++    UNICODE_STRING name, value;
++    WCHAR buf[200], *base, *p, *end;
++    int k, found = 0;
++
++    if (!pp || !pp->ImagePathName.Buffer) return -1;
++    base = pp->ImagePathName.Buffer;
++    for (k = 0; k < pp->ImagePathName.Length / (int)sizeof(WCHAR); k++)
++        if (pp->ImagePathName.Buffer[k] == '\\' || pp->ImagePathName.Buffer[k] == '/') base = pp->ImagePathName.Buffer + k + 1;
++    RtlInitUnicodeString( &name, varW );
++    value.Buffer = buf; value.Length = 0; value.MaximumLength = sizeof(buf) - sizeof(WCHAR);
++    if (RtlQueryEnvironmentVariable_U( NULL, &name, &value )) return 0;
++    buf[value.Length / sizeof(WCHAR)] = 0;
++    for (p = buf; *p && !found; p = end + (*end ? 1 : 0))
++    {
++        WCHAR *colon = NULL, *q;
++        int len, ok;
++        for (end = p; *end && *end != ';' && *end != ','; end++) if (*end == ':') colon = end;
++        if (!colon) continue;
++        len = (int)(colon - p);
++        if (len != (int)(pp->ImagePathName.Length / sizeof(WCHAR) - (base - pp->ImagePathName.Buffer))) continue;
++        for (ok = 1, q = p, k = 0; k < len && ok; k++)
++        {
++            WCHAR a = q[k], b = base[k];
++            if (a >= 'A' && a <= 'Z') a += 32;
++            if (b >= 'A' && b <= 'Z') b += 32;
++            if (a != b) ok = 0;
++        }
++        if (ok) found = 1;
++    }
++    if (found) ERR( "[slow-clock] ml1190 %s reads the performance counter through the system call (MADEIRA_SLOW_CLOCK)\n", debugstr_w( base ) );
++    return found;
++}
+ 
+ static inline ULONGLONG qpc_read_cntvct(void)
+ {
+@@ -412,6 +453,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH RtlQueryPerformanceCounter( LARGE_INTEGER *counter
+ {
+     ULONGLONG c;
+ 
++    if (!qpc_slow_checked)   /* ml1190 */
++    {
++        int r = qpc_slow_program();
++        if (r >= 0) { qpc_slow_checked = 1; if (r) qpc_disabled = 1; }
++    }
+     if (qpc_disabled) goto slow;
+     if (!qpc_freq)
+     {
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index 71da3505..530b0a43 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -114,6 +114,153 @@ static inline ULONGLONG monotonic_counter(void)
+     return ticks_from_time_t( now.tv_sec ) + now.tv_usec * 10 - server_start_time;
+ }
+ 
++/* ml1190 (Porthole 1.2.133): a slower clock for named programs.
++ * madeira.cfg  slow-clock = Launcher.exe:0.4;Other.exe:0.5   (program : speed, 1.0 = normal)
++ * Rockstar's Launcher gives its Social Club browser 30 s to show a window and that browser takes 35-36 s under
++ * emulation; the Launcher thinks time passes at 0.4 of the real rate, so it waits 75 s.  Only the named
++ * programs' own view changes: NtQueryPerformanceCounter runs slow for them, and every finite relative
++ * wait of 1 s or more (NtWait*, NtDelayExecution, NtWaitForAlertByThreadId) takes 1/speed as long.  The
++ * wineserver, the game and everything inside this file keep the real clock (ios_qpc_raw).  The
++ * shared tick count (GetTickCount, read straight from user_shared_data) cannot be slowed for one program. */
++#define IOS_SLOW_MAX 32
++struct ios_slow_proc
++{
++    const void *peb, *params;
++    int permille;                      /* 1000 = real time */
++    ULONGLONG base_raw, base_slow;
++    volatile int ready;
++    volatile long long qpc_reads, waits_scaled;
++};
++volatile int ios_slow_on = -1;         /* -1 = madeira.cfg not read yet, 0 = no program is slowed */
++static struct { char name[48]; int permille; } ios_slow_names[4];
++static int ios_slow_nnames;
++static struct ios_slow_proc ios_slow_procs[IOS_SLOW_MAX];
++static volatile int ios_slow_nprocs, ios_slow_lock;
++
++ULONGLONG ios_qpc_raw(void) { return monotonic_counter(); }
++
++static void ios_slow_init(void)
++{
++    char v[200], *p, *save = NULL;
++    int n = 0;
++    while (__sync_lock_test_and_set( &ios_slow_lock, 1 )) ;
++    if (ios_slow_on < 0)
++    {
++        v[0] = 0;
++        if (!madeira_cfg_get( "slow-clock", v, sizeof(v) ) && getenv( "MADEIRA_SLOW_CLOCK" ))
++            snprintf( v, sizeof(v), "%s", getenv( "MADEIRA_SLOW_CLOCK" ) );
++        for (p = strtok_r( v, ";,", &save ); p && n < 4; p = strtok_r( NULL, ";,", &save ))
++        {
++            char *colon = strrchr( p, ':' );
++            double speed = colon ? atof( colon + 1 ) : 0;
++            if (!colon || speed < 0.05 || speed > 1.0) continue;
++            *colon = 0;
++            snprintf( ios_slow_names[n].name, sizeof(ios_slow_names[n].name), "%s", p );
++            ios_slow_names[n].permille = (int)(speed * 1000 + 0.5);
++            n++;
++        }
++        ios_slow_nnames = n;
++        if (n)
++            fprintf( stderr, "[slow-clock] ml1190 madeira.cfg slow-clock: %d program(s), first %s at %d/1000\n",
++                     n, ios_slow_names[0].name, ios_slow_names[0].permille );
++        __atomic_store_n( &ios_slow_on, n ? 1 : 0, __ATOMIC_RELEASE );
++    }
++    __sync_lock_release( &ios_slow_lock );
++}
++
++static struct ios_slow_proc *ios_slow_find(void)
++{
++    PEB *peb = NtCurrentTeb()->Peb;
++    RTL_USER_PROCESS_PARAMETERS *pp = peb ? peb->ProcessParameters : NULL;
++    int i, n = ios_slow_nprocs, slot, permille = 1000;
++    struct ios_slow_proc *e;
++
++    if (n > IOS_SLOW_MAX) n = IOS_SLOW_MAX;
++    for (i = 0; i < n; i++)
++    {
++        e = &ios_slow_procs[i];
++        if (e->ready && e->peb == peb && e->params == pp) return e;
++    }
++    while (__sync_lock_test_and_set( &ios_slow_lock, 1 )) ;
++    n = ios_slow_nprocs; if (n > IOS_SLOW_MAX) n = IOS_SLOW_MAX;
++    for (i = 0; i < n; i++)
++    {
++        e = &ios_slow_procs[i];
++        if (e->ready && e->peb == peb && e->params == pp) { __sync_lock_release( &ios_slow_lock ); return e; }
++    }
++    if (pp && pp->ImagePathName.Buffer)
++    {
++        const WCHAR *w = pp->ImagePathName.Buffer, *base = w;
++        int len = pp->ImagePathName.Length / sizeof(WCHAR), k, j;
++        for (k = 0; k < len; k++) if (w[k] == '\\' || w[k] == '/') base = w + k + 1;
++        len -= (int)(base - w);
++        for (j = 0; j < ios_slow_nnames; j++)
++        {
++            const char *nm = ios_slow_names[j].name;
++            int ok = (int)strlen( nm ) == len;
++            for (k = 0; ok && k < len; k++)
++            {
++                int a = base[k], b = (unsigned char)nm[k];
++                if (a >= 'A' && a <= 'Z') a += 32;
++                if (b >= 'A' && b <= 'Z') b += 32;
++                if (a != b) ok = 0;
++            }
++            if (ok) { permille = ios_slow_names[j].permille; break; }
++        }
++    }
++    slot = ios_slow_nprocs % IOS_SLOW_MAX;
++    e = &ios_slow_procs[slot];
++    e->ready = 0;
++    e->peb = peb; e->params = pp; e->permille = permille;
++    e->base_raw = e->base_slow = monotonic_counter();
++    e->qpc_reads = e->waits_scaled = 0;
++    __atomic_store_n( &e->ready, 1, __ATOMIC_RELEASE );
++    ios_slow_nprocs++;
++    if (permille != 1000)
++        fprintf( stderr, "[slow-clock] ml1190 peb=%p runs at %d/1000 of real time (clock and waits of 1 s or more)\n",
++                 (void *)peb, permille );
++    __sync_lock_release( &ios_slow_lock );
++    return e;
++}
++
++/* The program's reading of the monotonic counter. */
++static ULONGLONG ios_slow_qpc( ULONGLONG raw )
++{
++    struct ios_slow_proc *e = ios_slow_find();
++    long long n;
++    if (!e || e->permille == 1000) return raw;
++    n = __sync_add_and_fetch( &e->qpc_reads, 1 );
++    if (n == 1 || n == 100 || n == 10000 || n == 1000000)
++        fprintf( stderr, "[slow-clock] ml1190 peb=%p has read the performance counter %lld time(s)\n", (void *)e->peb, n );
++    return e->base_slow + (raw - e->base_raw) / 1000 * e->permille + (raw - e->base_raw) % 1000 * e->permille / 1000;
++}
++
++/* A finite relative wait of 1 s or more, stretched for a slowed program; the same timeout otherwise. */
++static const LARGE_INTEGER *ios_slow_wait( const LARGE_INTEGER *timeout, LARGE_INTEGER *store )
++{
++    struct ios_slow_proc *e;
++    long long rel;
++    if (!timeout || timeout->QuadPart >= 0 || timeout->QuadPart == TIMEOUT_INFINITE) return timeout;
++    rel = -timeout->QuadPart;
++    if (rel < 10000000) return timeout;
++    e = ios_slow_find();
++    if (!e || e->permille == 1000) return timeout;
++    store->QuadPart = -(rel / e->permille * 1000 + rel % e->permille * 1000 / e->permille);
++    if (__sync_add_and_fetch( &e->waits_scaled, 1 ) <= 20)
++        fprintf( stderr, "[slow-clock] ml1190 peb=%p wait of %lld ms becomes %lld ms\n",
++                 (void *)e->peb, (long long)(rel / 10000), (long long)(-store->QuadPart / 10000) );
++    return store;
++}
++
++#define IOS_SLOW_WAIT() \
++    LARGE_INTEGER ios_slow_store; \
++    if (__builtin_expect( ios_slow_on != 0, 0 )) \
++    { \
++        if (ios_slow_on < 0) ios_slow_init(); \
++        if (ios_slow_on > 0) timeout = ios_slow_wait( timeout, &ios_slow_store ); \
++    }
++
++
+ #ifdef __linux__
+ 
+ #define USE_FUTEX
+@@ -3394,7 +3541,7 @@ NTSTATUS WINAPI NtQueryTimer( HANDLE handle, TIMER_INFORMATION_CLASS class,
+         if (basic_info->RemainingTime.QuadPart > 0) NtQuerySystemTime( &now );
+         else
+         {
+-            NtQueryPerformanceCounter( &now, NULL );
++            now.QuadPart = monotonic_counter();   /* ml1190: the server's clock, not a slowed program's */
+             basic_info->RemainingTime.QuadPart = -basic_info->RemainingTime.QuadPart;
+         }
+ 
+@@ -3426,6 +3573,7 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, WA
+ #endif
+ 
+     IOS_ECO_POLL();   /* ml1133 */
++    IOS_SLOW_WAIT();   /* ml1190 */
+ 
+     if (!count || count > MAXIMUM_WAIT_OBJECTS) return STATUS_INVALID_PARAMETER_1;
+     if (type != WaitAll && type != WaitAny) FIXME( "Unsupported wait type %u\n", type );
+@@ -3504,6 +3652,7 @@ NTSTATUS WINAPI NtWaitForSingleObject( HANDLE handle, BOOLEAN alertable, const L
+ #endif
+ 
+     IOS_ECO_POLL();   /* ml1133 */
++    IOS_SLOW_WAIT();   /* ml1190 */
+ 
+     TRACE( "handle %p, alertable %u, timeout %s\n", handle, alertable, debugstr_timeout(timeout) );
+ 
+@@ -3669,6 +3818,7 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
+     unsigned int status = STATUS_SUCCESS;
+ 
+     IOS_ECO_POLL();   /* ml1133 */
++    IOS_SLOW_WAIT();   /* ml1190 */
+ 
+     {   /* ml1131: requested delay: 0, < 1 ms, < 5 ms, < 20 ms, >= 20 ms, infinite */
+         long long d = (!timeout || timeout->QuadPart == TIMEOUT_INFINITE) ? -1
+@@ -3730,6 +3880,11 @@ NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER
+ {
+     __sync_fetch_and_add( &ios_qpc_syscalls, 1 );
+     counter->QuadPart = monotonic_counter();
++    if (__builtin_expect( ios_slow_on != 0, 0 ))   /* ml1190 */
++    {
++        if (ios_slow_on < 0) ios_slow_init();
++        if (ios_slow_on > 0) counter->QuadPart = ios_slow_qpc( counter->QuadPart );
++    }
+     if (frequency) frequency->QuadPart = TICKSPERSEC;
+     return STATUS_SUCCESS;
+ }
+@@ -5337,6 +5492,7 @@ static LONGLONG update_timeout( ULONGLONG end )
+ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEGER *timeout )
+ {
+     IOS_ECO_POLL();   /* ml1133 */
++    IOS_SLOW_WAIT();   /* ml1190 */
+     __sync_fetch_and_add( &ios_alert_waits, 1 );   /* ml1115 */
+     union tid_alert_entry *entry = get_tid_alert_entry( NtCurrentTeb()->ClientId.UniqueThread );
+     /* iOS-Madeira ml406 (task #60): unix-side tap for beacon-marked threads

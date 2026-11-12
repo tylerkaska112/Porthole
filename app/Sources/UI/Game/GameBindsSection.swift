@@ -72,7 +72,7 @@ struct GameBindsSection: View {
             message = "Imported \(set.name)."
             editing = set.id
         } catch {
-            message = error.localizedDescription
+            message = ErrorText.plain(error)
         }
     }
 
@@ -339,6 +339,7 @@ struct TouchLayoutEditor: View {
 
     private func accessibleName(_ c: TouchControlSpec) -> String {
         if c.isStick { return c.action == "stick-arrows" ? "Stick, arrow keys" : "Stick, W A S D" }
+        if let pad = c.pad, pad.isRound { return PadActions.label(c.action) }
         let name: String = c.label.isEmpty ? PadActions.label(c.action) : c.label
         return name + " button, " + PadActions.label(c.action)
     }
@@ -392,7 +393,7 @@ struct TouchLayoutEditor: View {
         ZStack {
             Circle().fill(Color.white.opacity(c.id == selected ? 0.38 : 0.2))
             Circle().strokeBorder(c.id == selected ? Theme.accent : Color.white.opacity(0.45), lineWidth: c.id == selected ? 3 : 1.5)
-            Text(c.isStick ? (c.action == "stick-arrows" ? "\u{2191}\u{2190}\u{2192}\u{2193}" : "WASD") : c.label)
+            Text(c.faceText)
                 .font(.system(size: max(9, side * 0.3), weight: .bold, design: .rounded)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.4).padding(4)
         }
         .frame(width: side, height: side)

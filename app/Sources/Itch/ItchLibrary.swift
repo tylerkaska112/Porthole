@@ -54,7 +54,7 @@ final class ItchLibrary: ObservableObject {
                 LogStore.shared.log("[itch-library] \(list.count) game(s) with a Windows download")
             } catch {
                 LogStore.shared.log("[itch-library] refresh failed: \(error.localizedDescription)", level: .error)
-                self.error = error.localizedDescription
+                self.error = ErrorText.plain(error)
             }
             isLoading = false
         }

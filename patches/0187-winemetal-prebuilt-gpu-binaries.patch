@@ -1,0 +1,142 @@
+diff -ruN a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+--- a/src/winemetal/unix/winemetal_unix.c	2026-11-07 03:59:38
++++ b/src/winemetal/unix/winemetal_unix.c	2026-11-07 03:59:39
+@@ -1846,6 +1846,45 @@
+   return STATUS_SUCCESS;
+ }
+ 
++/* Porthole (Cycles on Metal), slot 171: GPU binaries built ahead of time. One archive at a time (Cycles loads the one for its kernels). */
++static id<MTLBinaryArchive> g_porthole_archive = nil;
++
++static NTSTATUS
++_MTLDevice_setBinaryArchive(void *obj) {
++  struct unixcall_set_archive *params = obj;
++  params->ret = 0;
++  params->ret_error = 0;
++  char *arch_out = (char *)(uintptr_t)params->arch_out;
++  if (arch_out) arch_out[0] = 0;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  @autoreleasepool {
++    id<MTLDevice> device = (id<MTLDevice>)params->device;
++    if (arch_out) {
++      if (@available(iOS 18.0, macOS 15.0, *)) {
++        const char *name = device.architecture.name.UTF8String;
++        if (name) strlcpy(arch_out, name, 32);
++      }
++    }
++    if (!params->bytes || !params->length) return STATUS_SUCCESS;
++    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"porthole-gpu-binaries.bin"];
++    NSData *data = [NSData dataWithBytesNoCopy:(void *)(uintptr_t)params->bytes length:(NSUInteger)params->length freeWhenDone:NO];
++    if (![data writeToFile:path atomically:YES]) return STATUS_UNSUCCESSFUL;
++    MTLBinaryArchiveDescriptor *desc = [[MTLBinaryArchiveDescriptor alloc] init];
++    desc.url = [NSURL fileURLWithPath:path];
++    NSError *err = nil;
++    id<MTLBinaryArchive> archive = [device newBinaryArchiveWithDescriptor:desc error:&err];
++    [desc release];
++    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
++    if (err) params->ret_error = (obj_handle_t)[err retain];
++    if (archive) {
++      if (g_porthole_archive) [g_porthole_archive release];
++      g_porthole_archive = archive;      /* +1, kept */
++      params->ret = 1;
++    }
++  }
++  return STATUS_SUCCESS;
++}
++
+ /* Porthole (Cycles on Metal), slot 170. */
+ static NTSTATUS
+ _MTLComputePipelineState_limits(void *obj) {
+@@ -1888,7 +1927,14 @@
+     }
+     if (info->max_call_stack_depth) desc.maxCallStackDepth = info->max_call_stack_depth;
+     NSError *err = nil;
+-    id<MTLComputePipelineState> pso = [(id<MTLDevice>)params->device newComputePipelineStateWithDescriptor:desc options:MTLPipelineOptionNone reflection:nil error:&err];
++    MTLPipelineOption option = MTLPipelineOptionNone;
++    if (info->flags & 2u) {
++      /* From the GPU binaries built ahead of time, or not at all: a miss must not start a compile (that is what stops the system's compiler). */
++      if (!g_porthole_archive) { [desc release]; return STATUS_SUCCESS; }
++      desc.binaryArchives = @[ g_porthole_archive ];
++      option = MTLPipelineOptionFailOnBinaryArchiveMiss;
++    }
++    id<MTLComputePipelineState> pso = [(id<MTLDevice>)params->device newComputePipelineStateWithDescriptor:desc options:option reflection:nil error:&err];
+     params->ret = (obj_handle_t)pso;                      /* +1, released by the caller */
+     if (err) params->ret_error = (obj_handle_t)[err retain];
+     [desc release];
+@@ -8802,6 +8848,7 @@
+     &_MTLIntersectionFunctionTable_setFunction,   /* 168 */
+     &_MTLIntersectionFunctionTable_setBuffer,   /* 169 */
+     &_MTLComputePipelineState_limits,   /* 170 */
++    &_MTLDevice_setBinaryArchive,   /* 171 */
+ };
+ 
+ #ifndef DXMT_NATIVE
+@@ -8984,5 +9031,6 @@
+     NULL, /* 168 */
+     NULL, /* 169 */
+     NULL, /* 170 */
++    NULL, /* 171 */
+ };
+ #endif
+diff -ruN a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+--- a/src/winemetal/winemetal.h	2026-11-07 03:59:38
++++ b/src/winemetal/winemetal.h	2026-11-07 03:59:39
+@@ -645,7 +645,7 @@
+   uint32_t linked_count;
+   uint32_t max_call_stack_depth;      /* 0 = Metal's default */
+   uint32_t max_total_threads_per_threadgroup;  /* 0 = Metal's default */
+-  uint32_t flags;                     /* bit 0: the threadgroup size is a multiple of the thread execution width */
++  uint32_t flags;                     /* bit 0: the threadgroup size is a multiple of the thread execution width; bit 1: build from the GPU binaries set with MTLDevice_setBinaryArchive, and fail (no compile) if they do not have this pipeline */
+   uint32_t immutable_buffers;         /* bit n: buffer n is immutable (MTLMutabilityImmutable) */
+   uint32_t reserved;
+ };
+@@ -655,6 +655,11 @@
+ WINEMETAL_API obj_handle_t MTLComputePipelineState_functionHandle(obj_handle_t pipeline, obj_handle_t function);
+ WINEMETAL_API void MTLIntersectionFunctionTable_setFunction(obj_handle_t table, obj_handle_t function_handle, uint32_t index);
+ WINEMETAL_API void MTLIntersectionFunctionTable_setBuffer(obj_handle_t table, obj_handle_t buffer, uint64_t offset, uint32_t index);
++
++/* Porthole (Cycles on Metal), slot 171: GPU binaries built ahead of time for this GPU (Apple's metal-tt), so a pipeline needs no compile on the device (the system's compiler
++ * service is stopped by the biggest Cycles kernels on a phone). bytes/length: the archive file; NULL replaces nothing and only asks the GPU's architecture name. arch_out (32 bytes,
++ * optional) receives the architecture name of the device (for example "applegpu_g16p"). Returns 1 when the archive was loaded and is now the one pipelines with flag bit 1 use. */
++WINEMETAL_API uint32_t MTLDevice_setBinaryArchive(obj_handle_t device, const void *bytes, uint64_t length, char *arch_out, obj_handle_t *err_out);
+ 
+ /* Porthole (Cycles on Metal), slot 170: what a compute pipeline allows (Cycles sizes its threadgroups from these). */
+ struct WMTComputePipelineLimits {
+diff -ruN a/src/winemetal/winemetal_thunks.c b/src/winemetal/winemetal_thunks.c
+--- a/src/winemetal/winemetal_thunks.c	2026-11-07 03:59:38
++++ b/src/winemetal/winemetal_thunks.c	2026-11-07 03:59:39
+@@ -408,6 +408,21 @@
+   UNIX_CALL(169, &params);
+ }
+ 
++WINEMETAL_API uint32_t
++MTLDevice_setBinaryArchive(obj_handle_t device, const void *bytes, uint64_t length, char *arch_out, obj_handle_t *err_out) {
++  struct unixcall_set_archive params;
++  params.device = device;
++  params.bytes = PtrToUInt64(bytes);
++  params.length = length;
++  params.arch_out = PtrToUInt64(arch_out);
++  params.ret_error = 0;
++  params.ret = 0;
++  UNIX_CALL(171, &params);
++  if (err_out)
++    *err_out = params.ret_error;
++  return (uint32_t)params.ret;
++}
++
+ WINEMETAL_API void
+ MTLComputePipelineState_limits(obj_handle_t pipeline, struct WMTComputePipelineLimits *limits) {
+   struct unixcall_pso_limits params;
+diff -ruN a/src/winemetal/winemetal_thunks.h b/src/winemetal/winemetal_thunks.h
+--- a/src/winemetal/winemetal_thunks.h	2026-11-07 03:59:38
++++ b/src/winemetal/winemetal_thunks.h	2026-11-07 03:59:39
+@@ -153,6 +153,9 @@
+ struct unixcall_new_accel { obj_handle_t device; uint64_t size; uint64_t ret_resource_id; obj_handle_t ret; };
+ struct unixcall_accel_build { obj_handle_t encoder; obj_handle_t structure; uint64_t info; obj_handle_t scratch; uint64_t scratch_offset; };
+ 
++/* Porthole, slot 171. */
++struct unixcall_set_archive { obj_handle_t device; uint64_t bytes; uint64_t length; uint64_t arch_out; obj_handle_t ret_error; uint64_t ret; };
++
+ /* Porthole, slot 170. */
+ struct unixcall_pso_limits { obj_handle_t pipeline; uint64_t out; };
+ 

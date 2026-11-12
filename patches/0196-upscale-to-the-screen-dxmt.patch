@@ -1,0 +1,55 @@
+--- a/src/d3d11/d3d11_swapchain.cpp	2026-11-08 23:21:46
++++ b/src/d3d11/d3d11_swapchain.cpp	2026-11-08 23:21:46
+@@ -1,4 +1,5 @@
+ #include "d3d11_swapchain.hpp"
++#include <cstdio>
+ #include "com/com_guid.hpp"
+ #include "config/config.hpp"
+ #include "d3d11_private.h"
+@@ -114,6 +115,19 @@
+   };
+ };
+ 
++/* Porthole 0196: "upscale to the screen". DXMT_METALFX_FIT = "<width>x<height>" (the screen's pixels, set by the app) picks the MetalFX factor itself: the picture the
++ * game draws is enlarged to fit the screen, aspect kept, at most 2x (what the spatial scaler is good at). Returns 0 when the game already draws about as large as the
++ * screen (a factor under 1.1 buys nothing) or nothing is asked for. */
++static float MetalFXFitFactor(UINT width, UINT height) {
++  auto fit = env::getEnvVar("DXMT_METALFX_FIT");
++  unsigned sw = 0, sh = 0;
++  if (fit.empty() || sscanf(fit.c_str(), "%ux%u", &sw, &sh) != 2 || !sw || !sh || !width || !height)
++    return 0;
++  float f = std::min((float)sw / (float)width, (float)sh / (float)height);
++  if (f > 2.0f) f = 2.0f;
++  return f >= 1.1f ? f : 0;
++}
++
+ template <bool EnableMetalFX>
+ class MTLD3D11SwapChain final : public MTLDXGISubObject<IDXGISwapChain4, MTLD3D11Device> {
+ public:
+@@ -141,6 +155,14 @@
+ 
+     if constexpr (EnableMetalFX) {
+       scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
++      {   /* Porthole 0196: to the screen */
++        UINT fw = desc_.Width, fh = desc_.Height;
++        if (!fw || !fh) wsi::getWindowSize(hWnd, &fw, &fh);
++        if (float fit = MetalFXFitFactor(fw, fh); fit > 0) {
++          scale_factor = fit;
++          Logger::info(std::format("[upscale] to the screen: {}x{} -> x{:.3f} (MetalFX spatial, DXMT_METALFX_FIT)", fw, fh, fit));
++        }
++      }
+     }
+ 
+     presenter = Rc(new Presenter(pDevice->GetMTLDevice(), layer_weak_,
+@@ -1327,7 +1349,10 @@
+       pDesc->BufferCount != 1) {
+     WARN("CreateSwapChain: unsupported swap effect ", pDesc->SwapEffect, " with backbuffer size ", pDesc->BufferCount);
+   }
+-  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1") {
++  UINT fit_w = pDesc->Width, fit_h = pDesc->Height;
++  if ((!fit_w || !fit_h) && !env::getEnvVar("DXMT_METALFX_FIT").empty()) wsi::getWindowSize(hWnd, &fit_w, &fit_h);
++  bool fit_wanted = !env::getEnvVar("DXMT_METALFX_FIT").empty();
++  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" && (!fit_wanted || MetalFXFitFactor(fit_w, fit_h) > 0)) {   /* Porthole 0196: a game that already draws at the screen's size keeps the plain swap chain */
+     if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
+       *ppSwapChain = new MTLD3D11SwapChain<true>(
+           pFactory, pDevice, layer_factory.ptr(), hWnd, pDesc, pFullscreenDesc

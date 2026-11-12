@@ -1,0 +1,9 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I A4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I F0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I FC FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I 118 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+0118:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=10625
+I 134 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71e7ab0000+0xa88000): want=0xa8c000 bump=0x1dacc000/0x2b000000 tail_resv=0xd014000 freelist=64 — FAILING the load (was: silent BUS loop)
+[jit-pool] EXHAUSTED (image 0x71e7ab0000+0xa88000): want=0xa8c000 bump=0x1dacc000/0x2b000000 tail_resv=0xd014000 freelist=64 — FAILING the load (was: silent BUS loop)

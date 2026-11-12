@@ -16,6 +16,10 @@ struct StoresScreen: View {
                 AllStoreGamesScreen()
             case .downloads?:
                 AllDownloadsScreen()
+            case .software?:
+                SoftwareScreen()
+            case .softwareItem(let id)?:
+                if id == "lossless-scaling" { LosslessScalingPage() } else { SoftwareDetailScreen(id: id) }
             case .store(let store)?:
                 switch store {
                 case .steam: SteamScreen()
@@ -29,12 +33,14 @@ struct StoresScreen: View {
         }
         // Over everything in the Stores tab (the libraries and the games' pages), except the Downloads page it opens.
         .overlay(alignment: .bottomTrailing) {
-            if router.storesSelection != .downloads, router.storesSelection != nil {   // not on the list of stores: its Downloads row is there, and the button sat on that row's arrow
+            if router.storesSelection != .downloads, router.storesSelection != .software, !router.onSoftwareItem, router.storesSelection != nil {   // not on the list of stores: its Downloads row is there, and the button sat on that row's arrow
                 DownloadsButton().padding(.trailing, 20).padding(.bottom, 18).transition(.opacity)
             }
         }
         .onNavBack {
             if router.storesSelection == .downloads { router.closeDownloads(); return true }
+            if router.onSoftwareItem { router.storesSelection = .software; return true }
+            if router.storesSelection == .software { router.storesSelection = nil; return true }
             if router.storesSelection != nil { router.storesSelection = nil; return true }
             return false
         }
@@ -45,10 +51,12 @@ struct StoresScreen: View {
 /// so the space above the games is used by something instead of a bar of its own.
 struct StoreSwitcher: View {
     @Environment(AppRouter.self) private var router
+    @AppStorage(StoreVisibility.key) private var hiddenRaw = ""
 
     var body: some View {
         HStack(spacing: 6) {
-            ForEach(GameStore.allCases) { store in
+            // A hidden store is not offered here, except the one this page is about.
+            ForEach(GameStore.allCases.filter { store in router.storesSelection == .store(store) || !StoreVisibility.hiddenIDs(hiddenRaw).contains(store.rawValue) }) { store in
                 switcher(id: "stores-go-\(store.rawValue)", selected: router.storesSelection == .store(store), label: store.title) {
                     StoreBadgeBacked(store: store, size: 24)
                 } action: { router.storesSelection = .store(store) }
@@ -84,10 +92,37 @@ struct StoresHome: View {
     @ObservedObject private var itchInstaller = ItchInstaller.shared
     @ObservedObject private var amazonInstaller = AmazonInstaller.shared
     @ObservedObject private var eaInstaller = EAInstaller.shared
+    @ObservedObject private var software = SoftwareStore.shared
     @Environment(\.focusScope) private var scope
+    @AppStorage(StoreVisibility.key) private var hiddenRaw = ""
+
+    /// One line for the Software card: what is installed, what has an update, or what is coming down.
+    private var softwareSummary: String {
+        let items = software.programs
+        if items.isEmpty { return software.loading ? "Loading the list" : "Blender and other programs, downloaded when you want them" }
+        let busy = items.filter { software.state($0).busy }
+        if !busy.isEmpty { return "\(busy.count) downloading" }
+        let installed = items.filter(software.isInstalled).count, updates = software.updates
+        var parts = ["\(installed) of \(items.count) installed"]
+        if updates > 0 { parts.append("\(updates) \(updates == 1 ? "update" : "updates")") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+    private var softwareFraction: Double? {
+        for item in software.items {
+            switch software.state(item) {
+            case .downloading(let f): return f
+            case .unpacking(let f): return f
+            case .verifying: return 1
+            default: continue
+            }
+        }
+        return nil
+    }
 
     var body: some View {
-        let cards = GameStore.allCases.map { store -> StoreCardData in
+        let shownStores = StoreVisibility.visible(GameStore.allCases, raw: hiddenRaw)
+        let hiddenStores = StoreVisibility.hidden(GameStore.allCases, raw: hiddenRaw)
+        let cards = shownStores.map { store -> StoreCardData in
             let list = StoreCatalog.entries(store)
             var fraction: Double?
             for entry in list { if case .downloading(let f) = entry.status { fraction = f; break } }
@@ -97,15 +132,20 @@ struct StoresHome: View {
         let signedIn = cards.filter(\.signedIn).map(\.store)
         let items = Downloads.items()
         return FocusScroll {
-            StoresHubView(cards: cards, allBadges: signedIn.isEmpty ? GameStore.allCases : signedIn, totalGames: cards.reduce(0) { $0 + $1.games }, totalInstalled: cards.reduce(0) { $0 + $1.installed },
+            StoresHubView(cards: cards, allBadges: signedIn.isEmpty ? shownStores : signedIn, totalGames: cards.reduce(0) { $0 + $1.games }, totalInstalled: cards.reduce(0) { $0 + $1.installed },
                           downloadsSummary: Downloads.summary(of: items), downloadsFraction: items.first { $0.kind == .running }.map { $0.progress.fraction },
-                          open: { router.storesSelection = .store($0) }, openAll: { router.storesSelection = .all }, openDownloads: { router.openDownloads() })
+                          softwareSummary: softwareSummary, softwareFraction: softwareFraction,
+                          open: { router.storesSelection = .store($0) }, openAll: { router.storesSelection = .all }, openDownloads: { router.openDownloads() }, openSoftware: { router.storesSelection = .software },
+                          hiddenStores: hiddenStores,
+                          hide: { hiddenRaw = StoreVisibility.setting($0.rawValue, hidden: true, in: hiddenRaw, known: GameStore.allCases.map(\.rawValue)) },
+                          showHidden: { router.openSettings(.stores) })
                 .padding(.horizontal, 24).padding(.vertical, 16)
                 .frame(maxWidth: 1000).frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)      // a list that fits does not bounce: a half-dragged page left the "Stores" title cut off under the bar
         // Always starts on Steam, the first store in the list.
-        .onAppear { scope?.start(at: "store-\(GameStore.steam.rawValue)", force: true) }
+        .onAppear { scope?.start(at: "store-\((StoreVisibility.visible(GameStore.allCases, raw: hiddenRaw).first ?? .steam).rawValue)", force: true) }
+        .task { await software.refresh() }
     }
 }
 
@@ -159,7 +199,8 @@ struct AllStoreGamesScreen: View {
     @ObservedObject private var amazonLibrary = AmazonLibrary.shared
     @ObservedObject private var itchLibrary = ItchLibrary.shared
     @State private var search = ""
-    @State private var filter = "all"
+    @AppStorage("f4.filter.all") private var filter = "all"
+    @AppStorage(StoreVisibility.key) private var hiddenRaw = ""
     @State private var openSteam: SteamStore.Owned?
     @State private var openEpic: EpicGame?
     @State private var notice: String?
@@ -173,7 +214,7 @@ struct AllStoreGamesScreen: View {
     private var sort: StoreSort { StoreSort(rawValue: sortRaw) ?? .name }
 
     private var entries: [StoreGameEntry] {
-        let list = GameStore.allCases.flatMap { StoreCatalog.entries($0) }.filter { e in
+        let list = StoreVisibility.visible(GameStore.allCases, raw: hiddenRaw).flatMap { StoreCatalog.entries($0) }.filter { e in
             (filter == "all" || e.status == .installed || { if case .downloading = e.status { return true }; return false }()) &&
             (search.isEmpty || e.title.localizedCaseInsensitiveContains(search))
         }
@@ -249,7 +290,6 @@ struct AllStoreGamesScreen: View {
     private var grid: some View {
         let list = entries            // once per redraw: building and sorting every store's list is not free
         return StorePage {
-            StoreSwitcher()
             if !network.isOnline { OfflineChip() }
             searchField
             SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed")], selection: filter) { filter = $0 }
@@ -257,7 +297,7 @@ struct AllStoreGamesScreen: View {
             Text("\(list.count) game\(list.count == 1 ? "" : "s")").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
         } content: {
             if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.warn) }
-            if GameStore.allCases.allSatisfy({ !StoreCatalog.signedIn($0) }) {
+            if StoreVisibility.visible(GameStore.allCases, raw: hiddenRaw).allSatisfy({ !StoreCatalog.signedIn($0) }) {
                 Text("Sign in to a store to see its games here.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)
             } else if list.isEmpty {
                 Text("No games match.").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 30)

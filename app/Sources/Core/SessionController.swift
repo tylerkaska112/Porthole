@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 The Porthole authors. See LICENSE.
+import AVFoundation
 import Foundation
 import SwiftUI
 
@@ -21,7 +22,10 @@ final class SessionController: ObservableObject {
     /// runs Shortcuts, which leaves the app, and the message was gone a second after it appeared.
     var failureOnScreen: Bool { if case .failed = state { return true }; return false }
     @Published private(set) var game: Game?
-    @Published private(set) var jitEnabled = jit_check_debugged()
+    /// JIT is on AND something can answer the pool request: the flag alone stays set after StikDebug's own app list attaches and leaves (StikJITHelper.ready).
+    @Published private(set) var jitEnabled = StikJITHelper.ready
+    /// Why the last Enable JIT did not start, for Settings (nil when it did, or before it was tried).
+    @Published var jitNote: String?
     /// While a Steam (Dock) launch runs: what Valve's client is doing, from the host's report.
     @Published private(set) var dockStatus: String?
     /// A short note about the controller shown over the game for a few seconds (automatic keyboard-and-mouse mode switching on or off).
@@ -77,6 +81,8 @@ final class SessionController: ObservableObject {
     static let desktopHeight = 720
 
     /// Audio jitter cushion in ms (patches/0006): extra buffered audio so a late emulated audio thread does not glitch the sound. 0 = off.
+    /// Settings > Sound: other apps' sound (music, a video on a second screen) keeps playing next to the game's. Programs from the Software section always allow it.
+    static let mixAudioKey = "f4.mixAudio"
     static let audioCushionKey = "f4.audioCushionMs"
     static var audioCushionMs: Int {
         UserDefaults.standard.object(forKey: audioCushionKey) as? Int ?? 80
@@ -114,10 +120,48 @@ final class SessionController: ObservableObject {
         else { var copy = g; change(&copy); game = copy }
     }
 
+    /// The in-game menu's switch for the on-screen game controller: remembered for this game (it comes back the next time it starts).
+    /// The arrangement of the on-screen controller, for this game and as the choice the next game starts with.
+    func setVirtualPadLayout(_ preset: VirtualPadLayout.Preset) {
+        guard isActive, game != nil else { return }
+        updateGame { $0.virtualPadLayout = preset.rawValue }
+        UserDefaults.standard.set(preset.rawValue, forKey: VirtualPadLayout.lastKey)
+        LogStore.shared.log("[pad] on-screen controller layout: \(preset.title)")
+    }
+
+    /// How the on-screen controller looks, for this game and as the choice the next game starts with.
+    func setVirtualPadStyle(_ style: VirtualPadStyle) {
+        guard isActive, game != nil else { return }
+        updateGame { $0.virtualPadStyle = style.rawValue }
+        UserDefaults.standard.set(style.rawValue, forKey: VirtualPadStyle.lastKey)
+        LogStore.shared.log("[pad] on-screen controller style: \(style.title)")
+    }
+
+    func setVirtualPad(_ on: Bool) {
+        guard isActive, game != nil else { return }
+        updateGame { $0.virtualPad = on ? true : nil }
+        LogStore.shared.log("[pad] on-screen controller \(on ? "on" : "off") from the in-game menu")
+    }
+
     // MARK: The controller the game is shown, while it runs
 
     /// The in-game menu's choice of controller: nil = Automatic, "xbox", "hid" (a DualSense next to the Xbox pad) or "keys" (keyboard and mouse). Applied at once and remembered for this game.
     /// The DualSense exists only when the session started with it (a PlayStation controller connected, or the game's Controller choice); the menu says so otherwise.
+    /// The in-game menu's upscaling choice: the running game takes it live (the engine looks at the control file) and the game remembers it for its next start.
+    func setUpscaling(_ new: LiveUpscaling.Live) {
+        guard isActive, let g = game else { return }
+        LiveUpscaling.shared.apply(new)
+        updateGame {
+            var e = $0.engine ?? GameEngine()
+            e.upscaleFactor = new.saved
+            e.upscaleMethod = new.method == .metalfx ? nil : new.method.rawValue
+            e.upscaleSharpness = new.sharpness == 3 ? nil : new.sharpness
+            $0.engine = e.isEmpty ? nil : e
+        }
+        LogStore.shared.log("[upscale] from the in-game menu: \(new.mode == .off ? "off" : new.mode == .screen ? "to the screen" : "\(new.factor)x"), \(new.method == .metalfx ? "MetalFX" : new.method == .ls1 ? "Lossless Scaling LS1" : "Lossless Scaling LS1 performance") (sharpness \(new.sharpness))")
+        if let fresh = AppModel.shared.games.first(where: { $0.id == g.id }) ?? game { game = fresh }
+    }
+
     func setPadMode(_ mode: String?) {
         guard isActive, let g = game else { return }
         updateGame {
@@ -179,7 +223,7 @@ final class SessionController: ObservableObject {
         if state == .enablingJIT { state = .idle; game = nil }
     }
 
-    func refreshJIT() { jitEnabled = jit_check_debugged() }
+    func refreshJIT() { jitEnabled = StikJITHelper.ready }
 
     /// Milestone 0: JIT comes from the external StikDebug app, exactly as today. Milestone 1 replaces this with our own helper extension.
     func enableJIT() {
@@ -195,14 +239,17 @@ final class SessionController: ObservableObject {
             return
         }
         guard StikJITHelper.isAvailable else {
+            LogStore.shared.log("[jit] StikDebug was not found (neither stikdebug:// nor stikjit:// is handled by an installed app)", level: .error)
+            jitNote = "StikDebug was not found. Install it and try again."
             state = .failed("StikDebug is not installed. Install it and try again.")
             return
         }
+        jitNote = nil
         StikJITHelper.enableJIT { [weak self] result in
             let ok: Bool = { if case .success = result { return true } else { return false } }()   // the helper now reports a Result
             Task { @MainActor in
                 self?.refreshJIT()
-                if !ok { self?.state = .failed("Could not open StikDebug.") }
+                if !ok { self?.state = .failed("Porthole could not open StikDebug. Check that it is installed and open it once yourself, then start the game again.") }
             }
         }
     }
@@ -210,6 +257,34 @@ final class SessionController: ObservableObject {
     /// Games with a known problem get their small workaround (see GameFixes) right before they start.
     private static var gluedPoolsSet = false
     private static var scLayoutSet = false
+    /// Games that were given engine lines (EngineLines) since Porthole opened: they stay stopped until Porthole is opened again, because the lines are read when it starts.
+    private static var engineLinesAdded: Set<UUID> = []
+
+    /// A program that cannot start without certain engine lines (Blender): adds the ones it is missing to the game's own engine text and stops this start with the reason. Nil when the
+    /// game has them all, or is not one of these.
+    private func engineLinesNeed(for game: Game) -> String? {
+        guard let rule = EngineLines.rule(forExe: game.exe, steamAppID: game.dockAppID ?? game.steamAppID) else { return nil }
+        let current = AppModel.shared.games.first { $0.id == game.id } ?? game
+        let missing = EngineLines.missing(rule.lines, in: current.engine?.config)
+        if missing.isEmpty && !Self.engineLinesAdded.contains(game.id) { return nil }
+        if !missing.isEmpty {
+            AppModel.shared.update(current) { g in
+                var e = g.engine ?? GameEngine()
+                e.config = EngineLines.adding(missing, to: e.config)
+                g.engine = e
+            }
+            Self.engineLinesAdded.insert(game.id)
+            LogStore.shared.log("[engine-lines] \(rule.name): added \(missing.joined(separator: "; ")); the start is stopped until Porthole is opened again")
+        }
+        return "\(rule.name) needs a few engine settings, and Porthole has just added them to its engine lines. They are read when Porthole opens: use Close Porthole, open it again, then start \(rule.name) again."
+    }
+
+    /// Libraries a program keeps in a side-by-side folder (Blender's blender.shared) are put next to it, and the ones the Windows layer lacks are added (SideBySide.swift).
+    private func prepareSideBySide(folder: URL?) {
+        guard let folder else { return }
+        for line in SideBySide.prepare(folder: folder, extras: Bundle.main.resourceURL?.appendingPathComponent("Extras", isDirectory: true)) { LogStore.shared.log("[sxs] \(line)") }
+    }
+
     private func applyKnownFixes(for game: Game) {
         let known = GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)
         // The address-space layout is decided once, when the runtime starts (virtual_ios.c ios_pa32_soft_enabled).
@@ -239,6 +314,7 @@ final class SessionController: ObservableObject {
         }
         for line in GameFixes.restoreFormer(fix, in: exe.deletingLastPathComponent()) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
         for line in GameFixes.hide(fix, in: exe.deletingLastPathComponent()) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
+        for line in GameFixes.writeTextFiles(fix, in: exe.deletingLastPathComponent()) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
         // Wine reads this once, when the first library is loaded in this run, so it has to be set before the game starts.
         if !fix.blockLoading.isEmpty {
             setenv("WINEDLLOVERRIDES", fix.overridesValue, 1)
@@ -271,8 +347,26 @@ final class SessionController: ObservableObject {
     /// Set while the first-game tour is on screen (the game starts when it ends; see GameTourView). Nothing starts underneath it.
     @Published var tourGame: Game?
 
+    /// The game with its program found again, when the stored one is not there and the game's own folder holds a file of the same name (see ProgramRepair); nil otherwise.
+    private func withProgramRepaired(_ game: Game) -> Game? {
+        guard AutoFixStore.enabled, !AutoFix.isDisabled(AutoFix.programMovedRule.id), game.installer != true, !game.exe.lowercased().hasPrefix("c:\\windows\\"),
+              let url = AppModel.unixURL(forWindows: game.exe), !FileManager.default.fileExists(atPath: url.path),
+              let fixed = ProgramRepair.find(missing: game.exe, root: AppModel.driveC, unix: AppModel.unixURL(forWindows:), windows: AppModel.windowsPath(forRelative:)),
+              fixed.caseInsensitiveCompare(game.exe) != .orderedSame else { return nil }
+        var updated = game
+        AppModel.shared.update(game) { $0.exe = fixed }
+        updated.exe = fixed
+        AutoFixStore.shared.recordProgramRepair(game, from: game.exe, to: fixed)
+        return updated
+    }
+
+    /// The start of the failure shown when Steam's client files are not on this device yet (Home turns it into a button that opens Steam).
+    static let steamClientMissing = "Steam\u{2019}s client files are not installed yet, and a game started through Steam needs them. Open Steam in Porthole and download them (about 73 MB, from Valve), or set this game to start directly."
+
     func start(_ game: Game) {
         guard !isActive else { return }
+        CopyCheck.shared.refresh(for: game, log: true)
+        if let repaired = withProgramRepaired(game) { start(repaired); return }
         // The very first game: show how to play before the game takes over the screen, then start it (finishTour).
         if tourGame == nil, GuideCenter.shared.wantsFirstGameTour {
             GuideCenter.shared.markSeen(GuideCatalog.inGame.id)
@@ -285,19 +379,48 @@ final class SessionController: ObservableObject {
             state = .failed("Porthole has to close and open again before the next game starts. Use Close Porthole on the Home screen, then open it again.")
             return
         }
+        // No game can start in a copy that can never have JIT: say so at once instead of waiting for a launch that cannot work (many reports were exactly this).
+        if let blocker = InstallCheck.jitBlocker {
+            LogStore.shared.log("[launch] refused: \(blocker)", level: .error)
+            self.game = game
+            state = .failed(blocker)
+            return
+        }
+        if let message = engineLinesNeed(for: game) {
+            self.game = game
+            restartAdvised = true      // the notice offers Close Porthole
+            state = .failed(message)
+            return
+        }
         monoNeededFor = nil
         launchCancelled = false; wineStarted = false; launchGameUp = false; launchPeeking = false; launchHold = false; restartAdvised = false; launchStep = .jit; launchBegan = Date()
         launchViaSteam = game.dockAppID != nil && game.launchDirect != true && GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)?.alwaysDirect != true
         self.game = game
         activeSettings = LaunchSettings.resolve(for: game)
         activeSettings.apply()
+        // Read by the audio session setup before Wine boots (WineProcessBridge.m), and applied here too in case that setup does not run again.
+        let mixAudio = UserDefaults.standard.bool(forKey: Self.mixAudioKey) || game.softwareID != nil
+        UserDefaults.standard.set(mixAudio, forKey: "f4.mixAudio.now")
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: mixAudio ? [.mixWithOthers] : [])
+        // Tells Windows programs (Blender's Cycles) the highest winemetal call this build has: 171 = GPU binaries built ahead of time (patch 0187). They ask before they use it.
+        let slotsFile = AppModel.driveC.appendingPathComponent("windows/porthole-winemetal-slots")
+        try? FileManager.default.createDirectory(at: slotsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? "171".write(to: slotsFile, atomically: true, encoding: .utf8)
+        // And the system version, which a pack's GPU binaries have to match (major.minor).
+        try? SoftwareStore.systemVersion.write(to: slotsFile.deletingLastPathComponent().appendingPathComponent("porthole-ios-version"), atomically: true, encoding: .utf8)
         activeLayout = game.controls ?? .standard
         activeTouchLayout = game.activeBindSet?.touch
         lookSensitivity = activeSettings.lookSensitivity
         // Fail early and clearly instead of starting Wine on a path that is not there.
         let isSystemPath = game.exe.lowercased().hasPrefix("c:\\windows\\")     // msiexec etc.: the prefix is created at the first launch
-        guard isSystemPath || (AppModel.unixURL(forWindows: game.exe).map { FileManager.default.fileExists(atPath: $0.path) } ?? false) else {
-            state = .failed("File not found: \(game.exe). Remove this entry and add the game again with +.")
+        // A game on the SSD is not reachable yet: its drive is connected in "Connecting your SSD" below, which checks the program itself. Only a launch through Steam does that.
+        let onSSD = (game.dockAppID ?? game.steamAppID).map { ExternalLibrary.shared.isExternal($0) } ?? false
+        if onSSD && !launchViaSteam {
+            state = .failed("This game is on the SSD, but it starts without Steam's launcher, and only a start through Steam can reach the SSD. Move it to the device (remove it and download it again to the device) to play it.")
+            return
+        }
+        guard isSystemPath || onSSD || (AppModel.unixURL(forWindows: game.exe).map { FileManager.default.fileExists(atPath: $0.path) } ?? false) else {
+            state = .failed("Porthole cannot find this game's program (\(game.exe)). It may have been moved or deleted. Remove the game from the library and add it again with +.")
             return
         }
         applyKnownFixes(for: game)
@@ -312,6 +435,7 @@ final class SessionController: ObservableObject {
         }
         let target = programForDirectLaunch(game, fix)
         if refuseWithoutMono(game, program: target.exe) { return }
+        prepareSideBySide(folder: AppModel.unixURL(forWindows: target.exe)?.deletingLastPathComponent())
         if fix?.ownSteamIdentity == true, let id = game.dockAppID ?? game.steamAppID {
             // The runtime reads these once, for this launch only, and clears them (WineProcessBridge).
             let folder = GameFixes.windowsPath(replacingLastComponentOf: game.exe, with: "").dropLast()    // "C:\\...\\assettocorsa"
@@ -319,7 +443,7 @@ final class SessionController: ObservableObject {
             setenv("MADEIRA_STEAM_APPPATH", String(folder), 1)
             LogStore.shared.log("[game-fix] \(fix!.title): Steam identity app \(id), folder \(folder)")
         }
-        if jit_check_debugged() {
+        if StikJITHelper.ready {
             launchResolved(target)
         } else {
             state = .enablingJIT
@@ -353,7 +477,7 @@ final class SessionController: ObservableObject {
                 } catch {
                     guard !launchCancelled else { return }
                     EAInstaller.shared.sessionEnded()
-                    state = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                    state = .failed((error as? LocalizedError)?.errorDescription ?? ErrorText.plain(error))
                     LogStore.shared.log("[ea-launch] failed: \((error as? EAAPIError)?.reason ?? String(describing: type(of: error)))", level: .error)
                     return
                 }
@@ -375,7 +499,7 @@ final class SessionController: ObservableObject {
                     LogStore.shared.log("[epic] no connection to Epic (\(error.localizedDescription)): starting \(target.name) without Epic's sign-in")
                 } else {
                     guard !launchCancelled else { return }
-                    state = .failed((error as? EpicAuthError)?.message ?? error.localizedDescription)
+                    state = .failed((error as? EpicAuthError)?.message ?? ErrorText.plain(error))
                     return
                 }
             }
@@ -411,17 +535,17 @@ final class SessionController: ObservableObject {
         func fail(_ text: String) { state = .failed(text); LogStore.shared.log("[dock] \(text)", level: .error) }
         guard MadeiraDock.enabled else { return fail("Steam launching is not built into this app. Turn on \"Run directly\" for this game.") }
         guard SteamSignIn.isSignedIn else { return fail("Sign in to Steam first (Steam panel on the home screen).") }
-        guard MadeiraDock.clientInstalled else { return fail("Steam's client files are not installed yet. Open the Steam screen and download them, or run this game directly.") }
+        guard MadeiraDock.clientInstalled else { return fail(Self.steamClientMissing) }
         // A game on the SSD is known from the catalog (it is checked after the drive is mapped, in prepareAndLaunchDock).
         guard let dockGame = MadeiraDock.games(drive: AppModel.driveC).first(where: { $0.id == appID }) ?? ExternalLibrary.shared.dockGame(appID: appID) else {
             return fail("Steam does not list \(game.name) as installed. Download it again from the Steam screen.")
         }
         if dockGame.storageID == SteamStorageLibrary.internalID {
-            do { try MadeiraDock.validate(dockGame, drive: AppModel.driveC) } catch { return fail(error.localizedDescription) }
+            do { try MadeiraDock.validate(dockGame, drive: AppModel.driveC) } catch { return fail(ErrorText.plain(error)) }
         }
         self.dockGame = dockGame
         let go: () -> Void = { [weak self] in guard let self, !self.launchCancelled else { return }; self.prepareAndLaunchDock(game, dockGame) }
-        if jit_check_debugged() { state = .starting; go() }
+        if StikJITHelper.ready { state = .starting; go() }
         else { state = .enablingJIT; enableJITThen(go) }
     }
 
@@ -441,7 +565,7 @@ final class SessionController: ObservableObject {
                         Task { @MainActor in self?.dockStatus = "Steam Cloud: \(name) (\(done) of \(total))" }
                     }
                 } catch {
-                    let why = (error as? SteamContentError)?.message ?? error.localizedDescription
+                    let why = (error as? SteamContentError)?.message ?? ErrorText.plain(error)
                     LogStore.shared.log("[cloud] skipped: \(why)")
                     if why.contains("could be reached") || why.contains("TLS") || why.contains("No internet") { self?.steamUnreachable = true }
                     return nil
@@ -520,7 +644,7 @@ final class SessionController: ObservableObject {
                     ExternalLibrary.shared.releaseSession(force: true)
                     dockStatus = nil
                     MadeiraDock.cleanup(); SteamStore.shared.dockEnded()
-                    state = .failed(error.localizedDescription); LogStore.shared.log("[storage] \(error.localizedDescription)", level: .error)
+                    state = .failed(ErrorText.plain(error)); LogStore.shared.log("[storage] \(error.localizedDescription)", level: .error)
                     return
                 }
                 dockStatus = nil
@@ -548,6 +672,10 @@ final class SessionController: ObservableObject {
             // does not do this step when the Dock launches a game). A failure or a slow answer never stops the game from starting.
             let gameFolder = storageRoot.flatMap { try? SteamStoragePath.native(dockGame.library + "/common/" + dockGame.installDir, root: $0) }
             // A game started through Steam has no program path in the Library, so its known fix (files set aside) is applied to the install folder here.
+            if let fix = GameFixes.fix(forSteamAppID: dockGame.id), !fix.textFiles.isEmpty || !fix.textLinesRemoved.isEmpty {
+                let folder = gameFolder ?? SteamInstallPaths.common(drive: AppModel.driveC).appendingPathComponent(dockGame.installDir, isDirectory: true)
+                for line in GameFixes.writeTextFiles(fix, in: folder) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
+            }
             if let fix = GameFixes.fix(forSteamAppID: dockGame.id), !fix.hide.isEmpty || !fix.formerlyHidden.isEmpty {
                 let folder = gameFolder ?? SteamInstallPaths.common(drive: AppModel.driveC).appendingPathComponent(dockGame.installDir, isDirectory: true)
                 for line in GameFixes.restoreFormer(fix, in: folder) { LogStore.shared.log("[game-fix] \(fix.title): \(line)") }
@@ -556,6 +684,7 @@ final class SessionController: ObservableObject {
                 // A fix that quietly does nothing is hard to find: say where it looked.
                 if done.isEmpty && !fix.hide.isEmpty { LogStore.shared.log("[game-fix] \(fix.title): nothing to set aside in \(folder.path) (\(fix.hide.joined(separator: ", ")))") }
             }
+            prepareSideBySide(folder: gameFolder ?? SteamInstallPaths.common(drive: AppModel.driveC).appendingPathComponent(dockGame.installDir, isDirectory: true))
             steamUnreachable = false
             if Self.cloudDownloadEnabled {
                 await downloadCloudFiles(for: dockGame, installFolder: gameFolder)
@@ -571,7 +700,7 @@ final class SessionController: ObservableObject {
                 try MadeiraDock.writeHandoff(account: credentials.accountName, token: credentials.refreshToken, appID: dockGame.id)
             } catch {
                 MadeiraDock.cleanup(); SteamStore.shared.dockEnded(); ExternalLibrary.shared.releaseSession(force: true)
-                state = .failed(error.localizedDescription); return
+                state = .failed(ErrorText.plain(error)); return
             }
             // The game's install record needs its language (Valve's client answers a game's "what language am I in?" from it); installs made by older builds lack it.
             if SteamManifestLanguage.ensure(appID: dockGame.id, steamApps: steamApps) { LogStore.shared.log("[dock] added the language to \(dockGame.id)'s Steam install record") }
@@ -585,9 +714,9 @@ final class SessionController: ObservableObject {
             unsetenv("MADEIRA_DOCK_PROGRAM"); unsetenv("MADEIRA_DOCK_PROGRAM_ARGS")
             if let name = GameFixes.fix(forSteamAppID: dockGame.id)?.steamProgram, let listed = AppModel.unixURL(forWindows: game.exe),
                let own = GameFixes.sibling(named: name, of: listed) {
-                let windows = GameFixes.windowsPath(replacingLastComponentOf: game.exe, with: own.lastPathComponent)
+                let windows = GameFixes.windowsPath(replacingLastComponentOf: game.exe, with: GameFixes.windowsRelative(own, to: listed))
                 setenv("MADEIRA_DOCK_PROGRAM", windows, 1)
-                setenv("MADEIRA_DOCK_PROGRAM_ARGS", game.args, 1)
+                setenv("MADEIRA_DOCK_PROGRAM_ARGS", [GameFixes.fix(forSteamAppID: dockGame.id)?.steamProgramArgs, game.args].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "), 1)
                 LogStore.shared.log("[game-fix] \(GameFixes.fix(forSteamAppID: dockGame.id)!.title): starting \(windows) next to Steam's client instead of asking Steam to launch the game")
             }
             LogStore.shared.log("[dock] launch option \(launchOption) (\(launchOptionSource))")
@@ -657,6 +786,7 @@ final class SessionController: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, self.dockGame != nil else { return }
                 let report = MadeiraDock.pollReport()
+                DockOffline.observe(report.fields)
                 if let failure = report.failure {
                     self.endDockPolling()
                     LogStore.shared.log("[dock] \(failure)", level: .error)
@@ -703,7 +833,7 @@ final class SessionController: ObservableObject {
 
     private func endDockPolling() { dockPoll?.invalidate(); dockPoll = nil }
 
-    /// Switches JIT on with the method the person chose (Settings > Setup guide). The app's own tunnel is brought up first for every method:
+    /// Switches JIT on with the method the person chose (Settings > JIT and connection). The app's own tunnel is brought up first for every method:
     /// it stands in for LocalDevVPN, so StikDebug and other tools can reach the device's debug service without another VPN app.
     private func enableJITThen(_ proceed: @escaping () -> Void) {
         switch JITMethod.current {
@@ -721,16 +851,19 @@ final class SessionController: ObservableObject {
             }
         case .stikDebug:
             guard StikJITHelper.isAvailable else {
+                LogStore.shared.log("[jit] StikDebug was not found (neither stikdebug:// nor stikjit:// is handled by an installed app)", level: .error)
+                jitNote = "StikDebug was not found. Install it, or choose a different JIT method in Settings \u{203A} Setup guide."
                 state = .failed("StikDebug is not installed. Install it, or choose a different JIT method in Settings \u{203A} Setup guide.")
                 return
             }
+            jitNote = nil
             withTunnel {
                 StikJITHelper.enableJIT { [weak self] result in
                     let ok: Bool = { if case .success = result { return true } else { return false } }()   // the helper now reports a Result
                     Task { @MainActor in
                         guard let self else { return }
                         self.refreshJIT()
-                        if ok { proceed() } else { self.state = .failed("Could not open StikDebug.") }
+                        if ok { proceed() } else { self.state = .failed("Porthole could not open StikDebug. Check that it is installed and open it once yourself, then start the game again.") }
                     }
                 }
             }
@@ -785,14 +918,14 @@ final class SessionController: ObservableObject {
                 // message. Say what to do instead (restarting the device clears this after an update).
                 if JITMethod.current == .inApp, case TunnelManager.TunnelError.refusedAtStart = error {
                     CellularGuard.shared.disarm()
-                    self.state = .failed(error.localizedDescription)
+                    self.state = .failed(ErrorText.plain(error))
                     return
                 }
             }
             // The tunnel is up while cellular data still works; only now does cellular data go off, so the tunnel is already connected when there is no network.
             if CellularGuard.shared.armed {
                 guard await CellularGuard.shared.switchOff() else {
-                    self.state = .failed(CellularGuard.shared.lastProblem ?? "Cellular data could not be switched off, so the private connection cannot work.")
+                    self.state = .failed(CellularGuard.shared.lastProblem ?? "Porthole could not switch mobile data off for the private connection. Connect to Wi-Fi, or use LocalDevVPN instead (Settings \u{203A} JIT and connection).")
                     return
                 }
             }
@@ -844,6 +977,7 @@ final class SessionController: ObservableObject {
         launchStep = dock != nil ? .steam : .load
         startLaunchWatch(for: game, steam: dock != nil)
         let prefix = AppModel.prefix.path
+        PrefixHealth.checkAtLaunch(template: { DockReset.templateRegistry(extract: { madeira_extract_prefix_tgz($0, $1) }) }, log: { LogStore.shared.log($0) })   // the registrations a launcher cannot do without
         // The screen size the game sees: the game's own resolution setting, else the app-wide one (Settings > Display).
         let screen = activeSettings.displaySize
         setenv("MADEIRA_SCREEN_W", String(screen.width), 1)
@@ -911,7 +1045,7 @@ final class SessionController: ObservableObject {
             }
         }
         EngineLaunch.apply(for: game)   // this game's engine settings (AVX, frame generation, its own config lines ...)
-        ProMotionHold.shared.frameGeneration = game.engine?.frameGeneration == true
+        ProMotionHold.shared.frameGeneration = game.engine?.frameGeneration == true || game.engine?.losslessScaling == true
         ProMotionHold.shared.begin()
         SchedHints.begin()
         GameLogTail.begin()
@@ -987,7 +1121,7 @@ final class SessionController: ObservableObject {
                 DispatchQueue.main.async {
                     ws_log_quiet = 0
                     LogStore.shared.uiPaused = false
-                    self?.state = .failed("JIT pool allocation failed. Force-quit the app and try again.")
+                    self?.state = .failed("Porthole could not set aside the memory the emulator needs. Close Porthole completely (swipe it away), close other apps, open Porthole again and start the game. If it keeps happening, restart the device.")
                 }
                 return
             }
@@ -1058,14 +1192,20 @@ final class SessionController: ObservableObject {
 
             log.log("Starting wineserver...")
             guard wineserver_start(prefix) == 0 else {
-                DispatchQueue.main.async { self?.state = .failed("wineserver failed to start") }
+                DispatchQueue.main.async { self?.state = .failed("Windows support (the wineserver) did not start. Close Porthole completely and open it again. If it happens again, restart the device: iOS may be short of memory. Then send a report from Settings \u{203A} Report a problem.") }
                 return
             }
             EngineLaunch.waitForWineserver()   // the server's own "ready" signal, at most the old 2 s pause
+            // A server that died while starting (its log line says "[Wine] FATAL") would leave Wine waiting for ever: end the launch with the reason instead.
+            guard wineserver_is_running() != 0 else {
+                log.log("[launch] the wineserver stopped while starting; not starting Wine (see the [Wine] FATAL line above)", level: .error)
+                DispatchQueue.main.async { self?.state = .failed("Windows support (the wineserver) stopped while it was starting, so the game was not started. Close Porthole completely and open it again. If it keeps happening and Porthole runs inside another app, that app may not allow the connection Windows support needs; install Porthole on its own, or send a report from Settings \u{203A} Report a problem.") }
+                return
+            }
             log.log("Starting Wine process: \(game.exe)")
             wine_exit_status_reset()
             guard wine_process_start(prefix) == 0 else {
-                DispatchQueue.main.async { self?.state = .failed("Wine process failed to start") }
+                DispatchQueue.main.async { self?.state = .failed("The game's program could not be started. Close Porthole completely and open it again. If it happens again, send a report from Settings \u{203A} Report a problem.") }
                 return
             }
             DispatchQueue.main.async {
@@ -1085,6 +1225,7 @@ final class SessionController: ObservableObject {
                 self?.beginPlayCheckpoints()
                 if let g = self?.game {
                     CompatStore.shared.sessionBegan(g)
+                    AutoFixStore.shared.sessionBegan(g)
                     Telemetry.shared.onCheckpoint = { stats in Task { @MainActor in CompatStore.shared.checkpoint(stats) } }
                 }
                 // JIT finished long ago and the debugger has detached; the tunnel has nothing left to do, so turn it off (a few seconds after the
@@ -1120,11 +1261,16 @@ final class SessionController: ObservableObject {
                 HardwareInput.shared.endSession(); PadInput.shared.endSession(); ProMotionHold.shared.end(); SchedHints.end(); GameLogTail.end()
                 AutoBackup.afterSession()
                 EAInstaller.shared.sessionEnded()
+                EpicInstaller.shared.sessionEnded()
+                LosslessScaling.shared.sessionEnded()
+                LiveUpscaling.shared.sessionEnded()
                 GogGalaxy.shared.stop()
                 self?.endPlayCheckpoints()
                 if let g = self?.game, self?.runningSince != nil {
                     self?.runningSince = nil
+                    if g.installer != true, let line = Telemetry.shared.benchmarkLine(game: g.name, settings: EngineLaunch.summary(for: g)) { LogStore.shared.log(line) }
                     if g.installer != true { CompatStore.shared.sessionEnded(g, stats: Telemetry.shared.sessionStats()) }
+                    if g.installer != true { AutoFixStore.shared.sessionEnded(g) }
                 }
                 if self?.dockGame != nil {
                     self?.endDockPolling(); self?.dockGame = nil; self?.dockStatus = nil
@@ -1189,9 +1335,12 @@ extension SessionController {
                      LaunchSettingChip(symbol: "display", text: activeSettings.displaySize.text),
                      LaunchSettingChip(symbol: "bolt.fill", text: activeSettings.power.title)]
         if activeSettings.swapMB > 0 { chips.append(LaunchSettingChip(symbol: "internaldrive", text: "Swap \(activeSettings.swapMB / 1024) GB")) }
+        if !InstallCheck.extraMemoryAllowed { chips.append(LaunchSettingChip(symbol: "exclamationmark.triangle.fill", text: "No extra memory")) }
+        let modifiedCopy = CopyCheck.shared.has(g)
+        if modifiedCopy { chips.append(LaunchSettingChip(symbol: "info.circle", text: "No support for this copy")) }
         var failure: String?
         if case .failed(let message) = state { failure = message }
-        return LaunchData(gameID: g.id, name: g.name, steps: steps, headline: headline, detail: detail, chips: chips, failure: failure, cleanCancel: !wineStarted, began: launchBegan)
+        return LaunchData(gameID: g.id, name: g.name, steps: steps, headline: headline, detail: modifiedCopy ? detail + "\n\n" + CopyMarkers.note : detail, chips: chips, failure: failure, cleanCancel: !wineStarted, began: launchBegan)
     }
 
     var canPeekAtSteam: Bool { launchViaSteam && wineStarted && state == .running && !launchGameUp }

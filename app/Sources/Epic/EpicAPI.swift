@@ -144,7 +144,7 @@ final class EpicLibrary: ObservableObject {
             } catch {
                 LogStore.shared.log("[epic-library] refresh failed: \(error)", level: .error)
                 await MainActor.run {
-                    self.error = (error as? EpicAuthError)?.message ?? error.localizedDescription
+                    self.error = (error as? EpicAuthError)?.message ?? ErrorText.plain(error)
                     self.isLoading = false
                 }
             }

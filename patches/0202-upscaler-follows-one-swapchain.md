@@ -1,0 +1,3 @@
+# 0202: the Direct3D 12 Lossless Scaling upscaler follows one large swap chain
+
+The bridge (0201) built its upscaler for whichever swap chain presented first and rebuilt it whenever another one with a different size presented (GTA V Enhanced's Social Club probe window, launcher windows): thrashing and a wasted device. As the frame generation bridge does, the upscaler now pins itself to the first swap chain of at least 640x360 (`g_up_sc`, pointer compare only), leaves every other one to MetalFX, and lets go when that swap chain is released so a recreated one is followed. Not verified on a device. `tools/engine.sh accept`.

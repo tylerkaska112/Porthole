@@ -15,6 +15,8 @@ extension SettingsSub {
         case .components: "Windows components"
         case .links: "Links and remote control"
         case .diagnostics: "Diagnostics"
+        case .connectionExtras: "VPN and cellular options"
+        case .olderVersions: "Older versions"
         }
     }
 
@@ -29,6 +31,8 @@ extension SettingsSub {
     /// The Settings page it lives on, for the Back button when it has no parent of its own.
     var page: SettingsPage {
         if case .store = self { return .stores }
+        if self == .connectionExtras { return .jit }
+        if self == .olderVersions { return .updates }
         return .advanced
     }
 
@@ -42,6 +46,8 @@ extension SettingsSub {
         case .components: "hub-components"
         case .links: "hub-links"
         case .diagnostics: "hub-diagnostics"
+        case .connectionExtras: "hub-connection-extras"
+        case .olderVersions: "hub-older-versions"
         }
     }
 }
@@ -87,6 +93,7 @@ struct StoresSettingsPage: View {
     @ObservedObject private var itch = ItchAuth.shared
     @ObservedObject private var amazon = AmazonAuth.shared
     @ObservedObject private var ea = EAAuth.shared
+    @AppStorage(StoreVisibility.key) private var hiddenRaw = ""
 
     var body: some View {
         if case .store(let store)? = router.settingsSub { StoreSettingsPage(store: store) } else { list }
@@ -113,9 +120,12 @@ struct StoresSettingsPage: View {
                               subtitle: who.map { "Signed in as \($0)" } ?? "Not signed in", detail: who == nil ? "Sign in" : nil) { router.settingsSub = .store(store) }
                 }
             }
-            SettingsGroup(title: "Downloads and space") {
-                ActionRow(id: "stores-downloads", symbol: "arrow.down.circle.fill", title: "Downloads", subtitle: "What is being installed, from every store") { router.openDownloads() }
-                ActionRow(id: "stores-storage", symbol: "internaldrive.fill", tint: .orange, title: "Storage", subtitle: "How much room games use, and how to free it") { router.openSettings(.storage) }
+            SettingsGroup(title: "Show on the Stores tab", note: "Hide the stores you do not use so the Stores tab only shows the ones you do. Hiding only changes what is shown: nothing is signed out or deleted, and a download that is running still appears in Downloads. You can also long-press a store on the Stores tab to hide it.") {
+                ForEach(GameStore.allCases) { store in
+                    ToggleRow(id: "stores-show-\(store.rawValue)", symbol: "eye.fill", title: store.title,
+                              isOn: Binding(get: { !StoreVisibility.hiddenIDs(hiddenRaw).contains(store.rawValue) },
+                                            set: { hiddenRaw = StoreVisibility.setting(store.rawValue, hidden: !$0, in: hiddenRaw, known: GameStore.allCases.map(\.rawValue)) }))
+                }
             }
         }
     }
@@ -174,10 +184,6 @@ struct StoreAccountGroups: View {
                     ActionRow(id: "sp-refresh", symbol: "arrow.clockwise", title: "Refresh the list", chevron: false) { refresh() }
                     ValueRow(id: "sp-installed", symbol: "checkmark.circle.fill", title: "Installed on this device", value: "\(installedCount)")
                 }
-            }
-            SettingsGroup(title: "Downloads and space") {
-                ActionRow(id: "sp-downloads", symbol: "arrow.down.circle.fill", title: "Downloads", subtitle: "What is being installed, from every store") { router.openDownloads() }
-                ActionRow(id: "sp-storage", symbol: "internaldrive.fill", tint: .orange, title: "Storage", subtitle: "How much room games use, and how to free it") { router.openSettings(.storage) }
             }
         }
         .sheet(isPresented: $showSignIn) { signInSheet() }

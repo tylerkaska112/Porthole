@@ -7,7 +7,7 @@ import Observation
 enum AppTab: Hashable { case library, stores, compatibility, settings }
 
 /// What the Stores tab shows: its list of launchers (nil), every launcher's games on one page, or one launcher's library.
-enum StoresSelection: Hashable { case all, store(GameStore), downloads }
+enum StoresSelection: Hashable { case all, store(GameStore), downloads, software, softwareItem(String) }
 
 /// Where the person is, and what is open on top of it, so any screen can send them somewhere else (a banner that says "update ready" opens Settings, and so on).
 @Observable
@@ -44,13 +44,15 @@ final class AppRouter {
     func closeDownloads() { storesSelection = downloadsReturn; downloadsReturn = nil }
     func openStore(_ store: GameStore) { storesSelection = .store(store); tab = .stores }
     func openStores() { storesSelection = nil; tab = .stores }
+    /// One program's page in Software (Blender's).
+    var onSoftwareItem: Bool { if case .softwareItem? = storesSelection { return true }; return false }
     func openReports(_ scope: ReportsScope) { reportsScope = scope; tab = .compatibility }
     func openSettings(_ page: SettingsPage? = nil, sub: SettingsSub? = nil) { settingsSub = sub; settingsPage = page; tab = .settings }
 }
 
 /// The pages in Settings' list, in the order of SettingsScreen.sections.
 enum SettingsPage: String, Hashable, CaseIterable, Identifiable {
-    case play, saves, storage, stores, jit, appearance, updates, advanced, reports, help, report
+    case display, performance, sound, controls, stores, saves, storage, jit, appearance, updates, signing, advanced, reports, fixing, guides, about, report
     var id: String { rawValue }
 }
 
@@ -59,4 +61,6 @@ enum SettingsSub: Hashable {
     case store(GameStore)
     case engineGroups, engineGroup(String), engineChanged
     case components, links, diagnostics
+    /// Two pages that sit one level below a Settings page: the VPN and cellular options of JIT and connection, and the full list of builds on Updates.
+    case connectionExtras, olderVersions
 }

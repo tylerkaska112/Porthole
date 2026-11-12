@@ -47,6 +47,10 @@ extern void wineserver_log_set_file(const char *path);
 // Set NLS directory for wineserver (defined in unicode_ios.c)
 extern void wineserver_set_nls_dir(const char *path);
 
+// Set while the server thread is alive: wineserver_is_running() reports it, and the launch waits on it. It is declared here, above fatal_error, because that function ends the
+// thread and has to clear it (see below).
+static volatile int g_wineserver_running = 0;
+
 // Override wineserver's fatal_error to use logging and pthread_exit instead of exit(1)
 void fatal_error( const char *err, ... ) {
     va_list args;
@@ -56,7 +60,10 @@ void fatal_error( const char *err, ... ) {
     va_end(args);
     wine_log_msg_impl("[Wine] FATAL: %s", buf);
     // Don't call exit(1) — that kills the whole app.
-    // Instead, terminate just this thread.
+    // Instead, terminate just this thread. pthread_exit does not return to wineserver_thread_func, so its line that clears the flag never runs: a server that died while
+    // starting (`[Wine] FATAL: bind: Operation not permitted`, seen when Porthole runs inside another app) went on reading as running, the launch started Wine anyway and Wine
+    // waited for ever, and every check that needs no session running refused until Porthole was closed (madeira PR 579 has the same fix).
+    g_wineserver_running = 0;
     pthread_exit(NULL);
 }
 
@@ -68,7 +75,6 @@ extern int debug_level;
 volatile int g_wineserver_should_stop = 0;
 
 static pthread_t g_wineserver_thread;
-static volatile int g_wineserver_running = 0;
 static char *g_prefix_path = NULL;
 
 static void *wineserver_thread_func(void *arg) {

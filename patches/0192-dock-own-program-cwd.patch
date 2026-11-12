@@ -1,0 +1,13 @@
+--- a/src/launch.c	2026-11-08 21:08:10
++++ b/src/launch.c	2026-11-08 21:08:10
+@@ -245,7 +245,9 @@
+     STARTUPINFOW startup = {0};
+     startup.cb = sizeof(startup);
+     PROCESS_INFORMATION process = {0};
+-    if (!CreateProcessW(full, command, NULL, NULL, FALSE, 0, NULL, folder, &startup, &process)) {
++    /* Porthole: the working directory is the install folder, as Valve's client gives it. A program in the install folder itself (Rust's) sees no change; a program below it
++     * (BeamNG's Bin64/BeamNG.drive.x64.exe, whose launcher normally starts it from the game's folder) now starts where its launcher would have started it. */
++    if (!CreateProcessW(full, command, NULL, NULL, FALSE, 0, NULL, install_dir, &startup, &process)) {
+         o->event("launch-program-start-failed", (int32_t)GetLastError());
+         return 51;
+     }

@@ -122,7 +122,7 @@ final class AmazonAuth: ObservableObject {
                 self.pending = nil
                 LogStore.shared.log("[amazon-auth] signed in")
             } catch {
-                signInError = (error as? AmazonAuthError)?.message ?? error.localizedDescription
+                signInError = (error as? AmazonAuthError)?.message ?? ErrorText.plain(error)
                 LogStore.shared.log("[amazon-auth] sign-in failed: \((error as? AmazonAuthError)?.message ?? "\(error)")", level: .error)
             }
             isBusy = false

@@ -1,0 +1,48 @@
+diff --git a/madeira-d3d12/src/pe/madeira_d3d12.c b/madeira-d3d12/src/pe/madeira_d3d12.c
+index c53b654..3785bbc 100644
+--- a/madeira-d3d12/src/pe/madeira_d3d12.c
++++ b/madeira-d3d12/src/pe/madeira_d3d12.c
+@@ -21587,6 +21587,7 @@ static int g_up_init, g_up_have;       /* the variable was set / the file has be
+ static int g_up_mode;                  /* 0 off, 1 to the screen, 2 fixed */
+ static double g_up_factor = 2.0;
+ static unsigned g_up_fw, g_up_fh;
++static int g_up_method;               /* 0 MetalFX, 1/2 Lossless Scaling (Direct3D 11 only: this path always uses MetalFX, and says so in the status) */
+ static FILETIME g_up_ft;
+ static ULONGLONG g_up_next;
+ static LONG g_up_version;
+@@ -21613,7 +21614,7 @@ static int mad_up_poll(int force) {
+     if (!ok) { ok = g_up_have; ReleaseSRWLockExclusive(&g_up_lock); return ok; }
+     buf[got] = 0;
+     {
+-        int m = g_up_mode; double fa = g_up_factor; unsigned fw = g_up_fw, fh = g_up_fh;
++        int m = g_up_mode; double fa = g_up_factor; unsigned fw = g_up_fw, fh = g_up_fh; int me = g_up_method;
+         for (line = buf; line && *line; line = save) {
+             char *eq, *nl = line + strcspn(line, "\r\n");
+             save = *nl ? nl + 1 : NULL;
+@@ -21623,10 +21624,11 @@ static int mad_up_poll(int force) {
+             *eq = 0;
+             if (!strcmp(line, "mode")) { m = atoi(eq + 1); if (m < 0) m = 0; if (m > 2) m = 2; }
+             else if (!strcmp(line, "factor")) { fa = strtod(eq + 1, NULL); if (fa < 1.0) fa = 1.0; if (fa > 2.0) fa = 2.0; }
++            else if (!strcmp(line, "method")) { me = atoi(eq + 1); if (me < 0) me = 0; if (me > 2) me = 2; }
+             else if (!strcmp(line, "fit")) { unsigned a = 0, b = 0; if (sscanf(eq + 1, "%ux%u", &a, &b) == 2 && a && b) { fw = a; fh = b; } }
+         }
+-        if (!g_up_have || m != g_up_mode || fa != g_up_factor || fw != g_up_fw || fh != g_up_fh) InterlockedIncrement(&g_up_version);
+-        g_up_mode = m; g_up_factor = fa; g_up_fw = fw; g_up_fh = fh;
++        if (!g_up_have || m != g_up_mode || fa != g_up_factor || fw != g_up_fw || fh != g_up_fh || me != g_up_method) InterlockedIncrement(&g_up_version);
++        g_up_mode = m; g_up_factor = fa; g_up_fw = fw; g_up_fh = fh; g_up_method = me;
+     }
+     g_up_ft = info.ftLastWriteTime;
+     g_up_have = 1;
+@@ -21723,7 +21725,11 @@ static void mad_swap_make_fx(struct mad_swapchain *s) {
+     }
+     s->fx_w = ow; s->fx_h = oh;
+     d3d12_log("[madeira-d3d12] metalfx-upscale %s: %ux%u -> %ux%u (MetalFX spatial)\n", v, s->desc.Width, s->desc.Height, ow, oh);
+-    if (g_up_path[0]) { snprintf(st, sizeof st, "state=on\nfactor=%.3f\nfrom=%ux%u\nto=%ux%u\n", (double)ow / (double)s->desc.Width, s->desc.Width, s->desc.Height, ow, oh); mad_up_status(st); }
++    if (g_up_path[0]) {
++        snprintf(st, sizeof st, "state=on\nmethod=metalfx\nfactor=%.3f\nfrom=%ux%u\nto=%ux%u\n%s", (double)ow / (double)s->desc.Width, s->desc.Width, s->desc.Height, ow, oh,
++                 g_up_method ? "fallback=Lossless Scaling upscaling works in Direct3D 11 games only\n" : "");
++        mad_up_status(st);
++    }
+ }
+ 
+ /* Porthole 0199: the menu changed the choice. Called by Present before the layer is checked: when the control file's wish changed, the scaler and its textures are made again for the

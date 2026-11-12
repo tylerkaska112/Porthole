@@ -138,7 +138,9 @@ struct PerfCardView: View {
     }
 
     private var grid: some View {
-        let columns = rows.count <= 3 ? max(1, rows.count) : (rows.count <= 6 ? 3 : 4)
+        let widest = rows.count <= 3 ? max(1, rows.count) : (rows.count <= 6 ? 3 : 4)
+        // The same number of rows, as even as can be: nine numbers are 3 + 3 + 3, not 4 + 4 + a lone one.
+        let columns = (rows.count + (rows.count + widest - 1) / widest - 1) / max(1, (rows.count + widest - 1) / widest)
         let chunks = stride(from: 0, to: rows.count, by: columns).map { Array(rows[$0..<min($0 + columns, rows.count)]) }
         return Grid(alignment: .leading, horizontalSpacing: 11, verticalSpacing: 4) {
             ForEach(Array(chunks.enumerated()), id: \.offset) { _, chunk in

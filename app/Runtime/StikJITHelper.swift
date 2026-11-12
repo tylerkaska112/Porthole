@@ -39,9 +39,15 @@ enum StikJITHelper {
 
     /// Check whether StikDebug is installed. `stikdebug` is its canonical scheme;
     /// the older `stikjit` alias remains declared for compatibility.
-    static var isAvailable: Bool {
-        guard let url = URL(string: "stikdebug://enable-jit") else { return false }
-        return UIApplication.shared.canOpenURL(url)
+    static var isAvailable: Bool { installedScheme != nil }
+
+    /// The scheme the installed StikDebug answers to: `stikdebug`, or `stikjit` for a copy that only knows that one (StikDebug 2.x, the App Store
+    /// version, registers only `stikjit`; `stikdebug` came with 3.x). nil when neither is installed.
+    static var installedScheme: String? {
+        for scheme in ["stikdebug", "stikjit"] {
+            if let url = URL(string: "\(scheme)://enable-jit"), UIApplication.shared.canOpenURL(url) { return scheme }
+        }
+        return nil
     }
 
     /// Open StikDebug with our JIT script embedded in the URL.
@@ -50,11 +56,17 @@ enum StikJITHelper {
     static func enableJIT(completion: @escaping (Result<Void, Error>) -> Void) {
         guard let bundleID = Bundle.main.bundleIdentifier,
               let scriptData else {
+            LogStore.shared.log("[jit] StikDebug was not opened: \(RequestError.scriptMissing.localizedDescription)", level: .error)
             completion(.failure(RequestError.scriptMissing))
             return
         }
+        guard let scheme = installedScheme else {
+            LogStore.shared.log("[jit] StikDebug was not opened: iOS reports no app that handles stikdebug:// or stikjit://", level: .error)
+            completion(.failure(RequestError.unavailable))
+            return
+        }
         var components = URLComponents()
-        components.scheme = "stikdebug"
+        components.scheme = scheme
         components.host = "enable-jit"
         components.queryItems = [
             URLQueryItem(name: "bundle-id", value: bundleID),
@@ -67,7 +79,7 @@ enum StikJITHelper {
             return
         }
 
-        LogStore.shared.log("Opening StikDebug to enable JIT...")
+        LogStore.shared.log("Opening StikDebug to enable JIT (\(scheme)://)...")
 
         UIApplication.shared.open(url, options: [:]) { success in
             if !success {

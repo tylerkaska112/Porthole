@@ -58,7 +58,7 @@ import Foundation
                 LogStore.shared.log("[big-picture] seeded \(target.windows) with the Dock's steam.exe; Valve's client completes itself there on this first run (a download from Valve's CDN)")
             } catch {
                 LogStore.shared.log("[big-picture] could not seed \(target.windows): \(error.localizedDescription)", level: .error)
-                return (game, "Could not prepare Big Picture's folder: \(error.localizedDescription)")
+                return (game, "Could not prepare Big Picture's folder: \(ErrorText.plain(error))")
             }
         }
         // ml2210: once the 32-bit client and its web helper are in place, the bootstrapper neither updates itself nor the client, so a later run cannot move it to the 64-bit client,
@@ -81,7 +81,7 @@ import Foundation
             try bat.write(to: AppModel.driveC.appendingPathComponent("big-picture.bat"), atomically: true, encoding: .utf8)
         } catch {
             LogStore.shared.log("[big-picture] could not write big-picture.bat: \(error.localizedDescription)", level: .error)
-            return (game, "Could not write Big Picture's start file: \(error.localizedDescription)")
+            return (game, "Could not write Big Picture's start file: \(ErrorText.plain(error))")
         }
         // Madeira's tested lines for this client: the memory layout a 64-bit Chromium host needs, the swap tier with the donor pool, the lock mode.
         GameTestedSetup.apply(GameRecommendations.steamBigPicture, to: &game)

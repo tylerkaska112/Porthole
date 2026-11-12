@@ -202,7 +202,7 @@ struct EngineOptionRow: View {
     }
 }
 
-private func loadEngineValues() -> [String: String] {
+func loadEngineValues() -> [String: String] {
     var v: [String: String] = [:]
     for group in EngineOptions.groups { for option in group.options { v[option.key] = EngineOptions.value(option.key) } }
     return v

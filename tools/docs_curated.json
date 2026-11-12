@@ -1,0 +1,250 @@
+[
+  {
+    "id": "pairing-file-needed",
+    "group": "Starting a game",
+    "title": "\"Pairing file needed\"",
+    "sees": "Pairing file needed",
+    "meaning": "The pairing file lets Porthole switch JIT on, which games need to run at speed. Without it the game cannot start.",
+    "try": [
+      "On iOS 27 or later: in the setup guide tap **Create it on this device**, then open Settings > Privacy & Security > Developer Mode > \"Pair with Porthole\" and type the six-digit code Porthole shows.",
+      "On earlier iOS: make the file once on a computer with a free pairing tool such as iloader or Jitterbug, move it to the device and choose it in Porthole."
+    ],
+    "sure": "From the Help page."
+  },
+  {
+    "id": "tunnel-connecting-disconnected",
+    "group": "Starting a game",
+    "title": "The tunnel says \"connecting\" and then \"disconnected\" after an update",
+    "sees": "[tunnel] ... connecting, then disconnected",
+    "meaning": "iOS sometimes keeps old information about the app's helper after an update.",
+    "try": [
+      "Restart the device. Your games and settings are not affected and you do not need to reinstall."
+    ],
+    "sure": "Seen repeatedly; restarting fixes it."
+  },
+  {
+    "id": "large-address-space-not-allowed",
+    "group": "Starting a game",
+    "title": "\"Large address space is not allowed\" in the install check",
+    "sees": "[install] note: Large address space is not allowed",
+    "meaning": "This copy of Porthole was signed without the permission that lets games map the big block of address space the engine reserves for them. Some games will not start, or close shortly after they do. Many games run fine without it, so the line is a note, not always a fault.",
+    "try": [
+      "If a game closes at start, sign Porthole again with a profile that carries the extended virtual addressing capability (the install check in Settings says whether your profile has it)."
+    ],
+    "sure": "The wording is the app's own; whether it is the cause of a given crash has to be read from that game's log."
+  },
+  {
+    "id": "game-program-not-found",
+    "group": "Starting a game",
+    "title": "\"Porthole cannot find this game's program\"",
+    "sees": "Porthole cannot find this game's program (...)",
+    "meaning": "The file Porthole starts for this game is no longer where it was recorded. It may have been moved or deleted.",
+    "try": [
+      "Remove the game from the library and add it again."
+    ],
+    "sure": "Wording from the app.",
+    "since": "1.3"
+  },
+  {
+    "id": "drive-mapping-in-use",
+    "group": "External drives",
+    "title": "\"The Windows SSD drive mapping is already in use\"",
+    "sees": "The Windows SSD drive mapping is already in use. The registered library folder is unchanged.",
+    "meaning": "Porthole links the external drive into the Windows side as a drive letter. The link it wants to make is already there and points somewhere else, and Porthole does not overwrite it.",
+    "try": [
+      "Quit any running game, then try again.",
+      "In Settings > Steam > Game storage, choose **Use a different folder**, or forget the drive and select it again."
+    ],
+    "sure": "Seen once during testing and fixed in a later build; if it still appears, send a problem report.",
+    "since": "1.3"
+  },
+  {
+    "id": "folder-picker-does-nothing",
+    "group": "External drives",
+    "title": "Choosing a folder on an external drive does nothing, or the picker never closes",
+    "sees": "The folder picker opens but tapping a folder does not answer",
+    "meaning": "Some signing services give the app an App ID that is different from its bundle identifier. iOS installs it, but the system's file provider then refuses to hand the app a drive folder, so the picker never answers.",
+    "try": [
+      "Install a copy signed so the App ID and the bundle identifier match. A copy signed by SideStore worked in testing.",
+      "In Settings > Steam, a warning row appears when the two do not match."
+    ],
+    "sure": "Confirmed on iPadOS 27.0 and iOS 27.2: the same build worked when signed by SideStore and failed when signed by a service that uses a random App ID.",
+    "since": "1.3"
+  },
+  {
+    "id": "slow-download-external-drive",
+    "group": "External drives",
+    "title": "A game downloads very slowly to an external drive, or sits on \"Preparing\"",
+    "sees": "A few hundred KB/s, or minutes on Preparing",
+    "meaning": "A cheap thumb drive may write only about 5 MB/s, and far less when many files are being written at once. Preparing creates every file and folder of the game first, and a slow drive manages only tens of those a second.",
+    "try": [
+      "Open Settings > Steam > **Test the drive's speed**. It writes and reads a test file and tells you the write speed.",
+      "Use the newest Porthole: it writes to a slow drive gently, one chunk at a time, and to a fast one at full speed.",
+      "A portable SSD is far faster than a thumb drive."
+    ],
+    "sure": "A night-long log from an older build showed 0.1 MB/s on a drive that tests at 5 MB/s; newer builds changed how the writes are done.",
+    "since": "1.3"
+  },
+  {
+    "id": "steam-sign-in-refused",
+    "group": "Steam",
+    "title": "\"Steam did not accept the saved sign-in for downloads\"",
+    "sees": "Steam: the sign-in for downloads was refused (result 5).  [cloud] skipped: Steam did not accept the saved sign-in for downloads. Sign in for downloads again.",
+    "meaning": "The sign-in Porthole saved for downloads and Steam Cloud has expired or was refused, so cloud saves are skipped for that run. The game itself can still start.",
+    "try": [
+      "Open Settings > Steam and sign in for downloads again."
+    ],
+    "sure": "The log line says so itself."
+  },
+  {
+    "id": "steam-fails-on-one-network",
+    "group": "Steam",
+    "title": "Steam sign-in or downloads fail on one network only",
+    "sees": "TLS or connection errors to Steam",
+    "meaning": "Some work and school networks block Steam.",
+    "try": [
+      "Try another network or a mobile connection. If it works there, the network was the cause."
+    ],
+    "sure": "From the Help page."
+  },
+  {
+    "id": "dx11-feature-level-12-0",
+    "group": "Graphics",
+    "title": "\"Minimum required feature level D3D_FEATURE_LEVEL_12_0 not supported\"",
+    "sees": "Maximum supported feature level: D3D_FEATURE_LEVEL_11_1  /  Minimum required feature level D3D_FEATURE_LEVEL_12_0 not supported",
+    "meaning": "The game's Direct3D 11 mode asks for feature level 12_0, and Porthole's Direct3D 11 layer reports 11_1 at most. The game then shows its own error and closes. A setting cannot raise that level.",
+    "try": [
+      "Start the game in its **DirectX 12** mode instead. If you added a `-dx11` launch argument, remove it.",
+      "Games whose only mode needs feature level 12_0 on Direct3D 11 cannot run through that layer."
+    ],
+    "sure": "Seen with Dying Light: The Beast launched with -dx11; its DirectX 12 mode starts.",
+    "short": "The game's DirectX 11 mode asks for more than Porthole offers",
+    "log": [
+      "Minimum required feature level D3D_FEATURE_LEVEL_12_0 not supported"
+    ]
+  },
+  {
+    "id": "d3d12-black-screen-fence",
+    "group": "Graphics",
+    "title": "Black screen and 0 FPS after the game ran well for a while (DirectX 12)",
+    "sees": "Queue::Wait: fence ... never reached N in 5 s (at 0); continuing",
+    "meaning": "A command queue is waiting for a fence that nothing ever signalled, so the game stops drawing frames. The process is still alive: sound may carry on. One known cause is a game that writes a marker value with WriteBufferImmediate and then waits for it (see the next entry).",
+    "try": [
+      "Look just before the first Queue::Wait line in the report log for `unimplemented: ... WriteBufferImmediate`. If it is there, add the engine line `write-buffer-immediate = 1` to the game's engine lines and start it again.",
+      "If memory warnings (`mem-pressure CRITICAL`) come just before, raise the game's Swap or lower its graphics quality.",
+      "Send a problem report from Settings > Report a problem if it keeps happening."
+    ],
+    "sure": "The fence line is a symptom, not a cause. The WriteBufferImmediate connection is likely but not yet confirmed for every game.",
+    "short": "The game stopped drawing: a graphics wait that never finished",
+    "log": [
+      "Queue::Wait: fence"
+    ]
+  },
+  {
+    "id": "write-buffer-immediate-unimplemented",
+    "group": "Graphics",
+    "title": "\"unimplemented: ID3D12GraphicsCommandList7::WriteBufferImmediate\"",
+    "sees": "[madeira-d3d12] unimplemented: ID3D12GraphicsCommandList7::WriteBufferImmediate",
+    "meaning": "The game called a Direct3D 12 function that writes a small value from the GPU. By default Porthole ignores it, because writing it is switched off. A game that waits for that value will wait forever.",
+    "try": [
+      "Add `write-buffer-immediate = 1` to the game's engine lines (game settings > Starting > This game's engine lines). The log then says `write-buffer-immediate = 1 (opt-in)`."
+    ],
+    "sure": "The option is part of the engine and is on in the recommended setup of other games. Whether it fixes a particular game has to be tried.",
+    "short": "The game asked for a graphics write that is switched off",
+    "log": [
+      "unimplemented: ID3D12GraphicsCommandList7::WriteBufferImmediate"
+    ]
+  },
+  {
+    "id": "mem-pressure-critical",
+    "group": "Memory",
+    "title": "\"[mem-pressure] CRITICAL\"",
+    "sees": "[mem-pressure] CRITICAL: app 6723 MB, free 1469 MB, gpu 4536 MB",
+    "meaning": "Porthole is close to the memory iOS lets one app use. The game may stutter, freeze, or be closed by iOS without warning. The numbers say how much the app, the free memory and the graphics memory are using.",
+    "try": [
+      "Open the game's settings and raise **Swap**; a wide swap coverage helps games with many small allocations.",
+      "Lower the game's own texture and graphics quality: graphics memory is a large part of the total.",
+      "Close other apps before you start."
+    ],
+    "sure": "General guidance from the Help page; a game that needs more memory than the device can give cannot be fixed with a setting.",
+    "short": "Memory ran very low",
+    "log": [
+      "[mem-pressure] CRITICAL"
+    ]
+  },
+  {
+    "id": "pool-applied-false",
+    "group": "Log lines that are not the problem",
+    "title": "\"[ERR] [no-footprint] pool applied=false\"",
+    "sees": "[no-footprint] pool-RW-alias: ALL 4 variants refused - pool stays jetsam-counted",
+    "meaning": "Porthole tried to keep its code memory out of the count iOS uses to decide when to close an app, and iOS refused all four ways. The line is marked ERR but the game starts normally; the memory just stays counted.",
+    "try": [
+      "Nothing. It appears in logs of games that run."
+    ],
+    "sure": "It is in every log we have read, including those of games that played."
+  },
+  {
+    "id": "video64-assertion",
+    "group": "Log lines that are not the problem",
+    "title": "\"Assertion Failed: Failed to load video64.dll\"",
+    "sees": "src\\public\\tier1\\interface.h (271) : Assertion Failed: Failed to load \"video64.dll\"",
+    "meaning": "It comes from Valve's own code that starts with the game. It appears in logs of games that went on to run.",
+    "try": [
+      "Nothing, unless the game also fails to start; then read the lines after it."
+    ],
+    "sure": "Seen in logs of games that played."
+  },
+  {
+    "id": "vulkan-stays-off",
+    "group": "Graphics",
+    "title": "The log says Vulkan stays off, or a Vulkan route has no files",
+    "sees": "[vulkan] Vulkan stays off: ... / [vulkan] d3d11 = dxvk, but the bundle has no vulkan/arm64ec-windows/dxvk-d3d11.dll",
+    "meaning": "A game asked for a Vulkan route (the Direct3D 10/11 runtime DXVK, the Direct3D 12 runtime vkd3d-proton, or a Vulkan library) and Porthole could not set it up for this run, so it used the normal route (DXMT and madeira-d3d12 on Metal) instead. The usual causes are a Vulkan library that is not in the app, or KosmicKrisp chosen on a device older than iOS 26.",
+    "try": [
+      "Open the game's page > Engine > Graphics route and put the rows back on Default, or choose MoltenVK as the Vulkan library.",
+      "KosmicKrisp needs iOS 26 or later and a device with Metal 4. On anything older, use MoltenVK.",
+      "Vulkan routes are for 64-bit games only. A 32-bit game always uses the normal route."
+    ],
+    "sure": "Wording from the app's log.",
+    "since": "1.3"
+  },
+  {
+    "id": "vulkan-route-black-or-crash",
+    "group": "Graphics",
+    "title": "A game draws wrongly or closes after choosing a Vulkan route",
+    "sees": "Black picture, missing objects or the game closing soon after start with Direct3D 10/11 runtime = DXVK or Direct3D 12 runtime = vkd3d-proton",
+    "meaning": "The Vulkan routes are experimental and were added in 1.3. They send the game's graphics through a Vulkan driver (MoltenVK or KosmicKrisp) instead of Porthole's own Metal layers, and a driver can lack a feature a game asks for. The normal route is unchanged.",
+    "try": [
+      "Put the Graphics route rows back on Default.",
+      "Try the other Vulkan library (MoltenVK or KosmicKrisp).",
+      "If it helps or makes things worse, send a report from the game's page: it carries the game's log and the route in effect."
+    ],
+    "sure": "Expected for an experimental route.",
+    "since": "1.3"
+  },
+  {
+    "id": "benchmark-line",
+    "group": "Log lines that are not the problem",
+    "title": "The [benchmark] line at the end of a run",
+    "sees": "[benchmark] game=\"...\" build=... fps-avg=... fps-1pct-low=... peak-app-mb=...",
+    "meaning": "One summary line written when a run ends, so runs of the same game can be compared across builds and settings: the build and engine, the length in seconds, the average frame rate, the frame rate of the slowest 1% and 5% of seconds, the lowest second, the biggest memory use of the app and of the GPU, the least free memory, how hot the phone got, and the graphics choices in effect (the Direct3D routes, the Vulkan library, upscaling and frame generation). It is information, not an error.",
+    "try": [
+      "Nothing to do. When you report a game, the line is in the log that goes with it."
+    ],
+    "sure": "Wording from the app.",
+    "since": "1.3"
+  },
+  {
+    "id": "missing-runtime-epic",
+    "group": "Starting a game",
+    "title": "An Epic game says a Visual C++ or DirectX runtime is missing",
+    "sees": "A message about a missing runtime or DLL (MSVCP, VCRUNTIME, d3dx) when an Epic Games Store game starts",
+    "meaning": "Some games run their own prerequisite installer the first time they start on Windows. Porthole does not run it by itself, because an installer that hangs would stand between you and your game. Most games start without it, since the Visual C++ runtime is already provided.",
+    "try": [
+      "Open the game's page in the Epic store, then tap Install the game's prerequisites. It runs the game's own setup once, on the desktop, where you can watch it.",
+      "Start the game again afterwards."
+    ],
+    "sure": "Wording from the app.",
+    "since": "1.3"
+  }
+]

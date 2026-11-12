@@ -25,6 +25,7 @@ final class ControlsEditorView: UIView {
     private let bottom = ControlsEditorPanel()
     private let tray = UIScrollView(), trayStack = UIStackView()
     private let settings = UIStackView()
+    private let optionsButton = ControlsEditorView.chip("Options")
     private let doesButton = ControlsEditorView.chip("")
     private let latchButton = ControlsEditorView.chip("Latch: off")
     private let sizeSlider = UISlider(), sizeLabel = UILabel()
@@ -38,10 +39,13 @@ final class ControlsEditorView: UIView {
     /// What the tray offers (action id, face): the sticks, the mouse, and the keys most games use. "More" opens every key.
     private static let trayItems: [(action: String, face: String)] = [
         ("stick-wasd", "W A S D"), ("stick-arrows", "Arrows"),
-        ("lmb", "LMB"), ("rmb", "RMB"), ("mmb", "MMB"), ("wheelup", "Wh\u{2191}"), ("wheeldown", "Wh\u{2193}"), ("lookmode", "Look/Mouse"),
+        ("lmb", "LMB"), ("rmb", "RMB"), ("mmb", "MMB"), ("wheelup", "Wh\u{2191}"), ("wheeldown", "Wh\u{2193}"), ("lookmode", "Look/Mouse"), ("keyboard", "Keys"),
         ("space", "Space"), ("shift", "Shift"), ("ctrl", "Ctrl"), ("alt", "Alt"), ("key-E", "E"), ("key-F", "F"), ("key-R", "R"), ("key-Q", "Q"), ("key-C", "C"),
         ("key-V", "V"), ("key-G", "G"), ("key-X", "X"), ("key-Z", "Z"), ("tab", "Tab"), ("esc", "Esc"), ("enter", "Enter"),
         ("key-1", "1"), ("key-2", "2"), ("key-3", "3"), ("key-4", "4"), ("key-5", "5"), ("f1", "F1"), ("f5", "F5"),
+        // The pad's controls, for a gamepad or a mix of pad and keys.
+        ("stick-ls", "L stick"), ("stick-rs", "R stick"), ("dpad-pad", "D-pad"), ("pad-a", "A"), ("pad-b", "B"), ("pad-x", "X"), ("pad-y", "Y"),
+        ("pad-lb", "LB"), ("pad-rb", "RB"), ("pad-lt", "LT"), ("pad-rt", "RT"), ("pad-start", "Menu"), ("pad-back", "View"),
     ]
 
     init(controls: CustomControlsView) {
@@ -67,7 +71,7 @@ final class ControlsEditorView: UIView {
     }
 
     private func buildTopBar() {
-        let row = UIStackView(arrangedSubviews: [doneButton, addButton, undoButton, redoButton, startButton, lookButton])
+        let row = UIStackView(arrangedSubviews: [doneButton, addButton, undoButton, redoButton, startButton, lookButton, optionsButton])
         row.axis = .horizontal; row.spacing = 6; row.alignment = .center
         topBar.contentView.addSubview(row)
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -87,9 +91,11 @@ final class ControlsEditorView: UIView {
                                      hint.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
                                      hint.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12)])
         startButton.showsMenuAsPrimaryAction = true
+        optionsButton.showsMenuAsPrimaryAction = true
         startButton.menu = UIMenu(title: "Replace every control with\u{2026} (Undo brings them back)", children: [
             UIAction(title: "Mouse and keys layout") { [weak self] _ in self?.controls?.replaceLayout(.mouseAndKeys) },
             UIAction(title: "First person layout") { [weak self] _ in self?.controls?.replaceLayout(.firstPerson) },
+            UIAction(title: "Gamepad layout") { [weak self] _ in self?.controls?.replaceLayout(.gamepad) },
             UIAction(title: "Empty screen", attributes: .destructive) { [weak self] _ in self?.controls?.replaceLayout(TouchLayout()) },
         ])
     }
@@ -187,8 +193,42 @@ final class ControlsEditorView: UIView {
 
     private func dismissHint() { hintTimer?.invalidate(); if !hint.isHidden { UIView.animate(withDuration: 0.25) { self.hint.alpha = 0 } completion: { _ in self.hint.isHidden = true } } }
 
+    /// The Options menu: how solid the controls are while playing, the tap on a press, and for the selected control its order (front or back) and a combo (Shift, Ctrl or Alt
+    /// held with its key). Rebuilt on every refresh so its ticks show what is set.
+    private func rebuildOptionsMenu() {
+        guard let c = controls, let layout = c.layout else { return }
+        let opacity = UIMenu(title: "Controls opacity when playing", children: [1.0, 0.8, 0.6, 0.4].map { value in
+            UIAction(title: "\(Int(value * 100))%", state: abs(layout.opacity - value) < 0.05 ? .on : .off) { [weak self] _ in self?.controls?.setOpacity(value); self?.refresh() }
+        })
+        var children: [UIMenuElement] = [opacity,
+            UIAction(title: "Tap feedback (haptics)", state: layout.haptics ? .on : .off) { [weak self] _ in self?.controls?.setHaptics(!layout.haptics); self?.refresh() },
+            UIAction(title: "Lock positions and sizes", image: UIImage(systemName: layout.locked ? "lock.fill" : "lock.open"), state: layout.locked ? .on : .off) { [weak self] _ in self?.controls?.setLocked(!layout.locked); self?.refresh() }]
+        if let sel = c.selectedSpec {
+            var selected: [UIMenuElement] = [
+                UIAction(title: "Bring to front", image: UIImage(systemName: "square.2.layers.3d.top.filled")) { [weak self] _ in self?.controls?.bringSelectedToFront(); self?.refresh() },
+                UIAction(title: "Send to back", image: UIImage(systemName: "square.2.layers.3d.bottom.filled")) { [weak self] _ in self?.controls?.sendSelectedToBack(); self?.refresh() }]
+            if PadActions.action(sel.action).isKey, !sel.isStick, sel.pad == nil {
+                selected.append(UIMenu(title: "Combo: also hold\u{2026}", children: TouchControlSpec.comboModifiers.filter { $0 != sel.action }.map { id in
+                    UIAction(title: PadActions.label(id), state: sel.with.contains(id) ? .on : .off) { [weak self] _ in self?.controls?.toggleComboModifier(id); self?.refresh() }
+                }))
+            }
+            if !sel.isStick, sel.pad == nil, sel.action != "keyboard" {
+                selected.append(UIMenu(title: "Shape", children: [(nil, "Round"), ("rounded", "Rounded square"), ("square", "Square")].map { (value, title) in
+                    UIAction(title: title, state: (sel.shape ?? "") == (value ?? "") || (value == nil && sel.shape == "round") ? .on : .off) { [weak self] _ in self?.controls?.setShape(value); self?.refresh() }
+                }))
+                selected.append(UIMenu(title: "Colour", children: [(nil as String?, "Default"), ("red", "Red"), ("orange", "Orange"), ("yellow", "Yellow"), ("green", "Green"), ("blue", "Blue"), ("purple", "Purple"), ("white", "White")].map { (value, title) in
+                    UIAction(title: title, state: (sel.colour ?? "") == (value ?? "") ? .on : .off) { [weak self] _ in self?.controls?.setColour(value); self?.refresh() }
+                }))
+            }
+            children.append(UIMenu(title: "Selected control", options: .displayInline, children: selected))
+        }
+        optionsButton.menu = UIMenu(children: children)
+    }
+
     private func refresh() {
         guard let c = controls else { return }
+        rebuildOptionsMenu()
+        startButton.isEnabled = c.layout?.locked != true; startButton.alpha = startButton.isEnabled ? 1 : 0.4
         undoButton.isEnabled = c.canUndo; redoButton.isEnabled = c.canRedo
         undoButton.alpha = c.canUndo ? 1 : 0.4; redoButton.alpha = c.canRedo ? 1 : 0.4
         lookButton.setTitle("Look \(c.layout?.look == true ? "on" : "off")", for: .normal)
@@ -221,12 +261,12 @@ final class ControlsEditorView: UIView {
         selection = sel
         let action = PadActions.action(sel.action)
         doesButton.setTitle(sel.isStick ? "Stick: \(sel.action == "stick-arrows" ? "arrows" : "W A S D") \u{25BE}" : "Does: \(PadActions.label(sel.action).prefix(16)) \u{25BE}", for: .normal)
-        latchButton.isHidden = !action.isKey
+        latchButton.isHidden = !(action.isKey || sel.pad?.isButtonLike == true)
         let latched = sel.mode == "latch"
         latchButton.setTitle(latched ? "Latch: on" : "Latch: off", for: .normal)
         latchButton.backgroundColor = latched ? .systemYellow : UIColor(white: 1, alpha: 0.16)
         latchButton.setTitleColor(latched ? .black : .white, for: .normal)
-        labelButton.isHidden = sel.isStick
+        labelButton.isHidden = sel.isRound
         if !sizeSlider.isTracking { sizeSlider.value = Float(sel.size) }
         sizeLabel.text = "\(Int(sel.size))"
         copyButton.isEnabled = (controls?.layout?.controls.count ?? 0) < TouchLayout.maxControls
@@ -241,10 +281,10 @@ final class ControlsEditorView: UIView {
 
     private func chooseAction() {
         guard let sel = selection else { return }
-        showPicker(sticks: sel.isStick, current: sel.action) { [weak self] id in
+        showPicker(sticks: sel.isRound, current: sel.action) { [weak self] id in
             self?.controls?.changeSelected { spec in
                 // The face follows the action while it still shows the old action's name.
-                if spec.label.isEmpty || spec.label == PadActions.shortLabel(spec.action) { spec.label = spec.isStick || id.hasPrefix("stick") ? "" : PadActions.shortLabel(id) }
+                if spec.label.isEmpty || spec.label == PadActions.shortLabel(spec.action) { spec.label = spec.isRound || id.hasPrefix("stick") || id.hasPrefix("dpad") ? "" : PadActions.shortLabel(id) }
                 spec.action = id
                 if ["lmb", "rmb", "mmb"].contains(id) { spec.mode = "hold" }
             }
@@ -380,12 +420,12 @@ private final class KeyPickerView: UIView {
 
     init(sticks: Bool, current: String?, pick: @escaping (String?) -> Void) {
         self.pick = pick
-        groups = sticks ? [("Stick", ["stick-wasd", "stick-arrows"])] : PadActions.groups
+        groups = sticks ? [("Stick or D-pad", ["stick-wasd", "stick-arrows", "stick-ls", "stick-rs", "dpad-pad"])] : PadActions.groups
         super.init(frame: .zero)
         panel.translatesAutoresizingMaskIntoConstraints = false; addSubview(panel)
         NSLayoutConstraint.activate([panel.leadingAnchor.constraint(equalTo: leadingAnchor), panel.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      panel.topAnchor.constraint(equalTo: topAnchor), panel.bottomAnchor.constraint(equalTo: bottomAnchor)])
-        let title = UILabel(); title.text = sticks ? "Which keys the stick holds" : "What it does"; title.textColor = .white; title.font = .systemFont(ofSize: 15, weight: .bold)
+        let title = UILabel(); title.text = sticks ? "What the stick does" : "What it does"; title.textColor = .white; title.font = .systemFont(ofSize: 15, weight: .bold)
         let close = UIButton(type: .system); close.setTitle("Cancel", for: .normal); close.setTitleColor(.white, for: .normal); close.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         close.addAction(UIAction { [weak self] _ in self?.pick(nil) }, for: .touchUpInside)
         for v in [title, close, scroll] { v.translatesAutoresizingMaskIntoConstraints = false; panel.contentView.addSubview(v) }
@@ -398,7 +438,7 @@ private final class KeyPickerView: UIView {
             scroll.addSubview(h); headers.append(h)
             for id in group.ids {
                 let b = UIButton(type: .system)
-                b.setTitle(id.hasPrefix("stick") ? (id == "stick-arrows" ? "Arrow keys" : "W A S D") : (id == "lookmode" ? "Look / Mouse switch" : PadActions.shortLabel(id).isEmpty ? PadActions.label(id) : PadActions.shortLabel(id)), for: .normal)
+                b.setTitle(id == "stick-arrows" ? "Arrow keys" : (id == "stick-wasd" ? "W A S D" : (TouchPadControl.entry(id)?.control.isRound == true ? PadActions.label(id) : (id == "lookmode" ? "Look / Mouse switch" : PadActions.shortLabel(id).isEmpty ? PadActions.label(id) : PadActions.shortLabel(id)))), for: .normal)
                 b.setTitleColor(id == current ? .black : .white, for: .normal)
                 b.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
                 b.backgroundColor = id == current ? .systemYellow : UIColor(white: 1, alpha: 0.16); b.layer.cornerRadius = 13

@@ -1,0 +1,177 @@
+--- madeira_d3d12.before0199.c	2026-11-09 00:32:44
++++ engine-r29/vendor-engine/madeira-d3d12/src/pe/madeira_d3d12.c	2026-11-09 00:32:52
+@@ -21557,6 +21557,7 @@
+     /* MetalFX spatial upscaling of the presented image (madeira.cfg metalfx-upscale) */
+     obj_handle_t fx_scaler, fx_out, fx_view[MAD_SWAP_MAX_BUFFERS];
+     UINT fx_w, fx_h;
++    LONG up_version;   /* Porthole 0199: the version of the upscale control file this swapchain has applied */
+     LONG diag_seq;   /* madeira-bcd: [swap-diag] number of the creation / ResizeBuffers being logged, 0 = none */
+ };
+ static IDXGISwapChain4Vtbl g_swap_vtbl;
+@@ -21567,6 +21568,7 @@
+ static volatile LONG g_swd_fs_n, g_swd_getfs_n, g_swd_rt_n, g_swd_rb_n, g_swd_out_n, g_swd_life_n,
+                      g_swd_layer_n, g_swd_lat_n;
+ 
++static void mad_swap_apply_layer(struct mad_swapchain *s);
+ static void mad_swap_release_fx(struct mad_swapchain *s) {
+     UINT i;
+     for (i = 0; i < MAD_SWAP_MAX_BUFFERS; i++)
+@@ -21575,7 +21577,86 @@
+     if (s->fx_scaler) { NSObject_release(s->fx_scaler); s->fx_scaler = 0; }
+     s->fx_w = s->fx_h = 0;
+ }
++
++/* Porthole 0199: upscaling that the in-game menu can change while the game runs. The app writes C:\ProgramData\Porthole\upscale.ctl (MADEIRA_UPSCALE_CTL) with the lines mode=0|1|2
++ * (0 off, 1 to the screen, 2 a fixed factor), factor=1.5 and fit=<screen width>x<screen height>; the Present looks at it twice a second at most. Without the file madeira.cfg's
++ * `metalfx-upscale` decides, once, as before. A status file next to it ("<file>.status") tells the menu what happened. */
++static SRWLOCK g_up_lock = SRWLOCK_INIT;
++static char g_up_path[300];
++static int g_up_init, g_up_have;       /* the variable was set / the file has been read */
++static int g_up_mode;                  /* 0 off, 1 to the screen, 2 fixed */
++static double g_up_factor = 2.0;
++static unsigned g_up_fw, g_up_fh;
++static FILETIME g_up_ft;
++static ULONGLONG g_up_next;
++static LONG g_up_version;
+ 
++/* Reads the control file when it changed; true when a control file exists at all. */
++static int mad_up_poll(int force) {
++    WIN32_FILE_ATTRIBUTE_DATA info; HANDLE f; char buf[1024]; DWORD got = 0; char *line, *save = NULL;
++    int ok;
++    AcquireSRWLockExclusive(&g_up_lock);
++    if (!g_up_init) {
++        DWORD n = GetEnvironmentVariableA("MADEIRA_UPSCALE_CTL", g_up_path, sizeof g_up_path);
++        if (n == 0 || n >= sizeof g_up_path) g_up_path[0] = 0;
++        g_up_init = 1; force = 1;
++    }
++    if (!g_up_path[0]) { ReleaseSRWLockExclusive(&g_up_lock); return 0; }
++    if (!force && GetTickCount64() < g_up_next) { ok = g_up_have; ReleaseSRWLockExclusive(&g_up_lock); return ok; }
++    g_up_next = GetTickCount64() + 500;
++    if (!GetFileAttributesExA(g_up_path, GetFileExInfoStandard, &info)) { ok = g_up_have; ReleaseSRWLockExclusive(&g_up_lock); return ok; }
++    if (g_up_have && !memcmp(&info.ftLastWriteTime, &g_up_ft, sizeof g_up_ft)) { ReleaseSRWLockExclusive(&g_up_lock); return 1; }
++    f = CreateFileA(g_up_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (f == INVALID_HANDLE_VALUE) { ok = g_up_have; ReleaseSRWLockExclusive(&g_up_lock); return ok; }
++    ok = ReadFile(f, buf, sizeof buf - 1, &got, NULL);
++    CloseHandle(f);
++    if (!ok) { ok = g_up_have; ReleaseSRWLockExclusive(&g_up_lock); return ok; }
++    buf[got] = 0;
++    {
++        int m = g_up_mode; double fa = g_up_factor; unsigned fw = g_up_fw, fh = g_up_fh;
++        for (line = buf; line && *line; line = save) {
++            char *eq, *nl = line + strcspn(line, "\r\n");
++            save = *nl ? nl + 1 : NULL;
++            *nl = 0;
++            eq = strchr(line, '=');
++            if (!eq) continue;
++            *eq = 0;
++            if (!strcmp(line, "mode")) { m = atoi(eq + 1); if (m < 0) m = 0; if (m > 2) m = 2; }
++            else if (!strcmp(line, "factor")) { fa = strtod(eq + 1, NULL); if (fa < 1.0) fa = 1.0; if (fa > 2.0) fa = 2.0; }
++            else if (!strcmp(line, "fit")) { unsigned a = 0, b = 0; if (sscanf(eq + 1, "%ux%u", &a, &b) == 2 && a && b) { fw = a; fh = b; } }
++        }
++        if (!g_up_have || m != g_up_mode || fa != g_up_factor || fw != g_up_fw || fh != g_up_fh) InterlockedIncrement(&g_up_version);
++        g_up_mode = m; g_up_factor = fa; g_up_fw = fw; g_up_fh = fh;
++    }
++    g_up_ft = info.ftLastWriteTime;
++    g_up_have = 1;
++    ReleaseSRWLockExclusive(&g_up_lock);
++    return 1;
++}
++
++/* The wish as the text the scaler setup reads ("" = none, "fit:WxH", or a factor): the control file when there is one, else madeira.cfg. */
++static void mad_up_spec(char *v, size_t cap) {
++    v[0] = 0;
++    if (mad_up_poll(0)) {
++        AcquireSRWLockShared(&g_up_lock);
++        if (g_up_mode == 1 && g_up_fw && g_up_fh) snprintf(v, cap, "fit:%ux%u", g_up_fw, g_up_fh);
++        else if (g_up_mode == 2) snprintf(v, cap, "%.3f", g_up_factor);
++        ReleaseSRWLockShared(&g_up_lock);
++        return;
++    }
++    if (!mad_cfg_str_pe("metalfx-upscale", v, cap)) v[0] = 0;
++}
++
++static void mad_up_status(const char *text) {
++    char path[330]; HANDLE f; DWORD put;
++    if (!g_up_path[0]) return;
++    snprintf(path, sizeof path, "%s.status", g_up_path);
++    f = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (f == INVALID_HANDLE_VALUE) return;
++    WriteFile(f, text, (DWORD)strlen(text), &put, NULL);
++    CloseHandle(f);
++}
++
+ /* MetalFX spatial upscaling. The game renders at its own resolution (the
+  * virtual monitor's size); Present scales the back buffer by `metalfx-upscale`
+  * (madeira.cfg or the game's own lines, 1.1-3) with Apple's spatial scaler
+@@ -21588,14 +21669,20 @@
+     char v[32]; double f; UINT i, ow, oh;
+     struct WMTFXSpatialScalerInfo si; struct WMTTextureInfo ti; struct WMTTextureSwizzleChannels sw;
+     static LONG said;
+-    if (!mad_cfg_str_pe("metalfx-upscale", v, sizeof v) || !v[0]) return;
++    char st[200];
++    s->up_version = g_up_version;
++    mad_up_spec(v, sizeof v);
++    if (!v[0]) { if (g_up_path[0]) mad_up_status("state=off\n"); return; }
+     if (!strncmp(v, "fit:", 4)) {   /* Porthole 0196: "fit:<screen width>x<screen height>" -- the factor that brings the picture to the screen (aspect kept) */
+         unsigned sw = 0, sh = 0;
+         if (sscanf(v + 4, "%ux%u", &sw, &sh) != 2 || !sw || !sh || !s->desc.Width || !s->desc.Height) return;
+         f = (double)sw / (double)s->desc.Width;
+         if ((double)sh / (double)s->desc.Height < f) f = (double)sh / (double)s->desc.Height;
+         if (f > 2.0) f = 2.0;
+-        if (!(f >= 1.1)) return;   /* the game already draws about as large as the screen */
++        if (!(f >= 1.1)) {   /* the game already draws about as large as the screen */
++            if (g_up_path[0]) { snprintf(st, sizeof st, "state=same-size\nfrom=%ux%u\n", s->desc.Width, s->desc.Height); mad_up_status(st); }
++            return;
++        }
+     } else {
+         f = strtod(v, NULL);
+         if (!(f >= 1.1)) return;
+@@ -21606,6 +21693,7 @@
+     if (ow > 8192 || oh > 8192 || ow <= s->desc.Width) return;
+     if (!MTLDevice_supportsFXSpatialScaler(s->dev->mtl_device)) {
+         if (InterlockedIncrement(&said) <= 2) d3d12_log("[madeira-d3d12] metalfx-upscale: this GPU has no MetalFX spatial scaler\n");
++        if (g_up_path[0]) mad_up_status("state=unsupported\n");
+         return;
+     }
+     memset(&ti, 0, sizeof ti);
+@@ -21630,12 +21718,32 @@
+         d3d12_log("[madeira-d3d12] metalfx-upscale %s: could not set up the scaler (texture %d, scaler %d) -- plain copy\n",
+                   v, s->fx_out != 0, s->fx_scaler != 0);
+         mad_swap_release_fx(s);
++        if (g_up_path[0]) mad_up_status("state=error\nmessage=the scaler could not be set up\n");
+         return;
+     }
+     s->fx_w = ow; s->fx_h = oh;
+     d3d12_log("[madeira-d3d12] metalfx-upscale %s: %ux%u -> %ux%u (MetalFX spatial)\n", v, s->desc.Width, s->desc.Height, ow, oh);
++    if (g_up_path[0]) { snprintf(st, sizeof st, "state=on\nfactor=%.3f\nfrom=%ux%u\nto=%ux%u\n", (double)ow / (double)s->desc.Width, s->desc.Width, s->desc.Height, ow, oh); mad_up_status(st); }
+ }
+ 
++/* Porthole 0199: the menu changed the choice. Called by Present before the layer is checked: when the control file's wish changed, the scaler and its textures are made again for the
++ * new factor and the layer takes the new drawable size. Buffers in flight keep what they hold (the command buffers retain the scaler and the texture they use). */
++static void mad_swap_upscale_poll(struct mad_swapchain *s) {
++    LONG v;
++    if (!mad_up_poll(0)) return;
++    v = g_up_version;
++    if (v == s->up_version || !s->nbuf) return;
++    {
++        UINT ow = s->fx_w, oh = s->fx_h;
++        mad_swap_release_fx(s);
++        mad_swap_make_fx(s);   /* sets up_version, status and the log line */
++        if (s->fx_w != ow || s->fx_h != oh) {
++            d3d12_log("[madeira-d3d12] metalfx-upscale live: %ux%u -> %ux%u\n", ow ? ow : s->desc.Width, oh ? oh : s->desc.Height, s->fx_w ? s->fx_w : s->desc.Width, s->fx_h ? s->fx_h : s->desc.Height);
++            mad_swap_apply_layer(s);
++        }
++    }
++}
++
+ static void mad_swap_release_buffers(struct mad_swapchain *s) {
+     UINT i;
+     mad_swap_release_fx(s);
+@@ -22186,6 +22294,7 @@
+         }
+         if ((s->presents % 300) == 299) mad_sd_report(s->presents + 1);
+     }
++    mad_swap_upscale_poll(s);   /* Porthole 0199 */
+     if (g_layer_cfg_layer == s->layer && g_layer_cfg_owner != s) {   /* shared layer taken over, see mad_swap_apply_layer */
+         static LONG said;
+         if (InterlockedIncrement(&said) <= 8)

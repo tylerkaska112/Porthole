@@ -76,7 +76,7 @@ struct RootView: View {
         .sheet(isPresented: $router.pickInstaller) {
             FilePickerSheet(onPick: { urls in
                 router.pickInstaller = false
-                do { session.start(try model.installerGame(from: urls[0])) } catch { installerError = error.localizedDescription }
+                do { session.start(try model.installerGame(from: urls[0])) } catch { installerError = ErrorText.plain(error) }
             }, onCancel: { router.pickInstaller = false })
         }
         .confirm("Cannot run that", message: installerError, confirmTitle: "OK", isPresented: Binding(get: { installerError != nil }, set: { if !$0 { installerError = nil } })) {}
@@ -95,15 +95,18 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { VPNGuard.shared.recheck(); CellularGuard.shared.recheck() }
             if phase == .active { SteamStore.shared.refreshIfStale() }
+            if phase == .active { Task { await AutoFixRules.shared.refreshIfStale() } }
             if phase == .active, UserDefaults.standard.bool(forKey: "f4.problemsSent") { Task { await ProblemTracker.shared.refresh() } }
             if phase == .active { Task { await CompatStore.shared.flushQueue(); await CompatStore.shared.refreshBadges(for: model.games) } }
         }
         .task {
             // Before anything else starts a game: if the last run ended while a game was running, its logs are put aside for a problem report.
             CrashEvidence.captureIfNeeded()
+            AutoFixRules.shared.start()                   // the rules the Hub published, as last saved (the network is asked in the background)
+            AutoFixStore.shared.evaluateAfterLaunch()      // a game that took the app down or was closed by the person: read its log for a known cause
             _ = NetworkStatus.shared          // start watching the network, so screens know early whether it is there
             CellularGuard.warmUp()
-            BackgroundRun.shared.start()        // does nothing unless Settings > Play > Performance keeps a game running in the background
+            BackgroundRun.shared.start()        // does nothing unless Settings > Performance keeps a game running in the background
             ControllerInput.shared.start()
             SteamStore.shared.onInstalled = { [weak model] game, exe in
                 guard let model else { return }
@@ -113,6 +116,7 @@ struct RootView: View {
             SteamStore.shared.start()
             let info = Bundle.main.infoDictionary
             LogStore.shared.log("[app] Porthole \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?")), engine \(CompatEngine.id), \(Bundle.main.bundleIdentifier ?? "?")")
+            DockOffline.begin()
             InstallCheck.logReport()
             // Reports this install sent earlier: look for answers (nothing is asked of the server before a first report).
             if UserDefaults.standard.bool(forKey: "f4.problemsSent") { await ProblemTracker.shared.refresh() }

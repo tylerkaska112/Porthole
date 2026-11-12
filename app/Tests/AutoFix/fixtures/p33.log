@@ -1,0 +1,30 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I 154 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I 18C FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71e69e0000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+0154:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=16115
+I 198 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71e3ee0000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+0198:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=17396
+I 1A8 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[17:48:27.077] [INFO] [mem-pressure] CRITICAL: app 3277 MB, free 819 MB, gpu 15 MB; malloc gave back 0 MB
+[17:48:27.184] [INFO] [mem-pressure] CRITICAL: app 3277 MB, free 819 MB, gpu 13 MB; malloc gave back 0 MB
+[jit-pool] EXHAUSTED (image 0x71e13e0000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+01a8:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=18492
+I 1B0 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71de8e0000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+01b0:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=19574
+I 1B8 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71dbe40000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+01b8:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=20720
+I 1C4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71d9360000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+01c4:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=21810
+[17:48:52.339] [INFO] [mem-alert] shown to the person: Memory is almost full. Close other apps. If this keeps happening, turn on Swap in this game's settings.
+I 1CC FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71d6860000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+01cc:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=22896
+I 1D4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[jit-pool] EXHAUSTED (image 0x71d3d80000+0x120000): want=0x124000 bump=0x2bf3c000/0x38000000 tail_resv=0xc00c000 freelist=9 — FAILING the load (was: silent BUS loop)
+01d4:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc06d007e) syscalls=0 unix_calls=23975

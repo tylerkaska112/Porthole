@@ -28,6 +28,12 @@ struct Game: Codable, Identifiable, Equatable {
     var installer: Bool?
     /// This game's own requests of the engine (AVX, frame generation, its own madeira.cfg lines, controller mode ...); nil = none. See EngineOptions.swift.
     var engine: GameEngine?
+    /// The on-screen game controller (VirtualPadView) is on for this game: an Xbox pad drawn on the screen, for a game that wants a pad on a device without one. nil = off.
+    var virtualPad: Bool?
+    /// Which arrangement the on-screen controller has for this game (VirtualPadLayout.Preset's name); nil = the one chosen last, else the standard.
+    var virtualPadLayout: String?
+    /// How the on-screen controller looks for this game (VirtualPadStyle's name: xbox, playstation, nintendo, classic); nil = the one chosen last, else Xbox.
+    var virtualPadStyle: String?
     /// This game's saved sets of controls (controller binds and/or a touch layout) and the one in use; none in use = the game's own settings. See BindSets.swift.
     var bindSets: [BindSet]?
     var activeBindSetID: UUID?
@@ -53,6 +59,10 @@ struct Game: Codable, Identifiable, Equatable {
     /// Set for a game installed from the EA app (EA/): its offer id and its picture. A launch prepares EA's licence, environment and local service first (SessionController).
     var eaOfferID: String?
     var eaArtURL: URL?
+    /// Set for a program installed from the Stores tab's Software section (Core/Software.swift): its id there.
+    var softwareID: String?
+    /// Blender, installed from the Software section or added by hand. Its touch controls (pan, zoom, orbit) are for Blender only.
+    var isBlender: Bool { softwareID == "blender" || exe.lowercased().hasSuffix("\\blender.exe") }
 }
 
 /// Settings a game can override. Every field is optional: nil means "use the global setting".
@@ -172,6 +182,30 @@ final class AppModel: ObservableObject {
             game.itchID = id; game.itchArtURL = art
             games.append(game)
         }
+        save()
+    }
+
+    /// Adds a program installed from the Software section to the library. A program already there keeps the person's own settings; only its path is brought up to date.
+    func upsertSoftware(_ item: SoftwareItem) {
+        let exe = "C:\\Program Files\\" + item.folder + "\\" + item.exe.replacingOccurrences(of: "/", with: "\\")
+        if let i = games.firstIndex(where: { $0.softwareID == item.id }) {
+            games[i].exe = exe
+            games[i].name = item.title
+        } else {
+            var game = Game(name: item.title, exe: exe)
+            game.softwareID = item.id
+            game.inDesktop = item.desktop ?? true
+            var settings = GameSettings()
+            settings.vramMB = item.vramMB
+            settings.swapMB = item.swapMB
+            if !settings.isEmpty { game.settings = settings }
+            games.append(game)
+        }
+        save()
+    }
+
+    func removeSoftware(id: String) {
+        games.removeAll { $0.softwareID == id }
         save()
     }
 

@@ -1,0 +1,4 @@
+I 24 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D 24 Load module UnityPlayer.dll (unityplayer.dll-56bde47ef1bf7f68): 71FC650000
+[19:09:56.614] [INFO] [mem-pressure] CRITICAL: app 1883 MB, free 465 MB, gpu 239 MB; malloc gave back 0 MB
+[19:09:56.645] [INFO] [mem-pressure] CRITICAL: app 1911 MB, free 437 MB, gpu 271 MB; malloc gave back 0 MB

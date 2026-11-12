@@ -1,0 +1,59 @@
+--- a/madeira-d3d12/src/pe/madeira_d3d12.c	2026-11-08 23:21:46
++++ b/madeira-d3d12/src/pe/madeira_d3d12.c	2026-11-08 23:21:46
+@@ -21589,9 +21589,18 @@
+     struct WMTFXSpatialScalerInfo si; struct WMTTextureInfo ti; struct WMTTextureSwizzleChannels sw;
+     static LONG said;
+     if (!mad_cfg_str_pe("metalfx-upscale", v, sizeof v) || !v[0]) return;
+-    f = strtod(v, NULL);
+-    if (!(f >= 1.1)) return;
+-    if (f > 2.0) f = 2.0;   /* as DXMT's D3D11 MetalFX swapchain, which takes 1 to 2 */
++    if (!strncmp(v, "fit:", 4)) {   /* Porthole 0196: "fit:<screen width>x<screen height>" -- the factor that brings the picture to the screen (aspect kept) */
++        unsigned sw = 0, sh = 0;
++        if (sscanf(v + 4, "%ux%u", &sw, &sh) != 2 || !sw || !sh || !s->desc.Width || !s->desc.Height) return;
++        f = (double)sw / (double)s->desc.Width;
++        if ((double)sh / (double)s->desc.Height < f) f = (double)sh / (double)s->desc.Height;
++        if (f > 2.0) f = 2.0;
++        if (!(f >= 1.1)) return;   /* the game already draws about as large as the screen */
++    } else {
++        f = strtod(v, NULL);
++        if (!(f >= 1.1)) return;
++        if (f > 2.0) f = 2.0;   /* as DXMT's D3D11 MetalFX swapchain, which takes 1 to 2 */
++    }
+     ow = ((UINT)(s->desc.Width * f + 0.5)) & ~1u;
+     oh = ((UINT)(s->desc.Height * f + 0.5)) & ~1u;
+     if (ow > 8192 || oh > 8192 || ow <= s->desc.Width) return;
+@@ -21998,7 +22007,7 @@
+         g_lsfg.state = 1;
+         d3d12_log("[lsfg] Direct3D 12 frame generation: bridge found in d3d11.dll\n");
+     }
+-    if (!src || !src->texture || s->fx_scaler) return 0;
++    if (!src || !src->texture) return 0;   /* with MetalFX upscaling the generated pictures are enlarged too (mad_lsfg_show) */
+     if (g_lsfg.sc && g_lsfg.sc != s) return 0;
+     if (!g_lsfg.sc) {
+         if (src->width < 640 || src->height < 360) return 0;
+@@ -22042,11 +22051,20 @@
+         cb = tex ? MTLCommandQueue_commandBuffer(s->queue->device->mtl_queue) : 0;
+         if (!cb) break;
+         MTLCommandBuffer_encodeWaitForEvent(cb, (obj_handle_t)lf->out_event, lf->out_value);
+-        enc = MTLCommandBuffer_blitCommandEncoder(cb);
+-        if (enc) {
+-            g_enc_seq++;
+-            mad_blit_texture(enc, (obj_handle_t)lf->out_texture[i], tex, w, h);
+-            MTLCommandEncoder_endEncoding(enc);
++        {
++            obj_handle_t copy_src = (obj_handle_t)lf->out_texture[i];
++            UINT cw = w, ch = h;
++            if (s->fx_scaler && s->fx_out) {   /* Porthole 0196: the generated picture is enlarged like the game's own (the scaler takes any texture of its input format) */
++                obj_handle_t ff = (g_f6_used && s->queue->device->enc_fence) ? s->queue->device->enc_fence : 0;
++                MTLCommandBuffer_encodeSpatialScale(cb, s->fx_scaler, copy_src, s->fx_out, ff);
++                copy_src = s->fx_out; cw = s->fx_w; ch = s->fx_h;
++            }
++            enc = MTLCommandBuffer_blitCommandEncoder(cb);
++            if (enc) {
++                g_enc_seq++;
++                mad_blit_texture(enc, copy_src, tex, cw, ch);
++                MTLCommandEncoder_endEncoding(enc);
++            }
+         }
+         if (i + 1 == n || i + 1 == 3) { MTLCommandBuffer_encodeSignalEvent(cb, (obj_handle_t)lf->done_event, lf->done_value); signalled = 1; }
+         MTLCommandBuffer_presentDrawable(cb, dr);

@@ -1,0 +1,11 @@
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -1785,7 +1785,7 @@
+     if (thread) NtClose( thread );
+ 
+     *(DWORD *)dir->AddressOfIndex = i;
+-#ifdef __arm64ec__
++#if defined(__arm64ec__) || defined(__aarch64__)   /* Porthole 0181: native ARM64 images run from a JIT-pool copy too */
+     {
+         /* iOS executes this ARM64EC image from a JIT-pool copy made before
+          * alloc_tls_slot. Compiler TLS accesses read AddressOfIndex through

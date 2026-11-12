@@ -132,7 +132,7 @@ final class AmazonLibrary: ObservableObject {
                 AmazonInstaller.shared.refreshArt(from: list)
             } catch {
                 LogStore.shared.log("[amazon-library] refresh failed: \((error as? AmazonAuthError)?.message ?? error.localizedDescription)", level: .error)
-                self.error = (error as? AmazonAuthError)?.message ?? error.localizedDescription
+                self.error = (error as? AmazonAuthError)?.message ?? ErrorText.plain(error)
             }
             isLoading = false
         }

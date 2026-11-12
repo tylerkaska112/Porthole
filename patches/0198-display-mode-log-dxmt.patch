@@ -1,0 +1,28 @@
+--- a/src/util/wsi_monitor_headless.cpp	2026-11-09 00:00:48
++++ b/src/util/wsi_monitor_headless.cpp	2026-11-09 00:00:48
+@@ -17,6 +17,9 @@
+ #include "wsi_monitor.hpp"
+ 
+ #include "util_env.hpp"
++#include <atomic>
++#include "log/log.hpp"
++#include "util_string.hpp"
+ #include "util_madeira_switch.hpp"
+ #include "log/log.hpp"
+ #include "util_string.hpp"
+@@ -181,7 +184,14 @@
+   if (hMonitor != getDefaultMonitor() || !pMode)
+     return false;
+   static const bool useUser32Modes = madeiraSwitch("DXMT_WSI_MODE_TABLE");
+-  return useUser32Modes ? getUser32DisplayMode(modeNumber, pMode) : getSyntheticDisplayMode(modeNumber, pMode);
++  bool ok = useUser32Modes ? getUser32DisplayMode(modeNumber, pMode) : getSyntheticDisplayMode(modeNumber, pMode);
++  {   /* Porthole 0198: what a DXGI mode walk sees */
++    static std::atomic<int> logged{0};
++    if (logged.fetch_add(1) < 60)
++      Logger::info(str::format("[wsi-modes] 0198 GetDisplayModeList index ", modeNumber, " (", useUser32Modes ? "user32 table, DXMT_WSI_MODE_TABLE" : "short list", "): ",
++                               ok ? str::format(pMode->width, "x", pMode->height) : std::string("end")));
++  }
++  return ok;
+ }
+ #else
+ /* MADEIRA (WOW64_DESIGN.md section 8.2(d)): below the Win32 boundary

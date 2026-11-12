@@ -1,0 +1,8 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+[fex-arena] ml799 constrained 8GB: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @16-32G: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @8-16G: native reserve FAILED kr=3
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I A4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+00f8:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c0000005 at 000000016426C5FF: top_filter=000000016429B110 nested=0
+00a4:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xffffffff) syscalls=0 unix_calls=10118

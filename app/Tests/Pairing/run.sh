@@ -5,5 +5,5 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; SRC="$HERE/../../Sources/Pairing"
 OUT="$(mktemp -d)"
-swiftc -O -o "$OUT/pairing-tests" "$SRC/ModularArithmetic.swift" "$SRC/PairingCodecs.swift" "$SRC/SRP3072.swift" "$SRC/RemotePairingHost.swift" "$HERE/../../Sources/Shared/JITMessages.swift" "$HERE/main.swift" 2>&1 | grep -E "error" || true
+swiftc -O -o "$OUT/pairing-tests" "$SRC/ModularArithmetic.swift" "$SRC/PairingCodecs.swift" "$SRC/SRP3072.swift" "$SRC/RemotePairingHost.swift" "$HERE/../../Sources/Core/ErrorText.swift" "$HERE/../../Sources/Shared/JITMessages.swift" "$HERE/main.swift" 2>&1 | grep -E "error" || true
 "$OUT/pairing-tests" "$HERE"

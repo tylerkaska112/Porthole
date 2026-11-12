@@ -600,10 +600,12 @@ enum DockInstallScripts {
         // Social Club setup asks for: "class {56fdf344-fd6d-11d0-958a-006097c9a090} not registered", then it quits with exit code 0 having installed
         // nothing). One regsvr32 for the lot, once (a marker file on drive C: says it was tried).
         if services != .off {
-            lines.append("if exist C:\\madeira-com-registered.txt goto madeira_com_done")
-            lines.append("C:\\windows\\system32\\regsvr32.exe /s shell32.dll windowscodecs.dll urlmon.dll wintrust.dll cryptnet.dll")
+            // 2026-11-08: windowscodecs.dll is left out (its registration wrote a garbled path for the imaging component, see PrefixHealth.swift; the template has it right) and the marker is new,
+            // so a prefix that already ran the old list runs this one once.
+            lines.append("if exist C:\\madeira-com-registered2.txt goto madeira_com_done")
+            lines.append("C:\\windows\\system32\\regsvr32.exe /s shell32.dll urlmon.dll wintrust.dll cryptnet.dll")
             lines.append("echo com-registered %ERRORLEVEL%" + result)
-            lines.append("echo tried> C:\\madeira-com-registered.txt")
+            lines.append("echo tried> C:\\madeira-com-registered2.txt")
             lines.append(":madeira_com_done")
         }
         for (offset, process) in processes.enumerated() {

@@ -115,7 +115,7 @@ final class OnDevicePairing {
                 let result = try await host.run()
                 await self?.finish(result)
             } catch {
-                await self?.fail((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                await self?.fail((error as? LocalizedError)?.errorDescription ?? ErrorText.plain(error))
             }
         }
     }
@@ -155,7 +155,7 @@ final class OnDevicePairing {
             notify(id: "f4.pairing.done", title: "Pairing complete", body: "Return to the app. JIT can now be switched on from inside it.")
             if #available(iOS 26.0, *), let task = continuedTask as? BGContinuedProcessingTask { task.progress.completedUnitCount = 100 }
         } catch {
-            phase = .failed("Paired, but the pairing file could not be saved: \(error.localizedDescription)")
+            phase = .failed("Paired, but the pairing file could not be saved: \(ErrorText.plain(error))")
         }
     }
 

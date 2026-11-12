@@ -6,10 +6,34 @@ import Foundation
 /// their builds. Porthole never applies one by itself: a game's page shows it ("Madeira's tested setup") and the person chooses, with the previous engine lines kept for Undo.
 /// Only what Porthole has a place for is applied; the rest is listed, so nothing is silently dropped.
 enum GameTestedSetup {
+    /// A setup Porthole's own testing found, for a game Madeira has no list for. Madeira's list cannot carry Swap, which a setup like this needs, so it is kept here: `apply` sets the
+    /// swap switches on the game's own settings (and Undo puts them back with the engine lines). `tested` says on what it was found, shown to the person.
+    struct OwnSetup {
+        let steamAppID: Int
+        let title: String
+        let config: String
+        var swapMB: Int? = nil
+        var swapCoverage: String? = nil
+        let tested: String
+        var recommendationID: String { "porthole-\(steamAppID)" }
+    }
+
+    static let own: [OwnSetup] = [
+        OwnSetup(steamAppID: 2670630, title: "Supermarket Simulator",
+                 config: "env.MADEIRA_MIP_CLAMP_AUTO = 1\nenv.FEX_VECTORTSOENABLED = 0",
+                 swapMB: 4096, swapCoverage: "",
+                 tested: "an iPad with an M4 chip and 8 GB: Continue loaded a save, then 13 minutes of play at 56 to 65 frames a second with the memory staying under the app\u{2019}s 6 GB limit. Relaxing the memory order of vector code (FEX_VECTORTSOENABLED) ran faster than leaving it on; relaxing all memory ordering as well did not. On an iPad with 6 GB the limit is about 4 GB and this may not be enough.")
+    ]
+
+    static func ownSetup(for rec: GameRecommendation) -> OwnSetup? { own.first { $0.recommendationID == rec.id } }
+
     /// The setup for a game, or nil. The "standard" list (for games Madeira has no list for) is not offered.
     static func recommendation(for game: Game) -> GameRecommendation? {
         guard game.installer != true else { return nil }
         let id = game.dockAppID ?? game.steamAppID
+        if let id, let mine = own.first(where: { $0.steamAppID == id }) {
+            return GameRecommendation(id: mine.recommendationID, title: mine.title, version: 1, config: mine.config)
+        }
         let found = GameRecommendations.match(windowsPath: game.exe, steamAppID: id, fileExists: driveFileExists)
         guard let found, found.id != GameRecommendations.standard.id else { return nil }
         return found
@@ -37,6 +61,9 @@ enum GameTestedSetup {
         if let fps = rec.fpsMode, fps != 1 { skipped.append("FPS limit (\(["0": "display maximum", "2": "uncapped", "3": "30", "4": "40"]["\(fps)"] ?? "\(fps)")): set it in the game's menu") }
         if let display = rec.display, display != "fit" { skipped.append("aspect and scaling \(display)") }
         if rec.startServices == true { skipped.append("starting Windows services first") }
+        if let mine = ownSetup(for: rec), let mb = mine.swapMB {
+            applied.append("swap \(mb == 0 ? "off" : "\(mb / 1024) GB")" + (mine.swapCoverage == "" ? ", large blocks (8 MB and up)" : ""))
+        }
         return Plan(title: rec.title, lines: lines, applied: applied, skipped: skipped)
     }
 
@@ -71,6 +98,10 @@ enum GameTestedSetup {
         var settings = game.settings ?? GameSettings()
         if let size = resolution(rec) { settings.resolution = size }
         if rec.launchMode == "desktop" { settings.dockDesktop = true }
+        if let mine = ownSetup(for: rec) {
+            if let mb = mine.swapMB { settings.swapMB = mb }
+            if let coverage = mine.swapCoverage { settings.swapCoverage = coverage }
+        }
         game.settings = settings.isEmpty ? nil : settings
         LogStore.shared.log("[tested-setup] \(game.name): \(rec.id) v\(rec.version) applied")
         return undo

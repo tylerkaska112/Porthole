@@ -3,6 +3,7 @@
 #import "WineServerBridge.h"
 #import "WineProcessBridge.h"
 #import "CabinetReader.h"
+#import "PrefixExtractor.h"
 // Madeira in the background (audio_null_ios.c in the engine library, BackgroundRun.swift, Winios/BackgroundCPUCap.c, Winios/MetalBackgroundGate.m).
 int madeira_audio_background(int keepalive, int mute, int halt);
 void madeira_audio_resume_after_interruption(void);

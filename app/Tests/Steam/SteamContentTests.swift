@@ -294,6 +294,17 @@ do {   // ownership
     let blocked = SteamInstaller(appid: 480, name: "Sample Game", steamApps: freshPaths("owned2").steamApps, backend: noneOwned)
     run(blocked)
     if case .failed(let message) = blocked.state { check(message.contains("does not own"), "owned: with nothing owned it says so (\(message))") } else { check(false, "owned: fails when nothing is owned (\(blocked.state))") }
+    // Error 40 (blocked) on one depot leaves that depot out; the rest installs (a Korean account's Civilization VI report).
+    let blockedStore = makeStore(appid: 480, name: "Sample Game", depots: [depotA, depotShared])
+    blockedStore.blockedDepots = [482]
+    let blockedInstall = SteamInstaller(appid: 480, name: "Sample Game", steamApps: freshPaths("blocked1").steamApps, backend: blockedStore)
+    run(blockedInstall)
+    check(blockedInstall.state == .finished && read(paths, "readme.txt") != nil, "blocked: a depot Steam blocks (error 40) is skipped, the rest installs (\(blockedInstall.state))")
+    let allBlocked = makeStore(appid: 480, name: "Sample Game", depots: [depotA]); allBlocked.blockedDepots = [481]
+    let allBlockedInstall = SteamInstaller(appid: 480, name: "Sample Game", steamApps: freshPaths("blocked2").steamApps, backend: allBlocked)
+    run(allBlockedInstall)
+    if case .failed(let message) = allBlockedInstall.state { check(message.contains("blocked depot 481") && message.contains("error 40"), "blocked: with every depot blocked it says why (\(message))") } else { check(false, "blocked: fails when every depot is blocked (\(allBlockedInstall.state))") }
+    check(SteamContentError.forDepotKey(code: 15, depot: 1).notOwned && SteamContentError.forDepotKey(code: 40, depot: 1).blocked && !SteamContentError.forDepotKey(code: 2, depot: 1).blocked, "blocked: codes map to the right kind of error")
     let unknown = FakeContent()
     let missing = SteamInstaller(appid: 5, name: "Nope", steamApps: freshPaths("owned3").steamApps, backend: unknown)
     run(missing)
@@ -777,6 +788,10 @@ do {
     check(SteamLaunchOption.dockDefaultKey(in: forest) == 0, "an app whose Windows entry is number 0 still asks for 0 (The Forest)")
     check(SteamLaunchOption.dockDefaultKey(in: []) == nil, "no launch list at all: not known, so the caller fetches it")
     check(SteamLaunchOption.dockDefaultKey(in: [SteamLaunchOption(executable: "game.exe", oslist: "windows", key: 2, osarch: "32")]) == 0, "only a 32-bit entry: fall back to 0 rather than guess")
+    let payday = [SteamLaunchOption(executable: "PAYDAY3.exe", type: "option1", oslist: "windows", description: "PAYDAY3", key: 1, osarch: "64"),
+                  SteamLaunchOption(executable: "PAYDAY3.exe", type: "option3", oslist: "windows", description: "UE5 Game version", key: 11, osarch: "64")]
+    check(SteamLaunchOption.dockDefaultKey(in: payday) == 1, "PAYDAY 3: entries of a numbered kind only (1 and 11): ask for the lowest Windows one, not 0")
+    check(SteamLaunchOption.dockDefaultKey(in: payday + [SteamLaunchOption(executable: "g.exe", type: "default", oslist: "windows", key: 5, osarch: "64")]) == 5, "an ordinary entry still wins over numbered kinds")
     let old = try? JSONDecoder().decode(SteamLaunchOption.self, from: Data(#"{"executable":"a.exe","arguments":"","type":"","oslist":"windows","description":""}"#.utf8))
     check(old?.key == nil && old?.osarch == "", "a saved launch list from before the number was kept still loads, with the number unknown")
     check(SteamLaunchOption.dockDefaultKey(in: old.map { [$0] } ?? []) == nil, "an old saved list is not mistaken for \"option 0\": it asks to be fetched fresh")
@@ -823,7 +838,10 @@ do {
     check(SteamCloudLocation.windowsUser(in: driveC, runtimeUser: "mobile") == "mobile", "cloud: files go to the user the runtime runs as ('mobile'), not to the template's 'mythic'")
     check(SteamCloudLocation.windowsUser(in: driveC.appendingPathComponent("nothing-here"), runtimeUser: "mobile") == nil && SteamCloudLocation.windowsUser(in: driveC, runtimeUser: "Public") == nil && SteamCloudLocation.windowsUser(in: driveC, runtimeUser: "../x") == nil, "cloud: no users folder yet, or an unusable name: nothing is guessed")
     check(SteamCloudLocation.localURL(for: "%WinAppDataRoaming%Factorio/saves/main.zip", driveC: driveC, windowsUser: "mobile", installFolder: nil)?.path.hasSuffix("users/mobile/AppData/Roaming/Factorio/saves/main.zip") == true, "cloud: Roaming files go to AppData/Roaming")
-    check(SteamCloudLocation.localURL(for: "config.ini", driveC: driveC, windowsUser: "mobile", installFolder: nil) == nil, "cloud: files in Steam's own per-game folder are left alone")
+    check(SteamCloudLocation.localURL(for: "config.ini", driveC: driveC, windowsUser: "mobile", installFolder: nil) == nil, "cloud: files in Steam's own per-game folder have no place until that folder is known")
+    let remote = SteamCloudLocation.defaultRemoteFolder(driveC: driveC, account: "1071873212", appID: 250900)
+    check(remote?.path.hasSuffix("Program Files (x86)/Steam/userdata/1071873212/250900/remote") == true && SteamCloudLocation.defaultRemoteFolder(driveC: driveC, account: "0", appID: 1) == nil && SteamCloudLocation.defaultRemoteFolder(driveC: driveC, account: "../x", appID: 1) == nil, "cloud: Steam's own per-game folder is userdata/<account>/<app>/remote, and an unknown account gives none")
+    check(SteamCloudLocation.localURL(for: "rep_gamestate1.dat", driveC: driveC, windowsUser: "mobile", installFolder: nil, defaultRemote: remote)?.path.hasSuffix("250900/remote/rep_gamestate1.dat") == true && SteamCloudLocation.localURL(for: "../x", driveC: driveC, windowsUser: "mobile", installFolder: nil, defaultRemote: remote) == nil, "cloud: a file saved through Steam's API goes to that folder, and cannot leave it")
     check(["%WinAppDataRoaming%../x", "%WinAppDataRoaming%/etc/x", "%WinAppDataRoaming%a/../../x", "%WinAppDataRoaming%C:/x", "%MacHome%x"].allSatisfy { SteamCloudLocation.localURL(for: $0, driveC: driveC, windowsUser: "mobile", installFolder: nil) == nil }, "cloud: paths that leave the folder, drive letters and other systems' roots are refused")
 
     // The whole thing, against a stand-in for Steam.
@@ -901,6 +919,34 @@ do {
     report = (try? await SteamCloudSync.downloadMissing(appID: 427520, transport: cloud, driveC: driveC)) ?? SteamCloudReport()
     check(report.keptNewerLocal == [names.start] && (try? Data(contentsOf: saves.appendingPathComponent("start.zip"))) == Data("my newer world".utf8), "cloud: a local file newer than the cloud copy is never replaced")
     check(report.downloaded == [names.main] && (try? Data(contentsOf: saves.appendingPathComponent("main.zip"))) == mainZip && (try? Data(contentsOf: saves.appendingPathComponent("main.zip.porthole-backup"))) == Data("old copy".utf8), "cloud: an older local file is replaced, and kept as a backup")
+
+    // With a record of the last sync, a change made on both sides is never overwritten (whatever the dates say), a file only the cloud changed is replaced, one only changed here is kept,
+    // and a second overwrite does not destroy the first backup.
+    func h(_ d: Data) -> String { SteamCloudLedger.hex(Data(Insecure.SHA1.hash(data: d))) }
+    let syncRecord = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-record-\(getpid()).json")
+    func record(_ d: Data) { var l = SteamCloudLedger(); l.files[names.main] = h(d); l.save(to: syncRecord) }
+    let mainFile = saves.appendingPathComponent("main.zip")
+    func setLocal(_ text: String, mtime: TimeInterval) { try? Data(text.utf8).write(to: mainFile); try? fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: mtime)], ofItemAtPath: mainFile.path) }
+    cloud.fetches = []
+    setLocal("edited here", mtime: 1_000_000_000)                       // the dates alone would say: replace it
+    record(Data("an older version both sides had".utf8))
+    report = (try? await SteamCloudSync.downloadMissing(appID: 427520, transport: cloud, driveC: driveC, ledgerURL: syncRecord)) ?? SteamCloudReport()
+    check(report.conflicts == [names.main] && !report.downloaded.contains(names.main) && (try? Data(contentsOf: mainFile)) == Data("edited here".utf8), "cloud: a file changed here and in the cloud since the last sync is left alone (\(report.summary))")
+    check(!cloud.fetches.contains("/" + names.main), "cloud: and not even fetched")
+    setLocal("mine, cloud unchanged", mtime: 1_000_000_000)             // older than the cloud's date, but the cloud has not changed since the last sync
+    record(mainZip)
+    report = (try? await SteamCloudSync.downloadMissing(appID: 427520, transport: cloud, driveC: driveC, ledgerURL: syncRecord)) ?? SteamCloudReport()
+    check(report.keptNewerLocal.contains(names.main) && (try? Data(contentsOf: mainFile)) == Data("mine, cloud unchanged".utf8), "cloud: a file changed only here is kept")
+    setLocal("synced earlier", mtime: 2_000_000_000)                    // the dates alone would say: keep it
+    try? fm.removeItem(at: saves.appendingPathComponent("main.zip.porthole-backup"))
+    record(Data("synced earlier".utf8))
+    report = (try? await SteamCloudSync.downloadMissing(appID: 427520, transport: cloud, driveC: driveC, ledgerURL: syncRecord)) ?? SteamCloudReport()
+    check(report.downloaded.contains(names.main) && (try? Data(contentsOf: mainFile)) == mainZip && (try? Data(contentsOf: saves.appendingPathComponent("main.zip.porthole-backup"))) == Data("synced earlier".utf8), "cloud: a file only the cloud changed is replaced, and backed up")
+    setLocal("synced again", mtime: 1_000_000_000)
+    record(Data("synced again".utf8))
+    report = (try? await SteamCloudSync.downloadMissing(appID: 427520, transport: cloud, driveC: driveC, ledgerURL: syncRecord)) ?? SteamCloudReport()
+    check((try? Data(contentsOf: saves.appendingPathComponent("main.zip.porthole-backup"))) == Data("synced again".utf8) && (try? Data(contentsOf: saves.appendingPathComponent("main.zip.1.porthole-backup"))) == Data("synced earlier".utf8), "cloud: a second overwrite keeps the first backup too")
+    try? fm.removeItem(at: syncRecord)
 
     try? fm.removeItem(at: saves.appendingPathComponent("main.zip"))
     cloud.served[names.main] = Data(repeating: 7, count: 5000)          // wrong bytes
@@ -1214,6 +1260,154 @@ do {
     check(launched.isSignedIn && launched.session?.accountName == "tester", "sign-in: once the Keychain can be read the saved sign-in is back without a relaunch")
 }
 
+
+// MARK: - Steam Cloud, upload
+do {
+    print("--- Steam Cloud upload")
+    setenv("USER", "mobile", 1)
+    func sha1(_ d: Data) -> Data { Data(Insecure.SHA1.hash(data: d)) }
+    // The messages (field numbers from Steam's service definitions).
+    var begin = PBWriter(); begin.varint(1, 250900); begin.string(2, "Porthole"); begin.string(3, "a.dat"); begin.string(3, "b.dat")
+    check(SteamCloudMessages.beginBatchRequest(appID: 250900, machineName: "Porthole", upload: ["a.dat", "b.dat"]) == begin.data, "cloud-up: the batch request names the app, the device and the files")
+    var batchReply = PBWriter(); batchReply.varint(1, 77); batchReply.varint(4, 9)
+    check(SteamCloudMessages.parseBeginBatch(batchReply.data) == 77, "cloud-up: the batch id is read")
+    let fileReq = PBFields(SteamCloudMessages.beginFileRequest(appID: 1, size: 12, sha1: Data(repeating: 1, count: 20), timestamp: 55, name: "a.dat", batchID: 77))
+    check(fileReq?.uint(2) == 12 && fileReq?.uint(3) == 12 && fileReq?.data(4)?.count == 20 && fileReq?.uint(5) == 55 && fileReq?.string(6) == "a.dat" && fileReq?.uint(13) == 77 && fileReq?.bool(10) == false, "cloud-up: the file request carries size, checksum, time, name and batch")
+    var header = PBWriter(); header.string(1, "Content-Type"); header.string(2, "application/octet-stream")
+    var blockMsg = PBWriter(); blockMsg.string(1, "cdn.example"); blockMsg.string(2, "/put/1"); blockMsg.bool(3, true); blockMsg.int32(4, 4); blockMsg.message(5, header); blockMsg.varint(6, 0); blockMsg.varint(7, 12)
+    var fileReply = PBWriter(); fileReply.bool(1, false); fileReply.message(2, blockMsg)
+    let parsed = SteamCloudMessages.parseBeginFile(fileReply.data)
+    check(parsed?.blocks.count == 1 && parsed?.blocks[0].url?.absoluteString == "https://cdn.example/put/1" && parsed?.blocks[0].httpMethod == "PUT" && parsed?.blocks[0].headers["Content-Type"] == "application/octet-stream" && parsed?.blocks[0].length == 12, "cloud-up: the upload link, method, headers and range are read")
+    var badHost = PBWriter(); badHost.string(1, "evil.example/\u{0}@x"); badHost.string(2, "/p")
+    var badReply = PBWriter(); badReply.message(2, badHost)
+    check(SteamCloudMessages.parseBeginFile(badReply.data)?.blocks.first?.url == nil, "cloud-up: an upload link with an odd host is refused")
+    check(SteamCloudMessages.parseCommit({ var w = PBWriter(); w.bool(1, true); return w.data }()) && !SteamCloudMessages.parseCommit(Data()), "cloud-up: the commit answer is read")
+
+    // The decision, side by side.
+    let a = Data("a".utf8), b = Data("b".utf8), c = Data("c".utf8)
+    func cloudFile(_ d: Data, time: UInt64 = 1000) -> SteamCloudFile { SteamCloudFile(name: "x", sha1: sha1(d), timestamp: time, size: d.count, persistState: 0, platforms: 0xFFFF_FFFF, pathPrefixIndex: nil) }
+    func hex(_ d: Data) -> String { SteamCloudLedger.hex(sha1(d)) }
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(a), localModified: 5, cloud: nil, baseline: nil) == .upload, "cloud-up: a file the cloud lacks is uploaded")
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(a), localModified: 5, cloud: cloudFile(a), baseline: nil) == .inStep, "cloud-up: the same file on both sides is left")
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(b), localModified: 5000, cloud: SteamCloudFile(name: "x", sha1: sha1(a), timestamp: 1000, size: 1, persistState: 2, platforms: 0xFFFF_FFFF, pathPrefixIndex: nil), baseline: nil) == .deletedInCloud, "cloud-up: a file deleted on Steam is not sent back")
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(b), localModified: 5, cloud: cloudFile(a), baseline: hex(a)) == .upload, "cloud-up: changed here and not in the cloud since the last sync: upload")
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(a), localModified: 5, cloud: cloudFile(b), baseline: hex(a)) == .cloudIsNewer, "cloud-up: changed only in the cloud: left for Download")
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(b), localModified: 5000, cloud: cloudFile(c), baseline: hex(a)) == .conflict, "cloud-up: changed on both sides: a conflict, nothing is overwritten")
+    check(SteamCloudUploadPlan.decide(localSHA1: sha1(b), localModified: 5000, cloud: cloudFile(a, time: 1000), baseline: nil) == .upload && SteamCloudUploadPlan.decide(localSHA1: sha1(b), localModified: 500, cloud: cloudFile(a, time: 1000), baseline: nil) == .cloudIsNewer, "cloud-up: with no record the newer side wins and an older local file is never sent")
+
+    // A whole run against a stand-in for Steam.
+    final class FakeUpCloud: SteamCloudUploadTransport, @unchecked Sendable {
+        var files: [String: (data: Data, time: UInt64)] = [:]
+        var pending: [String: Data] = [:]
+        var failPut = Set<String>()
+        var change: UInt64 = 10
+        var batches = 0, completed: [Bool] = []
+        var received: [String: Data] = [:]
+        func changelist(appID: Int) async throws -> SteamCloudChangelist {
+            SteamCloudChangelist(currentChange: change, files: files.map { SteamCloudFile(name: $0.key, sha1: Data(Insecure.SHA1.hash(data: $0.value.data)), timestamp: $0.value.time, size: $0.value.data.count, persistState: 0, platforms: 0xFFFF_FFFF, pathPrefixIndex: nil) }, pathPrefixes: [])
+        }
+        func downloadInfo(appID: Int, fileName: String) async throws -> SteamCloudDownloadInfo { throw SteamContentError(message: "not used") }
+        func fetch(_ info: SteamCloudDownloadInfo) async throws -> Data { Data() }
+        func beginBatch(appID: Int, upload: [String]) async throws -> UInt64 { batches += 1; return 5 }
+        func beginFile(appID: Int, batch: UInt64, name: String, size: Int, sha1: Data, timestamp: UInt64) async throws -> SteamCloudBeginUpload {
+            SteamCloudBeginUpload(encrypt: false, blocks: [SteamCloudUploadBlock(host: "cdn.example", path: "/put/" + name, https: true, method: 4, headers: [:], offset: 0, length: size, body: Data())])
+        }
+        func send(_ block: SteamCloudUploadBlock, data: Data) async throws {
+            let name = String(block.path.dropFirst("/put/".count))
+            if failPut.contains(name) { throw SteamContentError(message: "the upload answered 500") }
+            pending[name] = data
+        }
+        func commit(appID: Int, name: String, sha1: Data, succeeded: Bool) async throws -> Bool {
+            guard succeeded, let data = pending[name], Data(Insecure.SHA1.hash(data: data)) == sha1 else { return false }
+            files[name] = (data, 2000); change += 1; received[name] = data; return true
+        }
+        func completeBatch(appID: Int, batch: UInt64, ok: Bool) async throws { completed.append(ok) }
+    }
+    let upRoot = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-up-\(getpid())", isDirectory: true)
+    try? FileManager.default.removeItem(at: upRoot)
+    let upDrive = upRoot.appendingPathComponent("drive_c")
+    let remote = SteamCloudLocation.defaultRemoteFolder(driveC: upDrive, account: "42", appID: 250900)!
+    try? FileManager.default.createDirectory(at: upDrive.appendingPathComponent("users/mobile"), withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(at: remote.appendingPathComponent("sub"), withIntermediateDirectories: true)
+    let ledgerFile = upRoot.appendingPathComponent("ledger.json")
+    let save1 = Data("save one v2".utf8), save2 = Data("save two".utf8), nested = Data("nested".utf8)
+    try? save1.write(to: remote.appendingPathComponent("s1.dat")); try? save2.write(to: remote.appendingPathComponent("s2.dat")); try? nested.write(to: remote.appendingPathComponent("sub/n.dat"))
+    try? Data("junk".utf8).write(to: remote.appendingPathComponent("s1.dat" + SteamCloudSync.backupSuffix))       // our own leftovers are never sent
+    let up = FakeUpCloud()
+    up.files["s1.dat"] = (Data("save one v1".utf8), 1000)           // the cloud has an older s1
+    var ledger = SteamCloudLedger(); ledger.files["s1.dat"] = hex(Data("save one v1".utf8)); ledger.save(to: ledgerFile)
+    var rep = (try? await SteamCloudSync.uploadChanged(appID: 250900, transport: up, driveC: upDrive, defaultRemote: remote, ledgerURL: ledgerFile)) ?? SteamCloudUploadReport()
+    check(Set(rep.uploaded) == ["s1.dat", "s2.dat", "sub/n.dat"] && rep.failed.isEmpty && rep.conflicts.isEmpty, "cloud-up: a changed file and two new ones are uploaded (\(rep.summary))")
+    check(up.received["s1.dat"] == save1 && up.received["sub/n.dat"] == nested && up.received.count == 3, "cloud-up: the bytes that arrived are the files' bytes, and our leftovers were not sent")
+    check(up.batches == 1 && up.completed == [true], "cloud-up: one batch, completed as good")
+    let saved = SteamCloudLedger.load(from: ledgerFile)
+    check(saved.files["s1.dat"] == hex(save1) && saved.files["sub/n.dat"] == hex(nested) && saved.change == up.change, "cloud-up: what was sent is written down as synced, with Steam's change number")
+
+    // A second press sends nothing.
+    up.batches = 0
+    rep = (try? await SteamCloudSync.uploadChanged(appID: 250900, transport: up, driveC: upDrive, defaultRemote: remote, ledgerURL: ledgerFile)) ?? SteamCloudUploadReport()
+    check(rep.uploaded.isEmpty && rep.inStep == 3 && up.batches == 0, "cloud-up: a second run finds everything in step and opens no batch (\(rep.summary))")
+
+    // Changed here and in the cloud since the last sync: neither side is overwritten.
+    up.files["s2.dat"] = (Data("save two, from another device".utf8), 3000)
+    try? Data("save two, edited here".utf8).write(to: remote.appendingPathComponent("s2.dat"))
+    rep = (try? await SteamCloudSync.uploadChanged(appID: 250900, transport: up, driveC: upDrive, defaultRemote: remote, ledgerURL: ledgerFile)) ?? SteamCloudUploadReport()
+    check(rep.conflicts == ["s2.dat"] && rep.uploaded.isEmpty && up.files["s2.dat"]?.data == Data("save two, from another device".utf8) && (try? Data(contentsOf: remote.appendingPathComponent("s2.dat"))) == Data("save two, edited here".utf8), "cloud-up: a file changed on both sides is a conflict and stays as it is on both")
+
+    // A failing upload is reported, never written down as synced, and the batch is closed as failed.
+    try? Data("s3 content".utf8).write(to: remote.appendingPathComponent("s3.dat"))
+    up.failPut = ["s3.dat"]; up.completed = []
+    rep = (try? await SteamCloudSync.uploadChanged(appID: 250900, transport: up, driveC: upDrive, defaultRemote: remote, ledgerURL: ledgerFile)) ?? SteamCloudUploadReport()
+    check(rep.failed == ["s3.dat"] && up.completed == [false] && SteamCloudLedger.load(from: ledgerFile).files["s3.dat"] == nil, "cloud-up: a failed upload is reported, the batch closes as failed and nothing is marked synced")
+
+    // Auto-Cloud rules: a game's saves are found by the places its product info lists, not only by what Steam already lists (Factorio's new world).
+    let ufsText = """
+    "appinfo" { "common" { "name" "Factorio" } "ufs" { "quota" "1" "savefiles" {
+      "0" { "path" "Factorio/saves/" "pattern" "*.zip" "recursive" "1" "root" "WinAppDataRoaming" }
+      "1" { "path" "Factorio/config" "pattern" "*" "exclude" "*.log" "root" "WinAppDataRoaming" "platforms" { "1" "MacOS" } }
+      "2" { "path" "Saves/{Steam3AccountID}" "pattern" "*.sav" "root" "WinMyDocuments" "platforms" { "1" "all" } }
+    } } }
+    """
+    let ufsInfo = SteamAppInfoParser.parse(Data(ufsText.utf8), appid: 427520)
+    check(ufsInfo?.cloudRules == [SteamCloudRule(root: "WinAppDataRoaming", path: "Factorio/saves/", pattern: "*.zip", recursive: true),
+                                  SteamCloudRule(root: "WinMyDocuments", path: "Saves/{Steam3AccountID}", pattern: "*.sav", recursive: false)], "cloud-up: save locations are read from the product info; a Mac-only rule is dropped (\(String(describing: ufsInfo?.cloudRules)))")
+    let saves = upDrive.appendingPathComponent("users/mobile/AppData/Roaming/Factorio/saves")
+    try? FileManager.default.createDirectory(at: saves.appendingPathComponent("more"), withIntermediateDirectories: true)
+    let docSaves = upDrive.appendingPathComponent("users/mobile/Documents/Saves/42")
+    try? FileManager.default.createDirectory(at: docSaves, withIntermediateDirectories: true)
+    try? Data("world".utf8).write(to: saves.appendingPathComponent("Test.ZIP"))
+    try? Data("deeper".utf8).write(to: saves.appendingPathComponent("more/old.zip"))
+    try? Data("not a save".utf8).write(to: saves.appendingPathComponent("notes.txt"))
+    try? Data("slot".utf8).write(to: docSaves.appendingPathComponent("a.sav"))
+    let upRules = FakeUpCloud()
+    let ruled = (try? await SteamCloudSync.uploadChanged(appID: 427520, transport: upRules, driveC: upDrive, rules: ufsInfo?.cloudRules ?? [], steamID64: 76561197960265728 + 42)) ?? SteamCloudUploadReport()
+    check(Set(ruled.uploaded) == ["%WinAppDataRoaming%Factorio/saves/Test.ZIP", "%WinAppDataRoaming%Factorio/saves/more/old.zip", "%WinMyDocuments%Saves/42/a.sav"] && ruled.failed.isEmpty,
+          "cloud-up: files the rules match are uploaded under their root name, others are not (\(ruled.summary), \(ruled.uploaded))")
+
+    // The preview lists what a sync would do and changes nothing.
+    let rulesList = ufsInfo?.cloudRules ?? []
+    var pv = (try? await SteamCloudSync.preview(appID: 427520, transport: upRules, driveC: upDrive, rules: rulesList, steamID64: 76561197960265728 + 42)) ?? SteamCloudPreview()
+    check(pv.isInStep && pv.inStep == 3 && pv.summary == "Up to date with Steam Cloud", "cloud-preview: after an upload everything is in step (\(pv.summary))")
+    try? Data("a new world".utf8).write(to: saves.appendingPathComponent("Fresh.zip"))
+    upRules.files["%WinAppDataRoaming%Factorio/saves/phone.zip"] = (Data("made on the phone".utf8), 5000)
+    let batchesBefore = upRules.batches, countBefore = upRules.files.count
+    pv = (try? await SteamCloudSync.preview(appID: 427520, transport: upRules, driveC: upDrive, rules: rulesList, steamID64: 76561197960265728 + 42)) ?? SteamCloudPreview()
+    check(pv.toUpload.map(\.display) == ["Factorio/saves/Fresh.zip"] && pv.toDownload.map(\.display) == ["Factorio/saves/phone.zip"] && pv.conflicts.isEmpty && pv.summary == "1 to upload \u{00B7} 1 to download",
+          "cloud-preview: a new local save is to upload, a cloud-only one is to download (\(pv.summary))")
+    check(upRules.batches == batchesBefore && upRules.files.count == countBefore && !FileManager.default.fileExists(atPath: saves.appendingPathComponent("phone.zip").path), "cloud-preview: nothing was sent or written")
+
+    // No users folder yet: nothing happens.
+    let noUser = (try? await SteamCloudSync.uploadChanged(appID: 1, transport: up, driveC: upRoot.appendingPathComponent("no-prefix"), defaultRemote: remote)) ?? SteamCloudUploadReport(failed: ["x"])
+    check(noUser == SteamCloudUploadReport(), "cloud-up: without a Windows user folder nothing is sent")
+    try? FileManager.default.removeItem(at: upRoot)
+}
+
+// Free space where a game is written (an external drive may report nothing useful for the "important usage" figure).
+do {
+    let temp = FileManager.default.temporaryDirectory
+    check((SteamInstaller.freeSpace(at: temp) ?? 0) > 0, "free space: a real folder reports room")
+    check((SteamInstaller.freeSpace(at: temp.appendingPathComponent("not/made/yet/\(UUID().uuidString)")) ?? 0) > 0, "free space: a folder that does not exist yet is measured at the nearest folder that does")
+}
 
 print(failures == 0 ? "\nALL PASSED" : "\n\(failures) FAILURE(S)")
 exit(failures == 0 ? 0 : 1)

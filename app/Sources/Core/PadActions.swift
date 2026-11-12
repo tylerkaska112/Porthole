@@ -30,16 +30,17 @@ enum PadActions {
         return l
     }()
     /// Actions only an on-screen button can have (a controller button has nothing to switch), so they are not in `list`.
-    static let touchOnly: [(id: String, label: String, action: PadAction)] = [("lookmode", "Switch look / mouse mode", .lookToggle)]
+    static let touchOnly: [(id: String, label: String, action: PadAction)] = [("lookmode", "Switch look / mouse mode", .lookToggle), ("keyboard", "Open the full keyboard", .none)]
     static func action(_ id: String?) -> PadAction { (list + touchOnly).first { $0.id == id }?.action ?? .none }
-    static func label(_ id: String) -> String { (list + touchOnly).first { $0.id == id }?.label ?? id }
+    static func label(_ id: String) -> String { TouchPadControl.entry(id)?.label ?? (list + touchOnly).first { $0.id == id }?.label ?? id }
 
     /// A short name for a control's face: the key, or what the button is.
     static func shortLabel(_ id: String) -> String {
+        if let pad = TouchPadControl.entry(id) { return pad.face }
         if id.hasPrefix("key-") { return String(id.dropFirst(4)) }
         let named: [String: String] = ["space": "Space", "enter": "Enter", "esc": "Esc", "tab": "Tab", "shift": "Shift", "ctrl": "Ctrl", "alt": "Alt", "backspace": "Del",
                                        "up": "\u{2191}", "down": "\u{2193}", "left": "\u{2190}", "right": "\u{2192}", "lmb": "LMB", "rmb": "RMB", "mmb": "MMB",
-                                       "wheelup": "Wh\u{2191}", "wheeldown": "Wh\u{2193}", "lookmode": "Look"]
+                                       "wheelup": "Wh\u{2191}", "wheeldown": "Wh\u{2193}", "lookmode": "Look", "keyboard": "Keys"]
         if let n = named[id] { return n }
         if id.hasPrefix("f"), Int(id.dropFirst()) != nil { return id.uppercased() }
         return ""
@@ -50,7 +51,8 @@ enum PadActions {
         let letters = list.map(\.id).filter { $0.hasPrefix("key-") && $0.count == 5 && $0.last!.isLetter }
         let numbers = list.map(\.id).filter { ($0.hasPrefix("key-") && $0.last!.isNumber) || ($0.hasPrefix("f") && Int($0.dropFirst()) != nil) }
         let special = ["space", "enter", "esc", "tab", "shift", "ctrl", "alt", "backspace", "up", "down", "left", "right"]
-        return [("Letters", letters), ("Numbers and F keys", numbers), ("Special keys", special), ("Mouse", ["lmb", "rmb", "mmb", "wheelup", "wheeldown"]), ("Screen", ["lookmode"])]
+        return [("Letters", letters), ("Numbers and F keys", numbers), ("Special keys", special), ("Mouse", ["lmb", "rmb", "mmb", "wheelup", "wheeldown"]), ("Controller", TouchPadControl.entries.filter { !$0.control.isRound }.map(\.id)),
+                ("Screen", ["lookmode", "keyboard"])]
     }
 
     /// The keyboard-and-mouse layout most PC games use: WASD on the left stick, the mouse on the right stick, the triggers as mouse buttons.

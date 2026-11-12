@@ -90,9 +90,12 @@ enum ValveAppInfoCache {
 
     /// The number to ask Valve's client for, picked from ITS list the way SteamLaunchOption.dockDefaultKey picks from ours; nil when its list has no usable entry.
     static func defaultKey(in entries: [Entry]) -> Int? {
-        let ordinary = entries.filter { ["", "default"].contains($0.type.lowercased()) }
-        let windows = ordinary.filter { $0.oslist.isEmpty || $0.oslist.contains("windows") }
-        let suitable = windows.filter { $0.osarch.isEmpty || $0.osarch == "64" }
-        return (suitable.isEmpty ? (windows.isEmpty ? ordinary : windows) : suitable).map(\.key).min()
+        func pick(_ list: [Entry]) -> Int? {
+            let windows = list.filter { $0.oslist.isEmpty || $0.oslist.contains("windows") }
+            let suitable = windows.filter { $0.osarch.isEmpty || $0.osarch == "64" }
+            return (suitable.isEmpty ? (windows.isEmpty ? list : windows) : suitable).map(\.key).min()
+        }
+        // No ordinary entry (PAYDAY 3: entries 1 and 11, both of a numbered kind): the lowest-numbered Windows entry of any kind.
+        return pick(entries.filter { ["", "default"].contains($0.type.lowercased()) }) ?? pick(entries)
     }
 }

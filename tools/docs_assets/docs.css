@@ -1,0 +1,33 @@
+/* Documentation pages. Uses the site's own colour tokens from style.css. */
+.docs .d-nav{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 22px}
+.docs .d-nav a{padding:7px 14px;border-radius:999px;border:1px solid var(--line,rgba(127,127,127,.3));text-decoration:none;font-size:.92rem}
+.docs .d-nav a[aria-current="page"]{background:var(--accent,#2aa);color:var(--on-accent,#04121a);border-color:transparent}
+.docs .search.big{font-size:1.15rem;padding:16px 18px}
+.docs .d-toc{display:flex;flex-wrap:wrap;gap:6px 18px;list-style:none;padding:0;margin:18px 0 8px}
+.docs .d-section{margin-top:34px}
+.docs .d-block{margin-top:20px}
+.docs h4{margin:22px 0 4px;font-size:1.02rem}
+.docs h5{margin:0 0 6px;font-size:1.02rem;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.docs .d-entry{padding:14px 16px;margin:10px 0;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;scroll-margin-top:90px}
+.docs .d-entry:target{outline:2px solid var(--accent,#2aa)}
+.docs .d-entry p{margin:6px 0}
+.docs .d-entry[hidden],.docs .d-section[hidden],.docs .d-block[hidden]{display:none}
+.docs .d-note,.docs .d-meta{color:var(--muted,#789);font-size:.9rem}
+.docs .d-title{font-weight:600}
+.docs .tag{font-size:.72rem;font-weight:600;letter-spacing:.03em;text-transform:uppercase;padding:2px 8px;border-radius:999px;border:1px solid var(--line,rgba(127,127,127,.35));color:var(--muted,#789)}
+.docs pre.d-ex{margin:8px 0 0;padding:10px 12px;border-radius:8px;overflow-x:auto;font-size:.88rem;background:var(--code-bg,rgba(127,127,127,.12))}
+.docs .d-see code{word-break:break-word}
+.docs .d-entry ul{margin:4px 0 6px 1.2em}
+.docs .d-steps{margin:8px 0 8px 1.3em}
+.docs .d-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:26px}
+.docs .d-card{display:block;padding:16px;border:1px solid var(--line,rgba(127,127,127,.3));border-radius:12px;text-decoration:none;color:inherit}
+.docs .d-card:hover{border-color:var(--accent,#2aa)}
+.docs .d-card b{display:block;margin-bottom:4px}
+.docs .d-card span{color:var(--muted,#789);font-size:.92rem}
+.docs .d-results{margin-top:16px}
+.docs .d-hit{display:block;padding:12px 14px;margin:8px 0;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:10px;text-decoration:none;color:inherit}
+.docs .d-hit:hover,.docs .d-hit:focus{border-color:var(--accent,#2aa)}
+.docs .d-hit b{display:block}
+.docs .d-hit small{color:var(--muted,#789)}
+.docs .d-hit p{margin:4px 0 0;font-size:.92rem}
+.docs mark{background:rgba(255,200,0,.35);color:inherit;border-radius:3px;padding:0 1px}

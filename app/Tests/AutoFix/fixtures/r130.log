@@ -1,0 +1,6 @@
+I 24 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[19:23:47.578] [INFO] [mem-pressure] CRITICAL: app 4916 MB, free 1228 MB, gpu 1744 MB; malloc gave back 0 MB
+[19:24:24.201] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 1673 MB; malloc gave back 0 MB
+[19:24:34.018] [INFO] [mem-pressure] CRITICAL: app 4916 MB, free 1228 MB, gpu 1568 MB; malloc gave back 0 MB
+[19:24:41.431] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2068 MB; malloc gave back 0 MB
+[19:24:41.432] [INFO] [mem-pressure] CRITICAL: app 4915 MB, free 1229 MB, gpu 2052 MB; malloc gave back 0 MB

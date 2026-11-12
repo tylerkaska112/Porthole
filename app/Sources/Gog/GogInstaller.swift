@@ -88,7 +88,7 @@ struct GogInstalledGame: Codable {
                                   resume: { [weak self] in self?.resumeAfterBackground() })
                 background.anyPaused = { [weak self] in self?.installs.values.contains { $0.state == .paused } == true }
                 ready = true
-            } catch { self.error = "Could not read GOG installs: " + error.localizedDescription }
+            } catch { self.error = "Could not read GOG installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -115,7 +115,7 @@ struct GogInstalledGame: Codable {
         let store = Store(installed: installed, pending: pending, setups: setups), previous = saving
         saving = Task {
             await previous?.value
-            do { try await worker.save(store) } catch { self.error = "Could not save GOG installs: " + error.localizedDescription }
+            do { try await worker.save(store) } catch { self.error = "Could not save GOG installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -253,7 +253,7 @@ struct GogInstalledGame: Codable {
                 if Task.isCancelled || error is CancellationError {
                     if installs[id]?.state != .queued { installs[id]?.state = .paused }
                 } else {
-                    let message = (error as? GogAuthError)?.message ?? error.localizedDescription
+                    let message = (error as? GogAuthError)?.message ?? ErrorText.plain(error)
                     installs[id]?.state = .failed(message)
                     outcome = .failed(message)
                     LogStore.shared.log("[gog-install] failure: \(message)", level: .error)
@@ -302,7 +302,7 @@ struct GogInstalledGame: Codable {
                 LogStore.shared.log("[gog-install] installed game \(id)")
             } catch {
                 installs[id]?.state = .ready
-                self.error = error.localizedDescription
+                self.error = ErrorText.plain(error)
                 LogStore.shared.log("[gog-install] the setup did not leave a game: \(error.localizedDescription)", level: .error)
             }
         }
@@ -581,7 +581,7 @@ private actor GogInstallWorker {
         func publish(_ part: URL, to target: URL) throws {
             try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: target)
-            guard rename(part.path, target.path) == 0 else { throw GogInstallError.invalid("Could not finish a game file.") }
+            guard rename(part.path, target.path) == 0 else { throw GogInstallError.invalid("A downloaded file could not be put in place. The device may be out of storage: free some space and start the download again.") }
         }
         func verify(_ md5: Insecure.MD5, _ sha: SHA256, of job: Job) throws {
             if let want = job.item.md5, md5.finalize().map({ String(format: "%02x", $0) }).joined() != want {
@@ -828,7 +828,7 @@ final class GogFileFetcher: NSObject, URLSessionDataDelegate, @unchecked Sendabl
             failure = GogInstallError.invalid("The download server answered \(http.statusCode).")
             completionHandler(.cancel); return
         }
-        if handle == nil { failure = GogInstallError.invalid("Could not write the download to disk."); completionHandler(.cancel); return }
+        if handle == nil { failure = GogInstallError.invalid("The download could not be written to storage. Free some space on the device and start it again."); completionHandler(.cancel); return }
         completionHandler(.allow)
     }
 

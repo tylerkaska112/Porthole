@@ -1,0 +1,22 @@
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -2418,7 +2418,19 @@
+     RTL_BALANCED_NODE *node;
+ 
+     if (!(node = rtl_rb_tree_get( &base_address_index_tree, addr, module_address_search_compare )))
++    {
++#if defined(__aarch64__) && !defined(__arm64ec__)
++        /* Porthole 0182: native ARM64 code runs from a JIT-pool copy, so an address it computes for itself (adrp/add of one of its own functions, passed to
++         * GetModuleHandleExW( FROM_ADDRESS ) or RtlPcToFileHeader) is an address in the copy, which no module's range holds. Look it up at its image address. */
++        extern void *xlate_ios_jit_rev( void *ptr );
++        const void *image_addr = xlate_ios_jit_rev( (void *)addr );
++        if (!image_addr || image_addr == addr ||
++            !(node = rtl_rb_tree_get( &base_address_index_tree, image_addr, module_address_search_compare )))
++            return STATUS_NO_MORE_ENTRIES;
++#else
+         return STATUS_NO_MORE_ENTRIES;
++#endif
++    }
+     *pmod = CONTAINING_RECORD(node, LDR_DATA_TABLE_ENTRY, BaseAddressIndexNode);
+     return STATUS_SUCCESS;
+ }

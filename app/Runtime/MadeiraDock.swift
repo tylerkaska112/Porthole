@@ -332,7 +332,12 @@ enum MadeiraDock {
             if result == 41 {
                 return "Steam did not resolve this game's registered install folder. Reconnect its storage and retry; if this repeats, export the log."
             }
-            return "Madeira Dock could not complete the Steam launch (code \(result)). Export the log before trying again."
+            // Nothing above knew this one: still say what it was and what to do, with the numbers a report needs.
+            if result == 45 || result == 48 {
+                let steam = fields["launch-client-error"].flatMap(Int.init).map { " (Steam's reason number \($0))" } ?? ""
+                return "Steam would not start this game\(steam). Verify the game's files on Porthole's Steam page, close Porthole completely, open it again and start the game. If it still fails, send a report from Settings \u{203A} Report a problem: it carries Steam's answer, which says what is wrong. (Madeira Dock code \(result))"
+            }
+            return "Starting the game through Steam stopped part-way (Madeira Dock code \(result)). Close Porthole completely, open it again and start the game. If it still fails, send a report from Settings \u{203A} Report a problem."
         }
 
         /// Valve's own launch refusal (EAppUpdateError) in words. Numbers only

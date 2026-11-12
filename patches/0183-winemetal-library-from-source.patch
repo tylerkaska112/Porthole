@@ -1,0 +1,141 @@
+diff -ruN a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+--- a/src/winemetal/unix/winemetal_unix.c	2026-11-06 04:08:57
++++ b/src/winemetal/unix/winemetal_unix.c	2026-11-06 04:08:57
+@@ -1733,7 +1733,38 @@
+   return STATUS_SUCCESS;
+ }
+ 
++/* Porthole (Cycles on Metal), slot 160. Local rendering only: the remote path has no way to carry megabytes of source yet. */
+ static NTSTATUS
++_MTLDevice_newLibraryWithSource(void *obj) {
++  struct unixcall_mtldevice_newlibrarysource *params = obj;
++  params->ret_library = 0;
++  params->ret_error = 0;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  if (!params->source || !params->source_len) return STATUS_INVALID_PARAMETER;
++  @autoreleasepool {
++    id<MTLDevice> device = (id<MTLDevice>)params->device;
++    NSString *text = [[NSString alloc] initWithBytes:(const void *)(uintptr_t)params->source length:(NSUInteger)params->source_len encoding:NSUTF8StringEncoding];
++    if (!text) return STATUS_INVALID_PARAMETER;
++    MTLCompileOptions *options = [[MTLCompileOptions alloc] init];
++    options.mathMode = (params->flags & 1u) ? MTLMathModeFast : MTLMathModeSafe;
++    switch (params->language_version) {
++      case 0x0200: options.languageVersion = MTLLanguageVersion2_0; break;
++      case 0x0204: options.languageVersion = MTLLanguageVersion2_4; break;
++      case 0x0300: options.languageVersion = MTLLanguageVersion3_0; break;
++      case 0x0301: options.languageVersion = MTLLanguageVersion3_1; break;
++      default:     options.languageVersion = MTLLanguageVersion3_2; break;
++    }
++    NSError *err = nil;
++    id<MTLLibrary> library = [device newLibraryWithSource:text options:options error:&err];
++    params->ret_library = (obj_handle_t)library;      /* +1, released by the caller (NSObject_release) */
++    if (err) params->ret_error = (obj_handle_t)[err retain];
++    [options release];
++    [text release];
++  }
++  return STATUS_SUCCESS;
++}
++
++static NTSTATUS
+ _MTLLibrary_newFunction(void *obj) {
+   struct unixcall_generic_obj_uint64_obj_ret *params = obj;
+   if (wmtr_enabled()) {
+@@ -8530,6 +8561,16 @@
+      * END of both tables, which is the only place a slot may be added --
+      * rules 3 and 4 of section 7.4. 150 in both. */
+     &_d3d9_nop,                         /* 150 */
++    NULL, /* 151 */
++    NULL, /* 152 */
++    NULL, /* 153 */
++    NULL, /* 154 */
++    NULL, /* 155 */
++    NULL, /* 156 */
++    NULL, /* 157 */
++    NULL, /* 158 */
++    NULL, /* 159 */
++    &_MTLDevice_newLibraryWithSource,   /* 160 (Porthole) */
+ };
+ 
+ #ifndef DXMT_NATIVE
+@@ -8692,5 +8733,15 @@
+      * sharing the 64-bit handler is correct, not a gap (section 7.11 says the
+      * same about slots 47, 66, 67 and 72). */
+     &_d3d9_nop,                         /* 150 */
++    NULL, /* 151 */
++    NULL, /* 152 */
++    NULL, /* 153 */
++    NULL, /* 154 */
++    NULL, /* 155 */
++    NULL, /* 156 */
++    NULL, /* 157 */
++    NULL, /* 158 */
++    NULL, /* 159 */
++    NULL,   /* 160 (Porthole) */
+ };
+ #endif
+diff -ruN a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+--- a/src/winemetal/winemetal.h	2026-11-06 04:08:57
++++ b/src/winemetal/winemetal.h	2026-11-06 04:08:57
+@@ -591,6 +591,13 @@
+ 
+ WINEMETAL_API obj_handle_t MTLLibrary_newFunction(obj_handle_t library, const char *name);
+ 
++/* Porthole (Cycles on Metal), slot 160: compile Metal Shading Language SOURCE text into a library, as newLibraryWithSource does. language_version is
++ * (major << 8) | minor (0x0302 = Metal 3.2); flags bit 0 asks for fast math. The error (if any) is a retained NSError the caller releases. */
++#define WMT_LIBRARY_FLAG_FAST_MATH 1u
++WINEMETAL_API obj_handle_t MTLDevice_newLibraryWithSource(
++    obj_handle_t device, const char *source, uint64_t source_len, uint32_t language_version, uint32_t flags, obj_handle_t *err_out
++);
++
+ WINEMETAL_API uint64_t NSString_lengthOfBytesUsingEncoding(obj_handle_t str, enum WMTStringEncoding encoding);
+ 
+ WINEMETAL_API obj_handle_t NSObject_description(obj_handle_t nserror);
+diff -ruN a/src/winemetal/winemetal_thunks.c b/src/winemetal/winemetal_thunks.c
+--- a/src/winemetal/winemetal_thunks.c	2026-11-06 04:08:57
++++ b/src/winemetal/winemetal_thunks.c	2026-11-06 04:08:57
+@@ -293,6 +293,24 @@
+ }
+ 
+ WINEMETAL_API obj_handle_t
++MTLDevice_newLibraryWithSource(
++    obj_handle_t device, const char *source, uint64_t source_len, uint32_t language_version, uint32_t flags, obj_handle_t *err_out
++) {
++  struct unixcall_mtldevice_newlibrarysource params;
++  params.device = device;
++  params.source = PtrToUInt64(source);
++  params.source_len = source_len;
++  params.language_version = language_version;
++  params.flags = flags;
++  params.ret_error = 0;
++  params.ret_library = 0;
++  UNIX_CALL(160, &params);
++  if (err_out)
++    *err_out = params.ret_error;
++  return params.ret_library;
++}
++
++WINEMETAL_API obj_handle_t
+ MTLLibrary_newFunction(obj_handle_t library, const char *name) {
+   struct unixcall_generic_obj_uint64_obj_ret params;
+   params.handle = library;
+diff -ruN a/src/winemetal/winemetal_thunks.h b/src/winemetal/winemetal_thunks.h
+--- a/src/winemetal/winemetal_thunks.h	2026-11-06 04:08:57
++++ b/src/winemetal/winemetal_thunks.h	2026-11-06 04:08:57
+@@ -148,6 +148,17 @@
+   obj_handle_t ret_library;
+ };
+ 
++/* Porthole, slot 160. */
++struct unixcall_mtldevice_newlibrarysource {
++  obj_handle_t device;
++  uint64_t source;          /* PE pointer to UTF-8 text */
++  uint64_t source_len;
++  uint32_t language_version;
++  uint32_t flags;
++  obj_handle_t ret_error;
++  obj_handle_t ret_library;
++};
++
+ struct unixcall_mtldevice_newcomputepso {
+   obj_handle_t device;
+   struct WMTConstMemoryPointer info;

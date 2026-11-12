@@ -263,18 +263,32 @@ final class SteamStore: ObservableObject {
     }
     private var verifyRequests = Set<Int>()
 
-    func install(_ id: Int) {
+    /// Where a download of this game goes: an install or partial download keeps its own library; else the one chosen just now; else what Settings > Steam says.
+    func destination(for id: Int, chosen: String? = nil) -> String {
+        let lib = ExternalLibrary.shared
+        return lib.assignment(for: id)?.location.libraryID ?? chosen ?? (lib.newDownloadsGoExternal ? (lib.external?.id ?? SteamStorageLibrary.internalID) : SteamStorageLibrary.internalID)
+    }
+
+    /// Whether pressing Download should first ask where the game goes: the SSD is connected, the game is not on either library yet, and asking is not switched off.
+    func needsLocationChoice(_ id: Int) -> Bool {
+        let lib = ExternalLibrary.shared
+        return lib.external != nil && lib.availability == .available && lib.assignment(for: id) == nil && lib.asksWhereToDownload
+    }
+
+    func install(_ id: Int, to chosen: String? = nil) {
+        // Lossless Scaling is never installed as a game: that would put all its files, unsealed, in the Windows folder. Its own page (Stores > Software) downloads it and seals the one file.
+        guard id != LosslessLicence.appID else { error = "Lossless Scaling is set up from Stores > Software > Lossless Scaling, which keeps its file sealed."; return }
         guard signedIn else { error = "Sign in to Steam first."; return }
         guard active?.id != id, !queue.contains(id) else { return }
         // Which library: an existing install or partial download keeps its own; a new one goes where Settings > Steam says (iPad unless the SSD is chosen).
         do {
             let lib = ExternalLibrary.shared
             let game = owned.first(where: { $0.id == id })
-            let choice = lib.assignment(for: id)?.location.libraryID ?? (lib.newDownloadsGoExternal ? (lib.external?.id ?? SteamStorageLibrary.internalID) : SteamStorageLibrary.internalID)
+            let choice = destination(for: id, chosen: chosen)
             if choice != SteamStorageLibrary.internalID || lib.assignment(for: id) != nil {
                 _ = try lib.assign(appID: id, name: game?.name ?? "Steam game", folder: game?.folderName ?? "app_\(id)", libraryID: choice)
             }
-        } catch { self.error = error.localizedDescription; return }
+        } catch { self.error = ErrorText.plain(error); return }
         if gameIsRunning { resumeAfterGame.insert(id); downloads[id] = Download(state: .paused); return }
         downloads[id] = Download(state: .queued)
         queue.append(id)
@@ -348,7 +362,7 @@ final class SteamStore: ObservableObject {
                     }
                     onInstalled?(game, exe)
                     objectWillChange.send()
-                } catch { self.error = error.localizedDescription }
+                } catch { self.error = ErrorText.plain(error) }
             }
             return true
         }
@@ -373,7 +387,7 @@ final class SteamStore: ObservableObject {
         let libraryID = ExternalLibrary.shared.libraryID(for: appID)
         if libraryID == SteamStorageLibrary.internalID {
             do { try SteamInstallFiles.delete(appID: appID, folderName: folderName, steamApps: Self.steamApps) }
-            catch { SteamLog.event("[steam-depot] delete app=\(appID) failed: \(error.localizedDescription)") }
+            catch { SteamLog.event("[steam-depot] delete app=\(appID) failed: \(ErrorText.plain(error))") }
         } else {
             do {
                 try await ExternalLibrary.shared.perform(libraryID: libraryID, write: true) { root in
@@ -381,7 +395,7 @@ final class SteamStore: ObservableObject {
                     try SteamInstallFiles.delete(appID: appID, folderName: folderName, steamApps: apps)
                 }
                 try ExternalLibrary.shared.removed(appID: appID)
-            } catch { self.error = error.localizedDescription }
+            } catch { self.error = ErrorText.plain(error) }
         }
         invalidateBuilds()
         objectWillChange.send()
@@ -469,7 +483,7 @@ final class SteamStore: ObservableObject {
             if let access { ExternalLibrary.shared.ensureAlias(for: access) }
             if access != nil, var assigned = ExternalLibrary.shared.assignment(for: id) {
                 assigned.installed = true; assigned.pending = false; assigned.buildID = Int(info.buildID ?? "")
-                assigned.bytes = SteamInstallFiles.sizeOnDisk(appID: id, steamApps: steamApps)
+                assigned.bytes = await Task.detached(priority: .utility) { SteamInstallFiles.sizeOnDisk(appID: id, steamApps: steamApps) }.value
                 try? ExternalLibrary.shared.record(assigned)
             }
             downloads[id] = nil
@@ -505,7 +519,13 @@ final class SteamStore: ObservableObject {
     /// The Windows path of the game's program: Steam's own launch entry for Windows when it exists on disk, else the biggest plausible .exe in the folder.
     nonisolated static func windowsExecutable(for game: Owned, folder: URL, external: Bool = false) -> String? {
         let fm = FileManager.default
-        func rel(_ url: URL) -> String { String(url.path.dropFirst(folder.path.count + 1)) }
+        // iOS reports enumerated paths as /private/var/... while the folder is /var/...: both sides are resolved first. (Without it eight characters of the folder's name
+        // ended up in the program's path, "...\Ranch Simulator\mulator\Ranch_Simulator.exe", and the game never started.)
+        let base = folder.resolvingSymlinksInPath().path
+        func rel(_ url: URL) -> String {
+            let full = url.resolvingSymlinksInPath().path
+            return full.hasPrefix(base + "/") ? String(full.dropFirst(base.count + 1)) : url.lastPathComponent
+        }
         for option in game.launches {
             let os = option.oslist.lowercased()
             guard os.isEmpty || os.contains("windows") else { continue }

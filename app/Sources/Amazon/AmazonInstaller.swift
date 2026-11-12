@@ -69,7 +69,7 @@ struct AmazonInstalledGame: Codable {
                                   resume: { [weak self] in self?.resumeAfterBackground() })
                 background.anyPaused = { [weak self] in self?.installs.values.contains { $0.state == .paused } == true }
                 ready = true
-            } catch { self.error = "Could not read Amazon installs: " + error.localizedDescription }
+            } catch { self.error = "Could not read Amazon installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -90,7 +90,7 @@ struct AmazonInstalledGame: Codable {
         let store = Store(installed: installed, pending: pending), previous = saving
         saving = Task {
             await previous?.value
-            do { try await worker.save(store) } catch { self.error = "Could not save Amazon installs: " + error.localizedDescription }
+            do { try await worker.save(store) } catch { self.error = "Could not save Amazon installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -215,7 +215,7 @@ struct AmazonInstalledGame: Codable {
                 if Task.isCancelled || error is CancellationError {
                     if installs[id]?.state != .queued { installs[id]?.state = .paused }
                 } else {
-                    let message = (error as? AmazonAuthError)?.message ?? error.localizedDescription
+                    let message = (error as? AmazonAuthError)?.message ?? ErrorText.plain(error)
                     installs[id]?.state = .failed(message)
                     outcome = .failed(message)
                     LogStore.shared.log("[amazon-install] failure: \(message)", level: .error)
@@ -451,7 +451,7 @@ private actor AmazonInstallWorker {
                 }
             } catch {
                 // An address that has run out of time answers 403: ask Amazon for a fresh one and carry on from what is on disk.
-                if !(error is CancellationError), "\(error.localizedDescription)".contains("403"), attempt < 3 {
+                if !(error is CancellationError), "\(ErrorText.plain(error))".contains("403"), attempt < 3 {
                     try await source.renew(after: generation)
                     continue
                 }
@@ -468,7 +468,7 @@ private actor AmazonInstallWorker {
             }
             try FileManager.default.createDirectory(at: job.target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: job.target)
-            guard rename(part.path, job.target.path) == 0 else { throw AmazonError.invalid("Could not finish a game file.") }
+            guard rename(part.path, job.target.path) == 0 else { throw AmazonError.invalid("A downloaded file could not be put in place. The device may be out of storage: free some space and start the download again.") }
             return
         }
     }

@@ -88,7 +88,7 @@ enum ItchInstallResult {
                                   resume: { [weak self] in self?.resumeAfterBackground() })
                 background.anyPaused = { [weak self] in self?.installs.values.contains { $0.state == .paused } == true }
                 ready = true
-            } catch { self.error = "Could not read itch.io installs: " + error.localizedDescription }
+            } catch { self.error = "Could not read itch.io installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -107,7 +107,7 @@ enum ItchInstallResult {
         let store = Store(installed: installed, pending: pending, setups: setups, before: before), previous = saving
         saving = Task {
             await previous?.value
-            do { try await worker.save(store) } catch { self.error = "Could not save itch.io installs: " + error.localizedDescription }
+            do { try await worker.save(store) } catch { self.error = "Could not save itch.io installs: " + ErrorText.plain(error) }
         }
     }
 
@@ -243,7 +243,7 @@ enum ItchInstallResult {
                 if Task.isCancelled || error is CancellationError {
                     if installs[id]?.state != .queued { installs[id]?.state = .paused }
                 } else {
-                    let message = error.localizedDescription
+                    let message = ErrorText.plain(error)
                     installs[id]?.state = .failed(message)
                     outcome = .failed(message)
                     LogStore.shared.log("[itch-install] failure: \(message)", level: .error)
@@ -294,7 +294,7 @@ enum ItchInstallResult {
                 LogStore.shared.log("[itch-install] installed game \(id)")
             } catch {
                 installs[id]?.state = .ready
-                self.error = error.localizedDescription
+                self.error = ErrorText.plain(error)
                 LogStore.shared.log("[itch-install] the installer left nothing to run: \(error.localizedDescription)", level: .error)
             }
         }

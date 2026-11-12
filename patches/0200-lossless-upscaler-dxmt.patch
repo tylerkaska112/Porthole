@@ -1,0 +1,487 @@
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+index 67e0e95..46a6ba4 100644
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -15,6 +15,7 @@
+ #include "d3d11_resource.hpp"
+ #include "d3d11_device.hpp"
+ #include "d3d11_lsfg.hpp"
++#include "d3d11_lsfg_upscale.hpp"
+ #include "d3d11_upscale_ctl.hpp"
+ #include "util_cpu_fence.hpp"
+ #include "util_env.hpp"
+@@ -162,8 +163,7 @@ public:
+         upscale_on_ = f > 0;
+         scale_factor = upscale_on_ ? f : 1.0f;
+         upscale_version_ = upscale::control().version;
+-        Logger::info(std::format("[upscale] {}x{}: {} (MetalFX spatial{})", fw, fh, upscale_on_ ? std::format("x{:.3f}", f) : std::string("off for now"), upscale::control().available ? ", control file" : ""));
+-        UpscaleStatus(fw, fh, f);
++        Logger::info(std::format("[upscale] {}x{}: {} ({}{})", fw, fh, upscale_on_ ? std::format("x{:.3f}", f) : std::string("off for now"), upscale::control().method ? "Lossless Scaling" : "MetalFX spatial", upscale::control().available ? ", control file" : ""));
+       }
+     }
+ 
+@@ -530,7 +530,6 @@ public:
+       scale_factor = upscale_on_ ? f : 1.0f;
+       upscale_version_ = upscale::control().version;
+       presenter->setScaleFactor(scale_factor);
+-      UpscaleStatus(desc_.Width, desc_.Height, f);
+     }
+     ApplyLayerProps();
+ 
+@@ -551,6 +550,7 @@ public:
+     if constexpr (EnableMetalFX) {
+       if (!BuildUpscaler())
+         return E_FAIL;
++      UpscaleStatus(desc_.Width, desc_.Height, upscale_on_ ? scale_factor : 0.0f);
+     }
+ 
+     return S_OK;
+@@ -562,8 +562,15 @@ public:
+     if constexpr (EnableMetalFX) {
+       upscaled_backbuffer_ = nullptr;
+       metalfx_scaler = {};
++      ls_up_.reset();
++      up_method_ = 0;
++      up_level_ = upscale::control().level;
+       if (!upscale_on_)
+         return true;
++      if (upscale::control().available && upscale::control().method > 0 && lsfg::processAllowed() && !ls_block_) {
++        if (BuildLsUpscaler())
++          return true;   /* the enlarged pictures are made by Lossless Scaling's passes: no MetalFX scaler, no enlarged back buffer */
++      }
+       D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
+       upscaled_desc_.Height *= scale_factor;
+       upscaled_desc_.Width *= scale_factor;
+@@ -585,6 +592,57 @@ public:
+     return true;
+   }
+ 
++  /* Porthole 0200: Lossless Scaling's own upscaler (LS1, or LS1 performance) for this size; false (and the MetalFX scaler is used instead) when it cannot be set up. */
++  bool BuildLsUpscaler() {
++    auto &c = upscale::control();
++    ls_error_.clear();
++    if (desc_.SampleDesc.Count > 1) ls_error_ = "this game uses a multisampled swap chain";
++    else if (backbuffer_desc_.Width < 64 || backbuffer_desc_.Height < 64) ls_error_ = "the picture is too small";
++    if (ls_error_.empty()) {
++      UINT ow = std::max(1u, (UINT)(backbuffer_desc_.Width * scale_factor)), oh = std::max(1u, (UINT)(backbuffer_desc_.Height * scale_factor));
++      auto up = std::make_unique<lsfg::Ls1Upscaler>(device_, device_context_, backbuffer_desc_.Width, backbuffer_desc_.Height, desc_.Format, ow, oh, c.method == 2, c.level, 4);
++      if (up->ok()) {
++        ls_up_ = std::move(up);
++        up_method_ = c.method;
++        up_level_ = c.level;
++        ls_stat_t_ = std::chrono::steady_clock::now();
++        ls_stat_frames_ = 0; ls_stat_cpu_ms_ = 0;
++        return true;
++      }
++      ls_error_ = up->error();
++    }
++    Logger::info("[ls-up] " + ls_error_ + ": MetalFX is used instead");
++    return false;
++  }
++
++  /* Porthole 0200: enlarges the game's frame (and the frames frame generation made) with Lossless Scaling's passes. True when the pictures to show are in `real` and `frames`. */
++  bool LsEnlarge(Rc<Texture> &real, std::vector<Rc<Texture>> &frames) {
++    if (!ls_up_)
++      return false;
++    auto t0 = std::chrono::steady_clock::now();
++    std::vector<ID3D11Texture2D *> out;
++    if (frames.size() != lsfg_raw_.size() || !ls_up_->run(backbuffer_.ptr(), lsfg_raw_, out) || out.size() != 1 + frames.size()) {
++      Logger::info("[ls-up] the passes could not run: " + (ls_up_->error().empty() ? std::string("see above") : ls_up_->error()) + "; MetalFX is used from now on");
++      ls_block_ = true;
++      upscale_version_ = ~0u;   /* the next look at the control file builds the MetalFX scaler */
++      ls_up_.reset();
++      return false;
++    }
++    real = GetTexture(static_cast<ID3D11Resource *>(out[0]));
++    for (size_t i = 0; i < frames.size(); i++)
++      frames[i] = GetTexture(static_cast<ID3D11Resource *>(out[i + 1]));
++    ls_stat_cpu_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
++    ls_stat_frames_++;
++    auto now = std::chrono::steady_clock::now();
++    double secs = std::chrono::duration<double>(now - ls_stat_t_).count();
++    if (secs >= 5.0) {
++      Logger::info(std::format("[ls-up] {:.1f} s: {} frames, {}x{} -> {}x{} ({}, sharpness {}), the passes cost {:.2f} ms on the game thread per frame", secs, ls_stat_frames_, ls_up_->width(), ls_up_->height(),
++                               ls_up_->outWidth(), ls_up_->outHeight(), ls_up_->performance() ? "LS1 performance" : "LS1", ls_up_->level() + 1, ls_stat_frames_ ? ls_stat_cpu_ms_ / (double)ls_stat_frames_ : 0.0));
++      ls_stat_t_ = now; ls_stat_frames_ = 0; ls_stat_cpu_ms_ = 0;
++    }
++    return true;
++  }
++
+   /* Porthole 0199: the factor the app wants for a game drawing w x h now (0 = none). A launcher or helper process of the same prefix is never upscaled when the app controls it. */
+   float DesiredUpscale(UINT w, UINT h) {
+     auto &c = upscale::control();
+@@ -598,9 +656,11 @@ public:
+     auto &c = upscale::control();
+     if (!c.available || !lsfg::processAllowed() || w < 320 || h < 240)
+       return;
+-    if (f > 0)
+-      c.writeStatus(std::format("state=on\nfactor={:.3f}\nfrom={}x{}\nto={}x{}\n", f, w, h, (UINT)(w * f), (UINT)(h * f)));
+-    else
++    if (f > 0) {
++      const char *method = ls_up_ ? (ls_up_->performance() ? "ls1p" : "ls1") : "metalfx";
++      std::string note = (c.method > 0 && !ls_up_) ? std::format("fallback={}\n", ls_error_.empty() ? std::string("Lossless Scaling could not start") : ls_error_) : std::string();
++      c.writeStatus(std::format("state=on\nmethod={}\nlevel={}\nfactor={:.3f}\nfrom={}x{}\nto={}x{}\n{}", method, c.level + 1, f, w, h, (UINT)(w * f), (UINT)(h * f), note));
++    } else
+       c.writeStatus(std::format("state={}\nfrom={}x{}\n", c.mode == 0 ? "off" : "same-size", w, h));
+   }
+ 
+@@ -617,7 +677,8 @@ public:
+       upscale_version_ = c.version;
+       float f = DesiredUpscale(desc_.Width, desc_.Height);
+       bool on = f > 0;
+-      if (on == upscale_on_ && (!on || f == scale_factor)) {
++      if (c.method == 0) ls_block_ = false;   /* a new choice of MetalFX lets the next Lossless Scaling choice try again */
++      if (on == upscale_on_ && (!on || (f == scale_factor && (ls_block_ || c.method == up_method_) && (c.method == 0 || c.level == up_level_)))) {
+         UpscaleStatus(desc_.Width, desc_.Height, f);
+         return;
+       }
+@@ -645,8 +706,8 @@ public:
+         Logger::info("[upscale] live: not enough memory for the enlarged picture; off");
+         return;
+       }
+-      Logger::info(std::format("[upscale] live: {} -> {} ({}x{} -> {}x{})", was ? std::format("x{:.3f}", was_f) : std::string("off"), on ? std::format("x{:.3f}", f) : std::string("off"),
+-                               desc_.Width, desc_.Height, (UINT)(desc_.Width * scale_factor), (UINT)(desc_.Height * scale_factor)));
++      Logger::info(std::format("[upscale] live: {} -> {} ({}x{} -> {}x{}, {})", was ? std::format("x{:.3f}", was_f) : std::string("off"), on ? std::format("x{:.3f}", f) : std::string("off"),
++                               desc_.Width, desc_.Height, (UINT)(desc_.Width * scale_factor), (UINT)(desc_.Height * scale_factor), ls_up_ ? "Lossless Scaling" : "MetalFX"));
+       UpscaleStatus(desc_.Width, desc_.Height, f);
+     }
+   }
+@@ -911,7 +972,13 @@ public:
+     LsfgBeforePresent(lsfg_frames);
+     std::vector<Rc<Texture>> lsfg_upscaled;   /* with the MetalFX scaler on: where each generated frame is enlarged to */
+     bool use_fx = false;
+-    if constexpr (EnableMetalFX) use_fx = upscale_on_;
++    Rc<Texture> ls_real;   /* Porthole 0200: the game's frame enlarged by Lossless Scaling's passes (then the generated frames are theirs too) */
++    bool use_ls = false;
++    if constexpr (EnableMetalFX) {
++      if (upscale_on_ && ls_up_)
++        use_ls = LsEnlarge(ls_real, lsfg_frames);
++      use_fx = upscale_on_ && !use_ls && upscaled_backbuffer_.ptr() != nullptr;   /* the MetalFX buffers exist only when its scaler was built */
++    }
+     if constexpr (EnableMetalFX) {
+       for (size_t i = 0; use_fx && i < lsfg_frames.size(); i++) {
+         if (!EnsureUpscaledGenerated(i, lsfg_frames[i])) { lsfg_frames.clear(); lsfg_upscaled.clear(); break; }
+@@ -1005,7 +1072,7 @@ public:
+       chunk->emitcc([
+         this, vsync_duration, state = std::move(present_state),
+         sync_state = SyncFrame(++presentation_count_),
+-        backbuffer = backbuffer_->texture()
++        backbuffer = use_ls ? ls_real : backbuffer_->texture()
+       ](ArgumentEncodingContext &ctx) mutable {
+         ctx.present(backbuffer, presenter, vsync_duration, state.metadata);
+         ReleaseSemaphore(present_semaphore_, 1, nullptr);
+@@ -1066,6 +1133,7 @@ public:
+   }
+ 
+   void LsfgBeforePresent(std::vector<Rc<Texture>> &frames) {
++    lsfg_raw_.clear();
+     auto &ctl = lsfg::control();
+     if (!ctl.available || !lsfg::processAllowed() || desc_.Width < 640 || desc_.Height < 360)
+       return;
+@@ -1129,8 +1197,10 @@ public:
+       lsfg_->run(backbuffer_.ptr(), true, out);
+       lsfg_stat_cpu_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+       if (!ctl.measure)   /* "measure only": the passes ran, nothing extra is shown */
+-        for (auto *o : out)
++        for (auto *o : out) {
+           frames.push_back(GetTexture(static_cast<ID3D11Resource *>(o)));
++          lsfg_raw_.push_back(o);
++        }
+       lsfg_stat_made_ += out.size();
+     }
+     double secs = std::chrono::duration<double>(now - lsfg_stat_t_).count();
+@@ -1442,6 +1512,14 @@ private:
+   bool lsfg_gen_own_scaler_ = false;
+   std::conditional<EnableMetalFX, Com<D3D11ResourceCommon>, std::monostate>::type upscaled_backbuffer_;
+   float scale_factor = 1.0;
++  std::unique_ptr<lsfg::Ls1Upscaler> ls_up_;   /* Porthole 0200: Lossless Scaling's upscaler, when the menu chose it (and it could be set up) */
++  std::vector<ID3D11Texture2D *> lsfg_raw_;     /* the pictures frame generation made this frame, as Direct3D textures */
++  int up_method_ = 0, up_level_ = 2;
++  bool ls_block_ = false;                        /* the Lossless Scaling passes failed once: MetalFX until the person chooses again */
++  std::string ls_error_;
++  std::chrono::steady_clock::time_point ls_stat_t_{};
++  uint64_t ls_stat_frames_ = 0;
++  double ls_stat_cpu_ms_ = 0;
+   bool upscale_on_ = false;        /* Porthole 0199: the picture is enlarged now (the MetalFX variant can be off for a while) */
+   uint32_t upscale_version_ = ~0u;
+ };
+diff --git a/src/d3d11/d3d11_upscale_ctl.hpp b/src/d3d11/d3d11_upscale_ctl.hpp
+index 0740fd3..1d7d450 100644
+--- a/src/d3d11/d3d11_upscale_ctl.hpp
++++ b/src/d3d11/d3d11_upscale_ctl.hpp
+@@ -5,6 +5,8 @@
+  *     mode=0|1|2      0 = off, 1 = "to the screen" (the factor is worked out from fit), 2 = a fixed factor
+  *     factor=1.5      for mode 2 (1 to 2)
+  *     fit=2752x2064   the screen's pixels, for mode 1
++ *     method=0|1|2    0 = MetalFX (Apple's spatial scaler), 1 = Lossless Scaling's LS1, 2 = LS1 performance (Direct3D 11 games; d3d11_lsfg_upscale.hpp)
++ *     level=0..4      the sharpness level of the Lossless Scaling networks
+  * and rewrites it whenever the person changes the choice. The swap chain looks at it twice a second at most. Without the file (or without the variable) everything
+  * is as before: DXMT_METALFX_SPATIAL_SWAPCHAIN / DXMT_METALFX_FIT / d3d11.metalSpatialUpscaleFactor at the start decide, once. A status file next to it
+  * ("<control file>.status") says what the swap chain does with it, for the menu. */
+@@ -25,6 +27,8 @@ struct Control {
+   int mode = 0;                  // 0 off, 1 to the screen, 2 fixed
+   float factor = 2.0f;           // for mode 2
+   unsigned fitW = 0, fitH = 0;   // for mode 1
++  int method = 0;                // 0 MetalFX, 1 LS1, 2 LS1 performance
++  int level = 2;                 // 0..4
+   uint32_t version = 0;          // raised whenever the wish changes
+   uint64_t lastWrite_ = 0;
+   std::chrono::steady_clock::time_point lastPoll_{};
+@@ -72,6 +76,7 @@ struct Control {
+     int m = mode;
+     float fa = factor;
+     unsigned fw = fitW, fh = fitH;
++    int me = method, lv = level;
+     for (char *line = strtok(buf, "\r\n"); line; line = strtok(nullptr, "\r\n")) {
+       char *eq = strchr(line, '=');
+       if (!eq) continue;
+@@ -79,10 +84,12 @@ struct Control {
+       const char *k = line, *v = eq + 1;
+       if (!strcmp(k, "mode")) m = std::clamp(atoi(v), 0, 2);
+       else if (!strcmp(k, "factor")) fa = std::clamp((float)atof(v), 1.0f, 2.0f);
++      else if (!strcmp(k, "method")) me = std::clamp(atoi(v), 0, 2);
++      else if (!strcmp(k, "level")) lv = std::clamp(atoi(v), 0, 4);
+       else if (!strcmp(k, "fit")) { unsigned a = 0, b = 0; if (sscanf(v, "%ux%u", &a, &b) == 2 && a && b) { fw = a; fh = b; } }
+     }
+-    bool changed = m != mode || fa != factor || fw != fitW || fh != fitH;
+-    mode = m; factor = fa; fitW = fw; fitH = fh;
++    bool changed = m != mode || fa != factor || fw != fitW || fh != fitH || me != method || lv != level;
++    mode = m; factor = fa; fitW = fw; fitH = fh; method = me; level = lv;
+     if (changed) version++;
+     return changed;
+   }
+--- /dev/null	2026-11-09 01:13:44
++++ engine-r29/vendor-engine/dxmt/src/d3d11/d3d11_lsfg_upscale.hpp	2026-11-09 01:10:47
+@@ -0,0 +1,232 @@
++// Porthole 0200: Lossless Scaling's own upscalers (LS1 and LS1 performance), run through the ordinary D3D11 interface.
++//
++// Like the frame generation next to it (d3d11_lsfg.hpp) this uses compiled compute shaders from the owner's own Lossless.dll, which the app writes to a file in the game's prefix
++// while the game runs (only when Steam says the account owns the program). Which shader is which, what each reads and writes and how many thread groups it takes was
++// worked out from the shaders themselves and from how Lossless.dll's own code runs them (reflection data, instruction streams and the program's calls), and checked by running the
++// chain on test pictures offline:
++//   LS1:   shaders 147+3k, 148+3k, 149+3k (k = 0..4, the sharpness level), then 146.
++//          pass 1  input (the game's picture)          -> A  (w x h,   R8G8B8A8_UNORM)
++//          pass 2  A                                   -> B  (w x h,   R8G8B8A8_UNORM)
++//          pass 3  B                                   -> C  (2w x 2h, R8_SNORM: the luminance the network predicts)
++//          pass 4  C and the input (shader 146)        -> output (any size >= the input, bilinear from C and from the input)
++//   LS1_P: shader 141+k writes C directly from the input, then 146 (one network pass instead of three).
++// 16x16 thread groups for all of them. One 48-byte constant buffer for every pass: { in_w, in_h, src_w, src_h, origin_x, origin_y, gamma, 0, out_w, out_h, 0, 0 } (the origin is
++// where the input starts in its texture, `gamma` = 1 treats the input as linear scRGB). One linear clamp sampler.
++#pragma once
++
++#include "d3d11_lsfg.hpp"
++
++namespace dxmt::lsfg {
++
++class Ls1Upscaler {
++public:
++  /// `nOut` pictures can be enlarged per call to run(): the game's own frame and the frames frame generation made.
++  Ls1Upscaler(ID3D11Device *dev, ID3D11DeviceContext4 *imm, UINT w, UINT h, DXGI_FORMAT format, UINT outW, UINT outH, bool performance, int level, size_t nOut)
++      : dev_(dev), imm_(imm), w_(w), h_(h), fmt_(format), ow_(outW), oh_(outH), perf_(performance), level_(std::clamp(level, 0, 4)), nOut_(std::max<size_t>(1, nOut)) {
++    ok_ = build();
++    if (!ok_) {
++      if (error_.empty()) error_ = "a picture, a sampler or a shader could not be created (" + stage_ + ")";
++      Logger::info("[ls-up] could not be set up: " + error_);
++    }
++  }
++  bool ok() const { return ok_; }
++  const std::string &error() const { return error_; }
++  UINT width() const { return w_; }
++  UINT height() const { return h_; }
++  UINT outWidth() const { return ow_; }
++  UINT outHeight() const { return oh_; }
++  size_t capacity() const { return nOut_; }
++  bool performance() const { return perf_; }
++  int level() const { return level_; }
++  DXGI_FORMAT outFormat() const { return outFmt_; }
++
++  /// Enlarges the game's frame (`backbuffer`) and then each of `extra` (generated frames, which are textures with a shader view). `out` gets one texture per picture, in that order.
++  /// Everything is recorded on a deferred context and replayed on the game's own.
++  bool run(ID3D11Resource *backbuffer, const std::vector<ID3D11Texture2D *> &extra, std::vector<ID3D11Texture2D *> &out) {
++    out.clear();
++    if (!ok_ || 1 + extra.size() > nOut_) return false;
++    ID3D11DeviceContext *c = def_.get();
++    prev_ = false;
++    c->CopyResource(in_.tex.get(), backbuffer);
++    setup(c);
++    pictures(c, in_.srv.get(), 0);
++    for (size_t i = 0; i < extra.size(); i++) {
++      ID3D11ShaderResourceView *v = srvFor(extra[i]);
++      if (!v) { clear(c); Ptr<ID3D11CommandList> drop; c->FinishCommandList(FALSE, drop.put()); return false; }
++      pictures(c, v, i + 1);
++    }
++    clear(c);
++    Ptr<ID3D11CommandList> cl;
++    if (FAILED(c->FinishCommandList(FALSE, cl.put()))) {
++      Logger::info("[ls-up] FinishCommandList failed");
++      ok_ = false;
++      error_ = "the engine could not finish the command list";
++      return false;
++    }
++    imm_->ExecuteCommandList(cl.get(), TRUE);
++    for (size_t i = 0; i < 1 + extra.size(); i++) out.push_back(out_[i].tex.get());
++    return true;
++  }
++
++private:
++  bool img(Img &i, UINT w, UINT h, DXGI_FORMAT f, UINT bind) {
++    w = std::max(1u, w); h = std::max(1u, h);
++    D3D11_TEXTURE2D_DESC d{};
++    d.Width = w; d.Height = h; d.MipLevels = 1; d.ArraySize = 1; d.Format = f; d.SampleDesc.Count = 1;
++    d.Usage = D3D11_USAGE_DEFAULT; d.BindFlags = bind;
++    if (FAILED(dev_->CreateTexture2D(&d, nullptr, i.tex.put()))) return false;
++    if (bind & D3D11_BIND_SHADER_RESOURCE)
++      if (FAILED(dev_->CreateShaderResourceView(i.tex.get(), nullptr, i.srv.put()))) return false;
++    if (bind & D3D11_BIND_UNORDERED_ACCESS)
++      if (FAILED(dev_->CreateUnorderedAccessView(i.tex.get(), nullptr, i.uav.put()))) return false;
++    i.w = w; i.h = h;
++    return true;
++  }
++
++  ID3D11ComputeShader *shader(uint32_t id) {
++    auto &cache = shaderCache()[dev_];
++    auto it = cache.find(id);
++    if (it != cache.end()) return it->second.get();
++    auto *blob = ShaderStore::get().find(id);
++    if (!blob) { error_ = std::format("shader {} is not in the shader file", id); return nullptr; }
++    Ptr<ID3D11ComputeShader> s;
++    if (FAILED(dev_->CreateComputeShader(blob->data(), blob->size(), nullptr, s.put()))) {
++      error_ = std::format("the engine refused shader {}", id);
++      return nullptr;
++    }
++    return (cache[id] = s).get();
++  }
++
++  bool build() {
++    auto t0 = std::chrono::steady_clock::now();
++    stage_ = "shader file";
++    if (!ShaderStore::get().load()) { error_ = ShaderStore::get().error_; return false; }
++    bool srgb = fmt_ == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || fmt_ == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
++    if (fmt_ != DXGI_FORMAT_R8G8B8A8_UNORM && fmt_ != DXGI_FORMAT_B8G8R8A8_UNORM && fmt_ != DXGI_FORMAT_R10G10B10A2_UNORM && fmt_ != DXGI_FORMAT_R16G16B16A16_FLOAT && !srgb) {
++      error_ = std::format("the game's back buffer format ({}) is not supported", (int)fmt_);
++      return false;
++    }
++    // An sRGB back buffer is read through its sRGB view (linear light) and enlarged into 16-bit floats, which the presenter encodes again (as the frame generation does).
++    outFmt_ = srgb ? DXGI_FORMAT_R16G16B16A16_FLOAT : fmt_;
++    gamma_ = fmt_ == DXGI_FORMAT_R16G16B16A16_FLOAT ? 1u : 0u;
++    stage_ = "deferred context";
++    Ptr<ID3D11DeviceContext> d;
++    if (FAILED(dev_->CreateDeferredContext(0, d.put()))) return false;
++    def_ = d;
++    stage_ = "sampler";
++    D3D11_SAMPLER_DESC sd{};
++    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
++    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
++    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
++    sd.MaxLOD = D3D11_FLOAT32_MAX;
++    sd.MaxAnisotropy = 1;
++    if (FAILED(dev_->CreateSamplerState(&sd, smp_.put()))) return false;
++    stage_ = "constant buffer";
++    uint32_t cb[12] = {w_, h_, w_, h_, 0, 0, gamma_, 0, ow_, oh_, 0, 0};
++    D3D11_BUFFER_DESC bd{};
++    bd.ByteWidth = sizeof cb; bd.Usage = D3D11_USAGE_IMMUTABLE; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++    D3D11_SUBRESOURCE_DATA sdata{cb, 0, 0};
++    if (FAILED(dev_->CreateBuffer(&bd, &sdata, cb_.put()))) return false;
++    stage_ = "input picture";
++    if (!img(in_, w_, h_, fmt_, D3D11_BIND_SHADER_RESOURCE)) return false;
++    stage_ = "network pictures";
++    const UINT both = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
++    if (!perf_) {
++      if (!img(a_, w_, h_, DXGI_FORMAT_R8G8B8A8_UNORM, both) || !img(b_, w_, h_, DXGI_FORMAT_R8G8B8A8_UNORM, both)) return false;
++    }
++    if (!img(c_, 2 * w_, 2 * h_, DXGI_FORMAT_R8_SNORM, both)) return false;
++    stage_ = std::format("output pictures (format {} as an unordered-access view)", (int)outFmt_);
++    out_.assign(nOut_, Img());
++    for (auto &o : out_) if (!img(o, ow_, oh_, outFmt_, both)) return false;
++    stage_ = "shaders";
++    ids_.clear();
++    if (perf_) ids_ = {141u + (uint32_t)level_};
++    else ids_ = {147u + 3u * (uint32_t)level_, 148u + 3u * (uint32_t)level_, 149u + 3u * (uint32_t)level_};
++    ids_.push_back(146);
++    for (uint32_t id : ids_) if (!shader(id)) return false;
++    Logger::info(std::format("[ls-up] ready in {:.0f} ms: {}x{} -> {}x{} format {} ({}, sharpness {}), up to {} pictures a frame", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(),
++                             w_, h_, ow_, oh_, (int)fmt_, perf_ ? "LS1 performance" : "LS1", level_ + 1, nOut_));
++    return true;
++  }
++
++  ID3D11ShaderResourceView *srvFor(ID3D11Texture2D *t) {
++    for (auto &e : views_)
++      if (e.first.get() == t) return e.second.get();
++    if (views_.size() >= 8) views_.clear();   // frame generation was built again: the old pictures go
++    Ptr<ID3D11ShaderResourceView> v;
++    if (FAILED(dev_->CreateShaderResourceView(t, nullptr, v.put()))) return nullptr;
++    t->AddRef();
++    Ptr<ID3D11Texture2D> keep;
++    *keep.put() = t;   // holds the picture so that its address cannot be reused by another while the view is cached
++    views_.emplace_back(std::move(keep), std::move(v));
++    return views_.back().second.get();
++  }
++
++  void setup(ID3D11DeviceContext *c) {
++    ID3D11SamplerState *ss[1] = {smp_.get()};
++    ID3D11Buffer *cb = cb_.get();
++    c->CSSetSamplers(0, 1, ss);
++    c->CSSetConstantBuffers(0, 1, &cb);
++  }
++
++  void clear(ID3D11DeviceContext *c) {
++    ID3D11ShaderResourceView *s[2] = {};
++    ID3D11UnorderedAccessView *u[1] = {};
++    UINT counts[1] = {~0u};
++    c->CSSetShaderResources(0, 2, s);
++    c->CSSetUnorderedAccessViews(0, 1, u, counts);
++  }
++
++  void pass(ID3D11DeviceContext *c, uint32_t id, ID3D11ShaderResourceView *s0, ID3D11ShaderResourceView *s1, const Img &dst, UINT gx, UINT gy) {
++    ID3D11ShaderResourceView *s[2] = {s0, s1};
++    ID3D11UnorderedAccessView *u[1] = {dst.uav.get()};
++    UINT counts[1] = {~0u};
++    // the previous pass's views are cleared first: a texture cannot be read and written at once
++    if (prev_) {
++      ID3D11ShaderResourceView *n[2] = {};
++      ID3D11UnorderedAccessView *nu[1] = {};
++      c->CSSetShaderResources(0, 2, n);
++      c->CSSetUnorderedAccessViews(0, 1, nu, counts);
++    }
++    prev_ = true;
++    c->CSSetShader(shader(id), nullptr, 0);
++    c->CSSetShaderResources(0, s1 ? 2 : 1, s);
++    c->CSSetUnorderedAccessViews(0, 1, u, counts);
++    c->Dispatch(gx, gy, 1);
++  }
++
++  static UINT g16(UINT v) { return (v + 15) >> 4; }
++
++  void pictures(ID3D11DeviceContext *c, ID3D11ShaderResourceView *src, size_t outIndex) {
++    UINT gx = g16(w_), gy = g16(h_);
++    if (perf_) {
++      pass(c, ids_[0], src, nullptr, c_, gx, gy);
++    } else {
++      pass(c, ids_[0], src, nullptr, a_, gx, gy);
++      pass(c, ids_[1], a_.srv.get(), nullptr, b_, gx, gy);
++      pass(c, ids_[2], b_.srv.get(), nullptr, c_, gx, gy);
++    }
++    pass(c, 146, c_.srv.get(), src, out_[outIndex], g16(ow_), g16(oh_));
++  }
++
++  ID3D11Device *dev_;
++  ID3D11DeviceContext4 *imm_;
++  UINT w_, h_;
++  DXGI_FORMAT fmt_, outFmt_ = DXGI_FORMAT_UNKNOWN;
++  UINT ow_, oh_;
++  bool perf_;
++  int level_;
++  size_t nOut_;
++  uint32_t gamma_ = 0;
++  bool ok_ = false, prev_ = false;
++  std::string error_, stage_;
++  Ptr<ID3D11DeviceContext> def_;
++  Ptr<ID3D11SamplerState> smp_;
++  Ptr<ID3D11Buffer> cb_;
++  Img in_, a_, b_, c_;
++  Imgs out_;
++  std::vector<uint32_t> ids_;
++  std::vector<std::pair<Ptr<ID3D11Texture2D>, Ptr<ID3D11ShaderResourceView>>> views_;
++};
++
++} // namespace dxmt::lsfg

@@ -95,7 +95,7 @@ final class RemotePairingHost: @unchecked Sendable {
             } catch PairingError.cancelled {
                 conn.cancel(); throw PairingError.cancelled
             } catch {
-                let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                let why = (error as? LocalizedError)?.errorDescription ?? ErrorText.plain(error)
                 log("conversation failed: \(why)")
                 conn.cancel()
                 if case PairingError.wrongPIN = error {
@@ -115,7 +115,7 @@ final class RemotePairingHost: @unchecked Sendable {
                 guard !done else { return }
                 switch state {
                 case .ready: done = true; cont.resume()
-                case .failed(let e): done = true; cont.resume(throwing: PairingError.network(e.localizedDescription))
+                case .failed(let e): done = true; cont.resume(throwing: PairingError.network(ErrorText.plain(e)))
                 case .cancelled: done = true; cont.resume(throwing: PairingError.cancelled)
                 default: break
                 }
@@ -144,11 +144,11 @@ final class RemotePairingHost: @unchecked Sendable {
                     if self?.advertise == true { self?.onAdvertising?() }
                 case .failed(let error):
                     self?.log("listener failed: \(error)")
-                    self?.onBlocked?(error.localizedDescription)
-                    continuation.finish(throwing: PairingError.network(error.localizedDescription))
+                    self?.onBlocked?(ErrorText.plain(error))
+                    continuation.finish(throwing: PairingError.network(ErrorText.plain(error)))
                 case .waiting(let error):
                     self?.log("listener waiting: \(error)")
-                    self?.onBlocked?(error.localizedDescription)
+                    self?.onBlocked?(ErrorText.plain(error))
                 case .cancelled:
                     continuation.finish()
                 default: break
@@ -170,7 +170,7 @@ final class RemotePairingHost: @unchecked Sendable {
         guard let conn = connection else { throw PairingError.cancelled }
         return try await withCheckedThrowingContinuation { cont in
             conn.receive(minimumIncompleteLength: 1, maximumLength: max) { data, _, isComplete, error in
-                if let error { cont.resume(throwing: PairingError.network(error.localizedDescription)) }
+                if let error { cont.resume(throwing: PairingError.network(ErrorText.plain(error))) }
                 else if let data, !data.isEmpty { cont.resume(returning: [UInt8](data)) }
                 else if isComplete { cont.resume(throwing: PairingError.network("The iPhone closed the connection.")) }
                 else { cont.resume(throwing: PairingError.network("The connection ended.")) }
@@ -188,7 +188,7 @@ final class RemotePairingHost: @unchecked Sendable {
         guard let conn = connection else { throw PairingError.cancelled }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             conn.send(content: Data(bytes), completion: .contentProcessed { error in
-                if let error { cont.resume(throwing: PairingError.network(error.localizedDescription)) } else { cont.resume() }
+                if let error { cont.resume(throwing: PairingError.network(ErrorText.plain(error))) } else { cont.resume() }
             })
         }
     }

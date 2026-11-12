@@ -18,6 +18,7 @@ struct HomeScreen: View {
     @ObservedObject private var problemTracker = ProblemTracker.shared
     @ObservedObject private var epicLibrary = EpicLibrary.shared
     @ObservedObject private var compat = CompatStore.shared
+    @ObservedObject private var autofix = AutoFixStore.shared
     @ObservedObject private var controllers = SteamControllers.shared
     @AppStorage("f4.setupDone") private var setupDone = false
     @State private var installerRan = UserDefaults.standard.string(forKey: "f4.installerRan")
@@ -80,6 +81,7 @@ struct HomeScreen: View {
         HStack(spacing: 12) {
             // Held sideways the notices sit here, beside the Friends button, instead of in a row of their own above the hero (which pushed the shelf out of shape).
             if sideways, !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismissNotice, compact: true) } else { Spacer(minLength: 0) }
+            HomeLayoutPicker()
             PillButton(id: "home-friends", title: friendsTitle, symbol: "person.2.fill", style: .glass) { showFriends = true }.fixedSize()
         }
         .padding(.leading, sideways ? 14 : 28).padding(.trailing, 28).padding(.top, 8).padding(.bottom, 4)   // sideways the notices start where the page's own content does
@@ -124,7 +126,8 @@ struct HomeScreen: View {
             list.append(NoticeData(id: "jit", symbol: "hourglass", title: "Waiting for JIT", detail: wait, actionTitle: "Cancel", spinner: true))
         }
         if case .failed(let message) = session.state, !session.launchOverlayActive {
-            list.append(NoticeData(id: "failed", symbol: "exclamationmark.triangle.fill", title: "Couldn't start the game", detail: message, tint: Theme.bad, actionTitle: session.restartAdvised ? "Close Porthole" : "Dismiss"))
+            let needsClient = message == SessionController.steamClientMissing
+            list.append(NoticeData(id: "failed", symbol: "exclamationmark.triangle.fill", title: "Couldn't start the game", detail: message, tint: Theme.bad, actionTitle: session.restartAdvised ? "Close Porthole" : (needsClient ? "Open Steam" : "Dismiss"), helpMessage: message))
         }
         if session.restartNeeded, !session.isActive, session.state != .running {
             list.append(NoticeData(id: "restart", symbol: "arrow.clockwise.circle.fill", title: "Restart to play another game",
@@ -149,14 +152,15 @@ struct HomeScreen: View {
             if case .downloading(let fraction) = runtime.state { detail = "\(Int(fraction * 100))% downloaded." }
             if case .failed(let message) = runtime.state { detail = message }
             list.append(NoticeData(id: "runtime", symbol: "shippingbox.fill", title: runtime.busy ? "Downloading components" : "Windows components", detail: detail, tint: Theme.warn,
-                                   actionTitle: runtime.busy ? nil : "Download", spinner: runtime.busy, dismissKey: runtime.busy ? nil : "runtime"))
+                                   actionTitle: runtime.busy ? nil : "Download", spinner: runtime.busy, dismissKey: runtime.busy ? nil : "runtime",
+                                   helpMessage: { if case .failed(let message) = runtime.state { return message } else { return nil } }()))
         }
         let attention = InstallCheck.attention
         if setupDone, !attention.isEmpty {
             let worst = attention.first!
             let more = attention.count > 1 ? " (and \(attention.count - 1) more)" : ""
             list.append(NoticeData(id: "install", symbol: "checkmark.shield.fill", title: worst.title + more, detail: worst.detail,
-                                   tint: worst.level == .problem ? Theme.bad : Theme.warn, actionTitle: "Details", dismissKey: InstallCheck.noticeKey(attention)))
+                                   tint: worst.level == .problem ? Theme.bad : Theme.warn, actionTitle: "Details", dismissKey: InstallCheck.noticeKey(attention), helpMessage: worst.title))
         }
         if VPNGuard.shared.paused, !session.isActive {
             let shortcut = VPNGuard.shared.hasShortcut
@@ -215,6 +219,30 @@ struct HomeScreen: View {
             list.append(NoticeData(id: "problem", symbol: first.status == "fixed" ? "checkmark.seal.fill" : "text.bubble.fill", title: title, detail: detail,
                                    tint: first.status == "fixed" ? Theme.good : .blue, actionTitle: "Open", dismissKey: "problem:\(first.id):\(Int(first.updatedAt))"))
         }
+        // What the run after an automatic change showed: it helped, or it did not and the setting was put back.
+        if let done = autofix.outcomeNotice {
+            let worked = done.outcome == "worked"
+            list.append(NoticeData(id: "autofix-outcome", symbol: worked ? "checkmark.seal.fill" : "arrow.uturn.backward.circle.fill",
+                                   title: worked ? "\(done.gameName): the automatic fix worked" : "\(done.gameName): the automatic fix did not help",
+                                   detail: worked ? "\(done.done) The next run: \(done.outcomeNote ?? "")." : "\(done.done) The next run: \(done.outcomeNote ?? ""). The setting was put back as it was.",
+                                   tint: worked ? Theme.good : .orange, dismissKey: "autofix-outcome:\(done.id.uuidString)"))
+        }
+        // A known cause was found in the log of a game that stopped: Porthole asks before it changes anything. Apply makes the change; the x leaves the game as it is.
+        if let ask = autofix.proposal {
+            list.append(NoticeData(id: "autofix-ask", symbol: "wand.and.stars", title: "\(ask.gameName): \(ask.title.lowercased())",
+                                   detail: "\(ask.reason) Porthole can fix this by changing one setting of this game. \(ask.done) Nothing changes unless you tap Apply; the x leaves the game as it is. Undo is there afterwards.",
+                                   tint: .orange, actionTitle: "Apply", dismissKey: "autofix-ask:\(ask.id.uuidString)"))
+        }
+        // A known cause was found in the log of a game that stopped, and one setting of that game was changed (Undo puts it back).
+        if let fix = autofix.notice {
+            if fix.adviceOnly == true {
+                list.append(NoticeData(id: "autofix-advice", symbol: "info.circle.fill", title: "\(fix.gameName): \(fix.title.lowercased())",
+                                       detail: "\(fix.reason) \(fix.done)", tint: .orange, actionTitle: "Open", dismissKey: "autofix:\(fix.id.uuidString)"))
+            } else {
+                list.append(NoticeData(id: "autofix", symbol: "wand.and.stars", title: "\(fix.gameName): \(fix.title.lowercased())",
+                                       detail: "\(fix.reason) \(fix.done) Start the game again; Undo changes it back.", tint: Theme.good, actionTitle: "Undo", dismissKey: "autofix:\(fix.id.uuidString)"))
+            }
+        }
         if let prompt = compat.prompt {
             list.append(NoticeData(id: "compat", symbol: prompt.crashed ? "exclamationmark.bubble.fill" : "chart.bar.doc.horizontal.fill",
                                    title: prompt.crashed ? "\(prompt.gameName) closed unexpectedly" : "How did \(prompt.gameName) run?",
@@ -226,6 +254,9 @@ struct HomeScreen: View {
     private func dismissNotice(_ notice: NoticeData) {
         guard let key = notice.dismissKey else { return }
         if key.hasPrefix("compat:") { compat.dismissPrompt(); return }       // the report question itself goes away
+        if key.hasPrefix("autofix-outcome:") { if let done = autofix.outcomeNotice { autofix.markOutcomeSeen(done) }; return }
+        if key.hasPrefix("autofix-ask:") { if let ask = autofix.proposal { autofix.decline(ask) }; return }
+        if key.hasPrefix("autofix:") { if let fix = autofix.notice { autofix.markSeen(fix) }; return }
         if key.hasPrefix("installer:") { UserDefaults.standard.removeObject(forKey: "f4.installerRan"); installerRan = nil }
         dismissed.insert(key)
         UserDefaults.standard.set(Array(dismissed), forKey: "f4.dismissedNotices")
@@ -234,7 +265,10 @@ struct HomeScreen: View {
     private func act(_ notice: NoticeData) {
         switch notice.id {
         case "jit": session.cancelJITWait()
-        case "failed": if session.restartAdvised { session.closeApp() } else { session.dismiss() }
+        case "failed":
+            if session.restartAdvised { session.closeApp(); return }
+            if case .failed(let message) = session.state, message == SessionController.steamClientMissing { session.dismiss(); router.openSteam(); return }
+            session.dismiss()
         case "restart": session.closeApp()
         case "restart-pending": RestartCoordinator.shared.cancel()
         case "setup": router.showSetup = true
@@ -248,6 +282,11 @@ struct HomeScreen: View {
         case "steam-update": router.openSteam()
         case "download", "download-epic", "download-gog", "download-itch", "download-amazon", "download-ea": router.openDownloads()
         case "problem": router.openSettings(.report)
+        case "autofix-ask": if let ask = autofix.proposal { autofix.accept(ask) }
+        case "autofix": if let fix = autofix.notice { autofix.undo(fix) }
+        case "autofix-advice":
+            // Only the explanation about the install has somewhere to go; a note that something was found again just goes away.
+            if let fix = autofix.notice { autofix.markSeen(fix); if fix.ruleID == "address-space-entitlement" { router.openSettings(.jit) } }
         case "compat": if let prompt = compat.prompt { reportGame = model.games.first { $0.id == prompt.gameID } }
         default: break
         }

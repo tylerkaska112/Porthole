@@ -1,0 +1,260 @@
+diff --git a/src/d3d11/d3d11.def b/src/d3d11/d3d11.def
+index 433d3ad..27ef326 100644
+--- a/src/d3d11/d3d11.def
++++ b/src/d3d11/d3d11.def
+@@ -7,3 +7,7 @@ EXPORTS
+     DXMTLsfgBegin
+     DXMTLsfgRun
+     DXMTLsfgAbort
++    DXMTUpscaleBegin
++    DXMTUpscaleRun
++    DXMTUpscaleAbort
++    DXMTUpscaleFailed
+diff --git a/src/d3d11/d3d11_lsfg_bridge.cpp b/src/d3d11/d3d11_lsfg_bridge.cpp
+index 13c1412..199b494 100644
+--- a/src/d3d11/d3d11_lsfg_bridge.cpp
++++ b/src/d3d11/d3d11_lsfg_bridge.cpp
+@@ -16,6 +16,7 @@
+ // Both sides use the same Metal device, so the textures and the shared events are the ones Metal hands out; no copy through the CPU happens. Everything that can go wrong ends
+ // in "returns 0": the game then simply gets no extra frames (and the status file says why).
+ #include "d3d11_lsfg.hpp"
++#include "d3d11_lsfg_upscale.hpp"
+ #include "d3d11_fence.hpp"
+ #include "d3d11_resource.hpp"
+ #include <mutex>
+@@ -33,6 +34,23 @@ struct DXMTLsfgFrame {
+   uint64_t out_texture[3];          // Metal textures of the generated pictures
+   uint64_t out_event, out_value;    // shared event: the passes are done when it reaches out_value
+   uint64_t done_event, done_value;  // the caller signals it with done_value once it has copied the generated pictures out
++  uint32_t out_width, out_height;   // set by Run when the generated pictures were enlarged by Lossless Scaling's upscaler (0 = they are the game's size)
++};
++
++// Porthole 0201: Lossless Scaling's upscaler (d3d11_lsfg_upscale.hpp) for Direct3D 12 games. Same two-device arrangement as above, once per presented picture. Layout shared with
++// madeira_d3d12.dll (struct upscale_bridge_frame).
++struct DXMTUpscaleFrame {
++  uint32_t size;
++  uint32_t width, height, dxgi_format;   // the game's picture
++  uint32_t out_width, out_height;        // what it is enlarged to
++  uint32_t method;                       // 1 = LS1, 2 = LS1 performance
++  uint32_t level;                        // sharpness 0..4
++  uint32_t flags;                        // in: 1 = the passes may not be running yet (start-up: do not start new ones while the last are not done)
++  uint32_t reserved;
++  uint64_t input_texture, input_event, input_value;   // as for the frame generation
++  uint64_t out_texture;                  // Metal texture of the enlarged picture
++  uint64_t out_event, out_value;         // the passes are done when it reaches out_value
++  uint64_t done_event, done_value;       // the caller signals it with done_value once it has copied the enlarged picture out
+ };
+ }
+ 
+@@ -66,6 +84,19 @@ struct Bridge {
+   uint64_t cBegin = 0, cYes = 0, cFast = 0, cBusy = 0;   // heartbeat counters
+   std::chrono::steady_clock::time_point busySince{};
+   std::chrono::steady_clock::time_point beat{};
++  // Lossless Scaling's upscaler (Porthole 0201)
++  Ptr<ID3D11Fence> upInFence, upOutFence, upDoneFence;
++  obj_handle_t upInEvent = 0, upOutEvent = 0, upDoneEvent = 0;
++  uint64_t upInValue = 0, upOutValue = 0, upDoneValue = 0, upDoneWait = 0;
++  Ptr<ID3D11Texture2D> upInput;
++  std::unique_ptr<Ls1Upscaler> up;
++  uint32_t upW = 0, upH = 0, upOw = 0, upOh = 0, upMethod = 0, upLevel = 0;
++  DXGI_FORMAT upFmt = DXGI_FORMAT_UNKNOWN;
++  bool upDead = false, upRunning = false;
++  std::string upError;
++  std::chrono::steady_clock::time_point upStatT{};
++  uint64_t upFrames = 0;
++  double upMs = 0;
+ };
+ 
+ Bridge &bridge() {
+@@ -96,6 +127,12 @@ bool ensureDevice(Bridge &b, Control &ctl) {
+     return false;
+   }
+   b.inValue = b.outValue = b.doneValue = b.doneWait = 0;
++  if (FAILED(CreateFenceExposingEvent(d, 0, &b.upInEvent, b.upInFence.put())) || FAILED(CreateFenceExposingEvent(d, 0, &b.upOutEvent, b.upOutFence.put())) ||
++      FAILED(CreateFenceExposingEvent(d, 0, &b.upDoneEvent, b.upDoneFence.put()))) {
++    Logger::info("[ls-up] (Direct3D 12 bridge) the events for the upscaler could not be created");
++    b.upInEvent = b.upOutEvent = b.upDoneEvent = 0;
++  }
++  b.upInValue = b.upOutValue = b.upDoneValue = b.upDoneWait = 0;
+   Logger::info("[lsfg] (Direct3D 12 bridge) Direct3D 11 device for the passes created");
+   return true;
+ }
+@@ -107,6 +144,34 @@ obj_handle_t metalTexture(ID3D11Resource *r) {
+   return a ? a->texture().handle : 0;
+ }
+ 
++void upFail(Bridge &b, const std::string &why) {
++  b.upError = why;
++  b.upDead = true;
++  b.up.reset();
++  Logger::info("[ls-up] (Direct3D 12 bridge) " + why);
++}
++
++/// The device for the passes without the frame generation's status messages (the upscaler works without the frame generation being on).
++bool ensureDeviceQuiet(Bridge &b) {
++  if (b.dev) return true;
++  D3D_FEATURE_LEVEL level{};
++  HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, b.dev.put(), &level, b.imm.put());
++  if (FAILED(hr) || !b.dev || !b.imm) { upFail(b, std::format("the Direct3D 11 device for the passes could not be created (0x{:x})", (unsigned)hr)); b.dev.reset(); return false; }
++  if (FAILED(b.imm->QueryInterface(__uuidof(ID3D11DeviceContext4), reinterpret_cast<void **>(b.imm4.put())))) { upFail(b, "the Direct3D 11 device has no fences"); b.dev.reset(); return false; }
++  auto *d = static_cast<MTLD3D11Device *>(b.dev.get());
++  if (FAILED(CreateFenceExposingEvent(d, 0, &b.inEvent, b.inFence.put())) || FAILED(CreateFenceExposingEvent(d, 0, &b.outEvent, b.outFence.put())) ||
++      FAILED(CreateFenceExposingEvent(d, 0, &b.doneEvent, b.doneFence.put())) || FAILED(CreateFenceExposingEvent(d, 0, &b.upInEvent, b.upInFence.put())) ||
++      FAILED(CreateFenceExposingEvent(d, 0, &b.upOutEvent, b.upOutFence.put())) || FAILED(CreateFenceExposingEvent(d, 0, &b.upDoneEvent, b.upDoneFence.put()))) {
++    upFail(b, "the events that join the two graphics paths could not be created");
++    b.dev.reset();
++    return false;
++  }
++  b.inValue = b.outValue = b.doneValue = b.doneWait = 0;
++  b.upInValue = b.upOutValue = b.upDoneValue = b.upDoneWait = 0;
++  Logger::info("[ls-up] (Direct3D 12 bridge) Direct3D 11 device for the passes created");
++  return true;
++}
++
+ void rebuild(Bridge &b) {
+   b.fg.reset();
+   b.input.reset();
+@@ -215,6 +280,16 @@ __declspec(dllexport) int DXMTLsfgRun(DXMTLsfgFrame *f) {
+   std::vector<ID3D11Texture2D *> out;
+   b.fg->run(b.input.get(), true, out);
+   if (!b.fg->ok()) { fail(b, ctl, b.fg->error()); return 0; }
++  f->out_width = f->out_height = 0;
++  if (b.up && b.up->ok() && !b.upDead && b.up->width() == b.w && b.up->height() == b.h && out.size() + 1 <= b.up->capacity()) {
++    // Lossless Scaling's upscaler is on for this game: the generated pictures are enlarged by the same passes as the game's own
++    std::vector<ID3D11Texture2D *> big;
++    if (b.up->run(nullptr, out, big) && big.size() == out.size()) {
++      out = big;
++      f->out_width = b.up->outWidth();
++      f->out_height = b.up->outHeight();
++    }
++  }
+   b.imm4->Signal(b.outFence.get(), ++b.outValue);
+   b.imm->Flush();
+   b.statMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+@@ -265,4 +340,89 @@ __declspec(dllexport) void DXMTLsfgAbort(DXMTLsfgFrame *f) {
+   if (b.inEvent) MTLSharedEvent_signalValue(b.inEvent, f->input_value);
+   if (f->reserved == 1) fail(b, control(), "the passes did not finish in time, so frame generation switched itself off for this game (switch it off and on in the menu to try again)");
+ }
++
++/// Asks whether the game's picture is to be enlarged by Lossless Scaling's upscaler this frame. Returns 1 when the caller has to copy its finished picture into `input_texture`,
++/// signal `input_event` with `input_value`, and then call DXMTUpscaleRun. 0: not now (the caller enlarges it itself).
++__declspec(dllexport) int DXMTUpscaleBegin(DXMTUpscaleFrame *f) {
++  if (!f || f->size < sizeof(DXMTUpscaleFrame)) return 0;
++  Bridge &b = bridge();
++  std::lock_guard<std::mutex> g(b.lock);
++  if (!processAllowed() || b.upDead || f->width < 64 || f->height < 64 || !f->out_width || !f->out_height || f->method < 1 || f->method > 2) return 0;
++  auto now = std::chrono::steady_clock::now();
++  if (!ensureDeviceQuiet(b) || !b.upInEvent) return 0;
++  if (b.up && (b.upW != f->width || b.upH != f->height || b.upOw != f->out_width || b.upOh != f->out_height || b.upMethod != f->method || b.upLevel != f->level || b.upFmt != (DXGI_FORMAT)f->dxgi_format)) {
++    b.up.reset();
++    b.upInput.reset();
++    b.upRunning = false;
++  }
++  if (!b.up) {
++    b.upW = f->width; b.upH = f->height; b.upOw = f->out_width; b.upOh = f->out_height; b.upMethod = f->method; b.upLevel = f->level; b.upFmt = (DXGI_FORMAT)f->dxgi_format;
++    D3D11_TEXTURE2D_DESC d{};
++    d.Width = b.upW; d.Height = b.upH; d.MipLevels = 1; d.ArraySize = 1; d.Format = b.upFmt; d.SampleDesc.Count = 1;
++    d.Usage = D3D11_USAGE_DEFAULT; d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++    if (FAILED(b.dev->CreateTexture2D(&d, nullptr, b.upInput.put())) || !metalTexture(b.upInput.get())) { upFail(b, "the picture the game's frame is copied into could not be created"); return 0; }
++    auto up = std::make_unique<Ls1Upscaler>(b.dev.get(), b.imm4.get(), b.upW, b.upH, b.upFmt, b.upOw, b.upOh, b.upMethod == 2, (int)b.upLevel, 4);
++    if (!up->ok()) { upFail(b, up->error()); return 0; }
++    b.up = std::move(up);
++    b.upStatT = now;
++    b.upFrames = 0; b.upMs = 0;
++  }
++  // start-up: the first run of each shader has to be compiled, which takes seconds: start no more passes while the last are not done
++  if ((f->flags & 1) && b.upOutValue > 0 && MTLSharedEvent_signaledValue(b.upOutEvent) < b.upOutValue) return 0;
++  f->input_texture = metalTexture(b.upInput.get());
++  f->input_event = b.upInEvent;
++  f->input_value = ++b.upInValue;
++  b.upRunning = true;
++  return 1;
++}
++
++/// The caller has copied its picture and committed the signal. Runs the passes: the enlarged picture's Metal texture and the events are filled in. Returns 1 on success.
++__declspec(dllexport) int DXMTUpscaleRun(DXMTUpscaleFrame *f) {
++  if (!f || f->size < sizeof(DXMTUpscaleFrame)) return 0;
++  Bridge &b = bridge();
++  std::lock_guard<std::mutex> g(b.lock);
++  if (!b.upRunning || !b.up) return 0;
++  b.upRunning = false;
++  auto t0 = std::chrono::steady_clock::now();
++  b.imm4->Wait(b.upInFence.get(), f->input_value);        // the game's picture is in the input texture
++  b.imm4->Wait(b.upDoneFence.get(), b.upDoneWait);         // the caller has copied last time's enlarged picture out
++  std::vector<ID3D11Texture2D *> out;
++  if (!b.up->run(b.upInput.get(), {}, out) || out.size() != 1) { upFail(b, b.up->error().empty() ? std::string("the passes could not run") : b.up->error()); MTLSharedEvent_signalValue(b.upInEvent, f->input_value); return 0; }
++  b.imm4->Signal(b.upOutFence.get(), ++b.upOutValue);
++  b.imm->Flush();
++  b.upMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
++  b.upFrames++;
++  f->out_texture = metalTexture(out[0]);
++  f->out_event = b.upOutEvent;
++  f->out_value = b.upOutValue;
++  f->done_event = b.upDoneEvent;
++  f->done_value = ++b.upDoneValue;
++  b.upDoneWait = f->done_value;
++  if (!f->out_texture) { MTLSharedEvent_signalValue(b.upDoneEvent, f->done_value); upFail(b, "the enlarged picture has no Metal texture"); return 0; }
++  auto now = std::chrono::steady_clock::now();
++  double secs = std::chrono::duration<double>(now - b.upStatT).count();
++  if (secs >= 5.0) {
++    Logger::info(std::format("[ls-up] (Direct3D 12) {:.1f} s: {} frames, {}x{} -> {}x{} ({}, sharpness {}), the passes cost {:.2f} ms on the present thread per frame", secs, b.upFrames, b.upW, b.upH, b.upOw, b.upOh,
++                             b.upMethod == 2 ? "LS1 performance" : "LS1", b.upLevel + 1, b.upFrames ? b.upMs / (double)b.upFrames : 0.0));
++    b.upStatT = now; b.upFrames = 0; b.upMs = 0;
++  }
++  return 1;
++}
++
++/// The caller could not copy its picture after DXMTUpscaleBegin said yes: nothing waits for it.
++__declspec(dllexport) void DXMTUpscaleAbort(DXMTUpscaleFrame *f) {
++  if (!f) return;
++  Bridge &b = bridge();
++  std::lock_guard<std::mutex> g(b.lock);
++  b.upRunning = false;
++  if (b.upInEvent) MTLSharedEvent_signalValue(b.upInEvent, f->input_value);
++}
++
++/// 1 when the upscaler has been given up on (it could not be set up, or its passes failed): the caller uses MetalFX; `message` says why (up to cap bytes).
++__declspec(dllexport) int DXMTUpscaleFailed(char *message, uint32_t cap) {
++  Bridge &b = bridge();
++  std::lock_guard<std::mutex> g(b.lock);
++  if (message && cap) { std::snprintf(message, cap, "%s", b.upError.c_str()); }
++  return b.upDead ? 1 : 0;
++}
+ }
+diff --git a/src/d3d11/d3d11_lsfg_upscale.hpp b/src/d3d11/d3d11_lsfg_upscale.hpp
+index dc1964e..c90779c 100644
+--- a/src/d3d11/d3d11_lsfg_upscale.hpp
++++ b/src/d3d11/d3d11_lsfg_upscale.hpp
+@@ -40,16 +40,19 @@ public:
+   int level() const { return level_; }
+   DXGI_FORMAT outFormat() const { return outFmt_; }
+ 
+-  /// Enlarges the game's frame (`backbuffer`) and then each of `extra` (generated frames, which are textures with a shader view). `out` gets one texture per picture, in that order.
++  /// Enlarges the game's frame (`backbuffer`, null to leave it out) and then each of `extra` (generated frames, which are textures with a shader view). `out` gets one texture per
++  /// picture that was given, in that order (the game's frame first). The game's frame always goes to output 0, the extra pictures to 1, 2, ...
+   /// Everything is recorded on a deferred context and replayed on the game's own.
+   bool run(ID3D11Resource *backbuffer, const std::vector<ID3D11Texture2D *> &extra, std::vector<ID3D11Texture2D *> &out) {
+     out.clear();
+     if (!ok_ || 1 + extra.size() > nOut_) return false;
+     ID3D11DeviceContext *c = def_.get();
+     prev_ = false;
+-    c->CopyResource(in_.tex.get(), backbuffer);
+     setup(c);
+-    pictures(c, in_.srv.get(), 0);
++    if (backbuffer) {
++      c->CopyResource(in_.tex.get(), backbuffer);
++      pictures(c, in_.srv.get(), 0);
++    }
+     for (size_t i = 0; i < extra.size(); i++) {
+       ID3D11ShaderResourceView *v = srvFor(extra[i]);
+       if (!v) { clear(c); Ptr<ID3D11CommandList> drop; c->FinishCommandList(FALSE, drop.put()); return false; }
+@@ -64,7 +67,8 @@ public:
+       return false;
+     }
+     imm_->ExecuteCommandList(cl.get(), TRUE);
+-    for (size_t i = 0; i < 1 + extra.size(); i++) out.push_back(out_[i].tex.get());
++    if (backbuffer) out.push_back(out_[0].tex.get());
++    for (size_t i = 0; i < extra.size(); i++) out.push_back(out_[i + 1].tex.get());
+     return true;
+   }
+ 

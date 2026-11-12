@@ -96,7 +96,6 @@ enum GameSetupShare {
         if setup.inDesktop == true { out.append("Run on Wine's desktop") }
         if let e = setup.engine {
             if let v = e.avx { out.append("AVX and AVX2: \(v ? "on" : "off")") }
-            if let v = e.frameGeneration { out.append("Frame generation: \(v ? "on" : "off")") }
             if let v = e.cpuCount { out.append("CPU cores reported: \(v)") }
             if let v = e.anisotropy { out.append("Direct3D 9 anisotropic filtering: \(v)\u{00D7}") }
             if let v = e.reducedX87 { out.append("Reduced-precision x87: \(v ? "on" : "off")") }

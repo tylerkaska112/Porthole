@@ -39,6 +39,18 @@ final class SteamInstaller {
     var onState: ((State) -> Void)?
     /// Tests can shrink these.
     var parallelChunks = 24
+    /// The game is going onto an external drive: few chunks at once, written one at a time and in the order they were asked for, and files not extended to their full size up
+    /// front. A cheap flash drive manages a few MB/s of sequential writing but only a fraction of that when dozens of writers jump between files, and extending a file on exFAT
+    /// can write zeros for all of it first.
+    var slowDisk: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _slowDisk }
+        set { lock.lock(); _slowDisk = newValue; lock.unlock() }
+    }
+    private var _slowDisk = false
+    /// The game is going onto an external drive. A drive that tested fast is written like the device; if its writes then turn out slow (a cheap SSD whose cache has
+    /// filled, a drive that got hot) the download switches to the gentle way by itself.
+    var external = false
+    private let diskQueue = DispatchQueue(label: "steam.disk-writes", qos: .userInitiated)
     /// Tests turn this off to keep the number in flight fixed.
     var adaptive = true
     var retriesPerChunk = 4
@@ -79,6 +91,7 @@ final class SteamInstaller {
     private var servers: [SteamCDNServer] = []
     private var hostBook = SteamHostBook(hosts: [])
     private var statChunks = 0, statNet = 0.0, statDecode = 0.0, statWrite = 0.0      // per-chunk time, summed between two log lines
+    private var totalWriteSeconds = 0.0        // all the time chunks spent being written (never reset: `watchDisk` compares two readings)
     private(set) var gameFolder = URL(fileURLWithPath: "/")
     private var progressFolder = URL(fileURLWithPath: "/")
     private(set) var installInfo: SteamAppInfo?
@@ -241,6 +254,7 @@ final class SteamInstaller {
                 guard id == self.token else { return }
                 if index >= jobs.count {
                     guard !loaded.isEmpty else { self.fail(skipped.first ?? "No depot of \(self.name) could be downloaded.", id); return }
+                    if !skipped.isEmpty { SteamLog.event("Steam download: \(skipped.count) depot(s) were left out (\(skipped.joined(separator: " "))); the game may be incomplete if one of them was needed.") }
                     self.manifests = loaded; self.keys = loadedKeys
                     self.beginTransfer(id); return
                 }
@@ -250,7 +264,7 @@ final class SteamInstaller {
                     guard id == self.token else { return }
                     switch key {
                     case .failure(let error):
-                        if error.notOwned { skipped.append(error.message); SteamLog.event("Steam download: skipping depot \(job.depot.id): \(error.message)"); next(index + 1) }
+                        if error.notOwned || error.blocked { skipped.append(error.message); SteamLog.event("Steam download: skipping depot \(job.depot.id): \(error.message)"); next(index + 1) }
                         else { self.fail(error.message, id) }
                     case .success(let depotKey):
                         self.backend.manifestCode(app: job.keyApp, depot: job.depot.id, manifest: job.manifest) { code in
@@ -366,6 +380,7 @@ final class SteamInstaller {
     private func reusableChunks(skipping done: Set<UInt32>, id: Int) -> (done: Set<UInt32>, files: Int, bytes: UInt64) {
         struct Job { var path: String; var file: SteamManifestFile; var first: UInt32 }
         var jobs: [Job] = []
+        var candidates: [Job] = []
         var global: UInt32 = 0
         var totalBytes: UInt64 = 0
         for (depotIndex, manifest) in manifests.enumerated() {
@@ -375,12 +390,20 @@ final class SteamInstaller {
                 if file.isDirectory { continue }
                 if lastOwner[Self.overlapKey(file.path)] != depotIndex { global += UInt32(file.chunks.count); continue }
                 if file.chunks.isEmpty || file.size == 0 { continue }
-                let path = gameFolder.appendingPathComponent(file.path).path
-                var info = stat()
-                if stat(path, &info) == 0, info.st_size > 0 { jobs.append(Job(path: path, file: file, first: global)); totalBytes += UInt64(info.st_size) }
+                candidates.append(Job(path: gameFolder.appendingPathComponent(file.path).path, file: file, first: global))
                 global += UInt32(file.chunks.count)
             }
         }
+        // Which of them already exist: one stat per file, all at once (on a drive each is a round trip, and a game has thousands of files).
+        var sizes = [Int64](repeating: 0, count: candidates.count)
+        sizes.withUnsafeMutableBufferPointer { sizesBuffer in
+            let output = sizesBuffer
+            DispatchQueue.concurrentPerform(iterations: candidates.count) { i in
+                var info = stat()
+                if stat(candidates[i].path, &info) == 0 { output[i] = Int64(info.st_size) }
+            }
+        }
+        for (i, candidate) in candidates.enumerated() where sizes[i] > 0 { jobs.append(candidate); totalBytes += UInt64(sizes[i]) }
         guard !jobs.isEmpty else { return ([], 0, 0) }
         let merge = NSLock()
         var found = Set<UInt32>(), files = 0, bytes: UInt64 = 0, checkedBytes: UInt64 = 0, lastShown = -1
@@ -421,23 +444,53 @@ final class SteamInstaller {
         return (found, files, bytes)
     }
 
+    private struct Layout { var items: [Item]; var remaining: [Int: Int]; var doneBytes: UInt64; var netTotal: UInt64; var netDone: UInt64; var overridden: Int }
+
+    /// Creating every folder and empty file of a game takes a long time on a slow drive (thousands of small operations), so it is done off the main thread.
     private func layOutAndTransfer(_ id: Int, done: Set<UInt32>) {
-        // Lay out the folders and empty files, and the list of chunks still to fetch.
+        state = .preparing("Creating the game's folders\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let layout = self.layOut(done: done)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, id == self.token, !self.state.isFinal else { return }
+                self.startTransfer(id, layout)
+            }
+        }
+    }
+
+    /// Lays out the folders and empty files, and the list of chunks still to fetch. Touches no state the main thread uses.
+    private func layOut(done: Set<UInt32>) -> Layout {
         var items: [Item] = []
         var global: UInt32 = 0
         var doneBytes: UInt64 = 0
         var netTotal: UInt64 = 0, netDone: UInt64 = 0
-        remaining = [:]
+        var remainingLocal: [Int: Int] = [:]
         var overridden = 0
+        // One folder is made once, not once per file in it: on a drive each call is a round trip, and a game has hundreds of files in a few dozen folders.
+        var madeFolders = Set<String>()
+        var folderCalls = 0, fileCount = 0
+        let began = Date()
+        func ensureFolder(_ url: URL) {
+            guard madeFolders.insert(url.path).inserted else { return }
+            folderCalls += 1
+            try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        defer {
+            SteamLog.event("[steam-depot] laid out \(fileCount) file(s) in \(folderCalls) folder(s) in \(Int(Date().timeIntervalSince(began) * 1000)) ms")
+        }
         for (depotIndex, manifest) in manifests.enumerated() {
             for (fileIndex, file) in manifest.files.enumerated() {
                 if Self.isRedistributable(file.path) { global += UInt32(file.chunks.count); continue }
                 let target = gameFolder.appendingPathComponent(file.path)
-                if file.isDirectory { try? fm.createDirectory(at: target, withIntermediateDirectories: true); continue }
+                if file.isDirectory { ensureFolder(target); continue }
                 if file.isSymlink { global += UInt32(file.chunks.count); continue }
                 if lastOwner[Self.overlapKey(file.path)] != depotIndex { global += UInt32(file.chunks.count); overridden += 1; continue }
-                try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                fileCount += 1
+                // A file with data gets its folder when its first chunk is written (see `write`): on a slow drive every folder call is a round trip, and Preparing used to make all of them
+                // before anything was downloaded. Only an empty file, which is made right here, needs its folder now.
                 if file.chunks.isEmpty || file.size == 0 {
+                    ensureFolder(target.deletingLastPathComponent())
                     if !fm.fileExists(atPath: target.path) { fm.createFile(atPath: target.path, contents: nil) }
                     continue
                 }
@@ -448,7 +501,7 @@ final class SteamInstaller {
                     else { items.append(Item(depot: depotIndex, file: fileIndex, chunk: chunkIndex, global: global)); left += 1 }
                     global += 1
                 }
-                if left > 0 { remaining[fileKey(depotIndex, fileIndex)] = left }
+                if left > 0 { remainingLocal[fileKey(depotIndex, fileIndex)] = left }
                 else {
                     // Every chunk was already right: the file only needs the new length (an older version may have been longer or shorter).
                     var info = stat()
@@ -456,6 +509,12 @@ final class SteamInstaller {
                 }
             }
         }
+        return Layout(items: items, remaining: remainingLocal, doneBytes: doneBytes, netTotal: netTotal, netDone: netDone, overridden: overridden)
+    }
+
+    private func startTransfer(_ id: Int, _ layout: Layout) {
+        let items = layout.items, doneBytes = layout.doneBytes, netTotal = layout.netTotal, netDone = layout.netDone, overridden = layout.overridden
+        remaining = layout.remaining
         lock.lock(); written = doneBytes; networkTotal = netTotal; networkAlreadyDone = netDone; lock.unlock()
         if overridden > 0 { SteamLog.event("[steam-depot] overlap files=\(overridden) (a later depot's copy is installed, as Valve's client does)") }
         SteamLog.event("Steam download: \(items.count) chunk(s) to fetch, \(Self.size(Int64(netTotal))) to download (\(Self.size(Int64(total))) on disk).")
@@ -464,10 +523,12 @@ final class SteamInstaller {
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
 
         // How many chunks are in flight adapts to what the connection can carry (see ConcurrencyController).
-        let fixed = parallelChunks
+        let gentleChunks = 4
+        let fixed = slowDisk ? gentleChunks : parallelChunks
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             var controller = ConcurrencyController(start: max(1, fixed), floor: max(1, min(fixed, 8)), ceiling: self.adaptive ? 96 : max(1, fixed))
+            var watch = DiskWatch()
             let gate = NSCondition()
             var inFlight = 0
             for item in items {
@@ -477,8 +538,10 @@ final class SteamInstaller {
                     self.lock.lock(); stopped = self.cancelled || self.failure != nil; let bytes = self.networkBytes; self.lock.unlock()
                     if stopped { break }
                     if self.adaptive { controller.observe(totalBytes: bytes, now: Date()) }
-                    self.lock.lock(); self.currentTarget = controller.target; self.lock.unlock()
-                    if inFlight < controller.target { break }
+                    if self.external && !self.slowDisk { self.watchDisk(&watch) }
+                    let limit = self.slowDisk ? min(controller.target, gentleChunks) : controller.target
+                    self.lock.lock(); self.currentTarget = limit; self.lock.unlock()
+                    if inFlight < limit { break }
                     gate.wait(until: Date().addingTimeInterval(0.5))
                 }
                 if stopped { gate.unlock(); break }
@@ -525,9 +588,9 @@ final class SteamInstaller {
                     let plain = SteamCipher.unpackChunk(data, key: self.keys[item.depot], originalSize: chunk.originalSize)
                     let verified = plain != nil && plain!.count == chunk.originalSize && SteamCipher.sha1(plain!) == chunk.sha
                     let writeStart = Date()
-                    if let plain, verified, self.write(plain, item: item, network: UInt64(data.count)) {
+                    if let plain, verified, self.writeInOrder(plain, item: item, network: UInt64(data.count)) {
                         self.lock.lock()
-                        self.statChunks += 1; self.statNet += netSeconds; self.statDecode += writeStart.timeIntervalSince(decodeStart); self.statWrite += Date().timeIntervalSince(writeStart)
+                        self.statChunks += 1; self.statNet += netSeconds; self.statDecode += writeStart.timeIntervalSince(decodeStart); self.statWrite += Date().timeIntervalSince(writeStart); self.totalWriteSeconds += Date().timeIntervalSince(writeStart)
                         self.lock.unlock()
                         finished(); return
                     }
@@ -554,6 +617,31 @@ final class SteamInstaller {
 
     private func setFailure(_ message: String) { lock.lock(); if failure == nil { failure = message }; lock.unlock() }
 
+    /// What `watchDisk` remembers between looks: the counters at the start of the window.
+    struct DiskWatch { var began: Date?; var written: UInt64 = 0; var writeSeconds = 0.0 }
+
+    /// Backpressure from the drive itself. Every 8 seconds: if the chunks written in that time took more than one writer's whole time between them (the downloads are
+    /// waiting on the drive, not on the network) and the drive took less than the gentle limit, the rest of this download is written gently.
+    private func watchDisk(_ watch: inout DiskWatch) {
+        let now = Date()
+        lock.lock(); let doneBytes = written; let writeTime = totalWriteSeconds; lock.unlock()
+        guard let began = watch.began else { watch = DiskWatch(began: now, written: doneBytes, writeSeconds: writeTime); return }
+        let elapsed = now.timeIntervalSince(began)
+        guard elapsed >= 8 else { return }
+        let mbps = Double(doneBytes &- watch.written) / elapsed / 1_048_576
+        let busy = (writeTime - watch.writeSeconds) / elapsed
+        watch = DiskWatch(began: now, written: doneBytes, writeSeconds: writeTime)
+        if busy > 1.0 && mbps < DriveWriteMode.gentleBelowMBps {
+            slowDisk = true
+            SteamLog.event(String(format: "[steam-depot] the drive takes %.1f MB/s with the writers waiting on it (%.1f writers' time): writing gently from here", mbps, busy))
+        }
+    }
+
+    /// On an external drive the writes go through one queue, so only one is happening at a time (the chunks wait in memory: at most as many as are in flight, four).
+    private func writeInOrder(_ plain: Data, item: Item, network: UInt64) -> Bool {
+        slowDisk ? diskQueue.sync { write(plain, item: item, network: network) } : write(plain, item: item, network: network)
+    }
+
     /// Put a chunk at its place in its file. Returns false if the disk write failed.
     private func write(_ plain: Data, item: Item, network: UInt64) -> Bool {
         let manifest = manifests[item.depot]
@@ -562,15 +650,28 @@ final class SteamInstaller {
         let key = fileKey(item.depot, item.file)
         lock.lock()
         var descriptor = descriptors[key]
-        if descriptor == nil {
-            let path = gameFolder.appendingPathComponent(file.path).path
-            let opened = open(path, O_RDWR | O_CREAT, 0o644)
-            if opened >= 0 {
-                if fstat_size(opened) != Int64(file.size) { _ = ftruncate(opened, off_t(file.size)) }
-                descriptors[key] = opened; descriptor = opened
-            }
-        }
         lock.unlock()
+        if descriptor == nil {
+            // Opening a file and giving it its full size can take seconds on a drive (a thumb drive may write zeros to extend it), and `lock` is the one the main thread's
+            // progress tick takes: it must not be held meanwhile, or the whole app waits for the drive. `openLock` only keeps two chunks of one file from opening it twice.
+            openLock.lock()
+            lock.lock(); descriptor = descriptors[key]; lock.unlock()
+            if descriptor == nil {
+                let path = gameFolder.appendingPathComponent(file.path).path
+                var opened = open(path, O_RDWR | O_CREAT, 0o644)
+                if opened < 0, errno == ENOENT {
+                    // The folder is not there yet (folders are made when their first file is written, not while Preparing): make it, with its parents, and open again.
+                    try? fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                    opened = open(path, O_RDWR | O_CREAT, 0o644)
+                }
+                if opened >= 0 {
+                    if !slowDisk, fstat_size(opened) != Int64(file.size) { _ = ftruncate(opened, off_t(file.size)) }
+                    lock.lock(); descriptors[key] = opened; lock.unlock()
+                    descriptor = opened
+                }
+            }
+            openLock.unlock()
+        }
         guard let fd = descriptor else { setFailure("A file of the game could not be written."); return false }
         let count = plain.withUnsafeBytes { pwrite(fd, $0.baseAddress, plain.count, off_t(chunk.offset)) }
         guard count == plain.count else { setFailure("The disk write failed. The device may be out of space."); return false }
@@ -579,10 +680,17 @@ final class SteamInstaller {
         pendingDone.append(item.global)
         let left = (remaining[key] ?? 1) - 1
         remaining[key] = left
-        if left <= 0, let fd = descriptors.removeValue(forKey: key) { close(fd) }
+        let finished = left <= 0 ? descriptors.removeValue(forKey: key) : nil
         lock.unlock()
+        if let finished {
+            // A file that was not sized up front gets its length now (it only differs when the manifest says the file ends in a gap no chunk covers).
+            if slowDisk, fstat_size(finished) != Int64(file.size) { _ = ftruncate(finished, off_t(file.size)) }
+            close(finished)     // closing a finished file can wait for the drive to flush it: not under the lock
+        }
         return true
     }
+
+    private let openLock = NSLock()
 
     private func fstat_size(_ fd: Int32) -> Int64 { var info = stat(); return fstat(fd, &info) == 0 ? Int64(info.st_size) : -1 }
 
@@ -592,18 +700,26 @@ final class SteamInstaller {
     }
 
     /// Chunks that are done are remembered on disk, so an interrupted download continues instead of starting over.
-    private func flushProgress() {
+    /// One queue for the list of finished chunks, so its writes keep their order and the main thread never waits for a busy drive (an SSD or a thumb drive with dozens of chunk writes
+    /// in flight can take seconds to answer a small append, and this is called from the progress tick on the main thread).
+    private let progressQueue = DispatchQueue(label: "steam.progress-file", qos: .utility)
+
+    /// `wait`: pause, cancel and the end of the download need the list complete on disk before they go on; the progress tick does not.
+    private func flushProgress(wait: Bool = true) {
         lock.lock(); let batch = pendingDone; pendingDone = []; lock.unlock()
         guard !batch.isEmpty else { return }
         var data = Data(capacity: batch.count * 4)
         for value in batch { for i in 0..<4 { data.append(UInt8((value >> (8 * UInt32(i))) & 0xFF)) } }
         let file = progressFolder.appendingPathComponent("done.bin")
-        if let handle = try? FileHandle(forWritingTo: file) { handle.seekToEndOfFile(); handle.write(data); try? handle.close() } else { try? data.write(to: file) }
+        let write = {
+            if let handle = try? FileHandle(forWritingTo: file) { handle.seekToEndOfFile(); handle.write(data); try? handle.close() } else { try? data.write(to: file) }
+        }
+        if wait { progressQueue.sync(execute: write) } else { progressQueue.async(execute: write) }
     }
 
     private func tick() {
         guard case .downloading = state else { return }
-        flushProgress()
+        flushProgress(wait: false)
         lock.lock()
         let now = Date()
         samples.append((now, networkBytes)); samples.removeAll { now.timeIntervalSince($0.time) > 4 }
@@ -690,10 +806,17 @@ final class SteamInstaller {
 
     // MARK: Helpers
 
+    /// Free space where the game will be written. "Important usage" is the number iOS offers for the device's own storage, but an external drive (exFAT, NTFS) often reports 0 or nothing
+    /// for it while having plenty of room: a download to the SSD was refused with "0 MB is free". When it is not a positive number the ordinary capacity and the file system's own
+    /// figure are asked, and the largest known is used; a genuinely full drive is still zero, and when nothing can be read the answer is nil (the download goes on).
     static func freeSpace(at url: URL) -> Int64? {
         var folder = url
         while !FileManager.default.fileExists(atPath: folder.path), folder.pathComponents.count > 1 { folder.deleteLastPathComponent() }
-        return (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+        let important = (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+        if let important, important > 0 { return important }
+        let ordinary = (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity.map { Int64($0) }
+        let filesystem = ((try? FileManager.default.attributesOfFileSystem(forPath: folder.path))?[.systemFreeSize] as? NSNumber)?.int64Value
+        return [important, ordinary, filesystem].compactMap { $0 }.filter { $0 >= 0 }.max()
     }
     static func size(_ bytes: Int64) -> String {
         let value = Double(bytes)

@@ -468,27 +468,226 @@ struct WheelAccumulator {
     static let hwheel: UInt32 = 0x1000
     /// A burst larger than this is clamped rather than looped over.
     static let maxNotchesPerEvent = 32
+    /// Events closer together than this belong to one turn of the wheel; a longer pause ends it.
+    static let burstGap = 0.12
+    /// The smallest reading that can be one click of a notched wheel (a smoother scroll starts below it).
+    static let clickMinimum = 0.15
 
     let notch: Double
     private(set) var x = 0.0
     private(set) var y = 0.0
+    /// What one click of a notched wheel reads, learned from two alike lone clicks; nil until then (the notch is 1).
+    private(set) var clickUnit: Double?
+    private var lastIsolated = 0.0
+    private var lastAt = -Double.infinity
+    private var burstEvents = 0, emittedInBurst = 0, flushed = true
 
     init(notch: Double = 1.0) { self.notch = notch }
 
-    mutating func add(_ dx: Double, _ dy: Double) -> [(flags: UInt32, delta: Int32)] {
+    mutating func add(_ dx: Double, _ dy: Double) -> [(flags: UInt32, delta: Int32)] { add(dx, dy, at: lastAt) }
+
+    /// `time` (seconds, any steady clock) tells one turn of the wheel from the next: after a pause the leftover of the last one is dropped.
+    mutating func add(_ dx: Double, _ dy: Double, at time: Double) -> [(flags: UInt32, delta: Int32)] {
         guard dx.isFinite, dy.isFinite, notch > 0 else { return [] }
+        if time - lastAt > Self.burstGap { x = 0; y = 0; burstEvents = 0; emittedInBurst = 0 }
+        lastAt = time; burstEvents += 1; flushed = false
+        let unit = clickUnit ?? notch
         var out: [(flags: UInt32, delta: Int32)] = []
         y += dy
         x += dx
-        while y >= notch, out.count < Self.maxNotchesPerEvent { y -= notch; out.append((Self.wheel, 120)) }
-        while y <= -notch, out.count < Self.maxNotchesPerEvent { y += notch; out.append((Self.wheel, -120)) }
-        while x >= notch, out.count < Self.maxNotchesPerEvent { x -= notch; out.append((Self.hwheel, 120)) }
-        while x <= -notch, out.count < Self.maxNotchesPerEvent { x += notch; out.append((Self.hwheel, -120)) }
+        while y >= unit, out.count < Self.maxNotchesPerEvent { y -= unit; out.append((Self.wheel, 120)) }
+        while y <= -unit, out.count < Self.maxNotchesPerEvent { y += unit; out.append((Self.wheel, -120)) }
+        while x >= unit, out.count < Self.maxNotchesPerEvent { x -= unit; out.append((Self.hwheel, 120)) }
+        while x <= -unit, out.count < Self.maxNotchesPerEvent { x += unit; out.append((Self.hwheel, -120)) }
         if out.count >= Self.maxNotchesPerEvent { x = 0; y = 0 }
+        emittedInBurst += out.count
         return out
     }
 
-    mutating func reset() { x = 0; y = 0 }
+    /// Called a moment after the last reading. A wheel that gives less than a notch per click (a notched mouse wheel on iPadOS) would otherwise swallow most clicks:
+    /// a short turn that sent nothing is one click. Two lone clicks of the same size teach the accumulator the size of a click, so a fast spin counts every click too.
+    mutating func flushIdle() -> [(flags: UInt32, delta: Int32)] {
+        guard !flushed else { return [] }
+        flushed = true
+        guard emittedInBurst == 0, burstEvents <= 3, max(abs(x), abs(y)) >= 0.05 else { return [] }
+        let vertical = abs(y) >= abs(x)
+        let v = vertical ? y : x
+        if burstEvents == 1, abs(v) >= Self.clickMinimum, abs(v) < notch {
+            if lastIsolated > 0, abs(abs(v) - lastIsolated) <= 0.15 * lastIsolated { clickUnit = (lastIsolated + abs(v)) / 2 }
+            lastIsolated = abs(v)
+        }
+        x = 0; y = 0
+        return [(vertical ? Self.wheel : Self.hwheel, v > 0 ? 120 : -120)]
+    }
+
+    mutating func reset() { x = 0; y = 0; burstEvents = 0; emittedInBurst = 0; flushed = true }
+}
+
+/// One axis of a mouse wheel on iPadOS. GCMouse's scroll pad does not report clicks. What it reports (measured on a Logitech G502 X, Factorio, 2026-11-05, with counted clicks):
+///  * ONE deliberate click, or a slow turn, is a single reading of about 0.017 (its sign is the direction) and nothing after it (5 of 5 single clicks);
+///  * clicks that follow each other quickly are a RAMP: 0.017, 8, 31, 50 ... climbing to about 86 and staying there while the wheel turns. How far it gets tells how many clicks there were:
+///      2 clicks: 2 readings, peak 8     3 clicks: 3 readings, peak 31     5 clicks: 5 readings, peak 55     10 clicks: 9 readings, sum of readings 433
+///      20 clicks: 13 to 14 readings, sum 824; the user's turns of 10 to 15 clicks summed 489 and 761. About 45 points of reading make a click, once there are more than five readings;
+///  * a hard flick has fewer, bigger readings (188, 262, 340, 375) and adds up the same way.
+/// So the notches are counted as the ramp grows: the sum of its readings divided by `pointsPerClick`, and for the first few clicks the number of readings. Before this a ramp was one
+/// notch, whatever its size, which is why only the first click of a fast turn registered.
+struct WheelGesture {
+    /// A pause longer than this ends a gesture (a slow turn of the wheel can leave 100 ms or more between readings).
+    static let gap = 0.6
+    /// Readings this small are the start of a gesture (the first reading of a ramp is about 0.017).
+    static let startBelow = 1.0
+    /// A ramp whose biggest reading stays under this is a touch of the wheel and counts one notch at most.
+    static let flushMinimum = 4.0
+    /// Points of reading that make a click in a long ramp.
+    static let pointsPerClick = 45.0
+    /// A ramp with a reading of this size counts one notch for each reading up to `readingClicks`.
+    static let readingStart = 25.0, readingClicks = 5
+    /// No ramp counts more than this (a whole second of free spinning at 60 readings a second is about this).
+    static let maxClicks = 150
+    /// A tiny reading followed by nothing bigger within this long was a slow click (the ramp of a faster turn follows its first reading within about 100 ms).
+    static let tinyConfirm = 0.18
+    /// Smallest reading that is a click and not the sensor's rest value (0.017 was the slow click, exact zeros are not).
+    static let tinyMinimum = 0.005
+
+    private var peak = 0.0, sum = 0.0, lastMag = 0.0, lastAt = -Double.infinity
+    private var sign = 0.0, emitted = 0, ramp = 0
+    private var open = false
+    private var pendingTiny: (t: Double, s: Double)?
+    /// For the log: how many readings, when the gesture began and the biggest reading.
+    private(set) var readings = 0, startedAt = 0.0
+    /// `lastAt` starts at -infinity (no reading yet), and Int(-infinity) is a trap: a gesture that never got a reading (the pointer is not on a game) reported 1.3.16-1.3.20 dead on every scroll.
+    var summary: (readings: Int, ms: Int, peak: Double, last: Double, notches: Int) {
+        let span = (lastAt - startedAt) * 1000
+        return (readings, span.isFinite ? Int(max(0, min(span, 1e9))) : 0, peak, lastMag, emitted)
+    }
+    /// For the log: the sum of the readings of this gesture.
+    var total: Double { sum }
+
+    /// Notches to send now, signed like the reading (negative for a negative reading).
+    mutating func add(_ value: Double, at time: Double) -> Int {
+        guard value.isFinite else { return 0 }
+        let mag = abs(value), s: Double = value < 0 ? -1 : (value > 0 ? 1 : 0)
+        let restarted = (mag < Self.startBelow && lastMag > 5) || (peak > 40 && mag < peak * 0.15)
+        let flipped = mag >= Self.startBelow && sign != 0 && s != sign
+        var carried = 0
+        if time - lastAt > Self.gap || restarted || flipped {
+            carried = finish()
+            clear()
+        }
+        // A tiny reading that nothing bigger followed in time, or one that points the other way, was a slow click of its own.
+        if let p = pendingTiny, mag < Self.startBelow || time - p.t > Self.tinyConfirm || s != p.s {
+            carried += Int(p.s)
+            pendingTiny = nil
+        }
+        lastAt = time
+        lastMag = mag
+        guard mag >= Self.startBelow else {
+            if mag >= Self.tinyMinimum, !open { pendingTiny = (time, s) }
+            return carried
+        }
+        if sign == 0 { sign = s; startedAt = time; ramp = pendingTiny != nil ? 1 : 0 }
+        pendingTiny = nil
+        open = true
+        readings += 1
+        ramp += 1
+        sum += mag
+        peak = max(peak, mag)
+        return carried + take(target())
+    }
+
+    /// Clicks the ramp amounts to so far.
+    private func target() -> Int {
+        guard peak >= Self.flushMinimum else { return 0 }
+        let bySum = Int((sum / Self.pointsPerClick + 0.5).rounded(.down))
+        let byReadings = peak >= Self.readingStart ? min(ramp, Self.readingClicks) : 0
+        return min(max(1, bySum, byReadings), Self.maxClicks)
+    }
+
+    private mutating func take(_ target: Int) -> Int {
+        guard target > emitted else { return 0 }
+        let n = min(target - emitted, 32)
+        emitted += n
+        return Int(sign) * n
+    }
+
+    /// The end of a gesture: nothing is held back, so there is nothing to add.
+    private mutating func finish() -> Int { open ? take(target()) : 0 }
+
+    /// A moment after the last reading, with nothing following it.
+    mutating func flushIdle(at time: Double = .infinity) -> Int {
+        var n = 0
+        if let p = pendingTiny, time - p.t >= Self.tinyConfirm {
+            n += Int(p.s)
+            pendingTiny = nil
+        }
+        guard open else { return n }
+        n += finish()
+        open = false
+        readings = 0
+        return n
+    }
+
+    private mutating func clear() { peak = 0; sum = 0; sign = 0; emitted = 0; ramp = 0; open = false; readings = 0 }
+    mutating func reset() { clear(); pendingTiny = nil; lastMag = 0; lastAt = -Double.infinity }
+}
+
+/// Which of GCMouse's two scroll values is the vertical wheel. On the iPad's own screen the vertical wheel came in the FIRST value (negative = up) and the sideways one in the second
+/// (positive = right); with the app on a larger display area (2560 points wide in the logs) the vertical wheel came in the SECOND value (positive = up) and the sideways one in the first,
+/// the same readings turned a quarter. Taken as it was, the vertical wheel there went to the game as sideways scrolling, which games ignore. The axis that moves first and most is the
+/// vertical one; it changes only if the other one comes to carry far more than three times as much.
+struct WheelAxes {
+    /// A reading this big settles which value is the vertical wheel.
+    static let decideAt = 20.0
+    private(set) var secondIsVertical: Bool?
+    private var energyFirst = 0.0, energySecond = 0.0
+    private var provisional = false
+
+    /// Returns the vertical wheel in the first value's convention (negative = up), the sideways wheel (positive = right), and whether the choice just changed.
+    mutating func map(_ first: Double, _ second: Double) -> (vertical: Double, horizontal: Double, changed: Bool) {
+        guard first.isFinite, second.isFinite else { return (0, 0, false) }
+        var changed = false
+        if abs(first) >= 1 || abs(second) >= 1 {
+            energyFirst = min(energyFirst + abs(first), 1e9); energySecond = min(energySecond + abs(second), 1e9)
+            if let current = secondIsVertical {
+                let mine = current ? energySecond : energyFirst, other = current ? energyFirst : energySecond
+                if other > mine * 3, other > 400 { secondIsVertical = !current; changed = true; energyFirst = 0; energySecond = 0 }
+            } else if max(abs(first), abs(second)) >= Self.decideAt {
+                // Not before a reading is clearly more than the few points of noise the other value sometimes shows at the start (-2.7, -7.3 were seen).
+                secondIsVertical = abs(second) > abs(first)
+                changed = secondIsVertical != provisional
+            }
+        }
+        // Until it is decided, a value that is alive while the other one is exactly zero is taken for the vertical wheel (a lone slow click, 0.017, must not go sideways).
+        // The noise seen at the start of a run was in both values at once.
+        let secondNow = secondIsVertical ?? (min(abs(first), abs(second)) < 0.001 && abs(second) > abs(first))
+        provisional = secondNow
+        return secondNow ? (vertical: -second, horizontal: first, changed: changed) : (vertical: first, horizontal: second, changed: changed)
+    }
+
+    mutating func reset() { secondIsVertical = nil; energyFirst = 0; energySecond = 0; provisional = false }
+}
+
+/// Which way the system scrolls (iPadOS Settings > Trackpad & Mouse > Natural scrolling), learned from the launcher's own lists. The mouse's scroll pad reports the wheel
+/// as the hardware turns; UIKit reports the same turn already turned around for that setting, so every turn the app sees both ways tells whether they agree
+/// (`same` = +1: UIKit's sign equals the pad's vertical value, which is what iPadOS gives with Natural scrolling on, its default). In a game the wheel then follows the
+/// sense the launcher's lists already have, instead of the hardware's, so the two never disagree. Three turns in a row that disagree with the stored sense flip it.
+struct ScrollSense {
+    static let window = 0.15
+    static let needed = 3
+    private(set) var same: Double
+    private var against = 0
+    init(same: Double = 1) { self.same = same >= 0 ? 1 : -1 }
+
+    /// One turn seen by both. Returns true when the stored sense just changed.
+    mutating func observe(uikit: Double, pad: Double) -> Bool {
+        guard uikit.isFinite, pad.isFinite, uikit != 0, pad != 0 else { return false }
+        let seen: Double = (uikit > 0) == (pad > 0) ? 1 : -1
+        if seen == same { against = 0; return false }
+        against += 1
+        guard against >= Self.needed else { return false }
+        same = seen; against = 0
+        return true
+    }
 }
 
 /// GCMouse's scroll pad reports the vertical wheel in its first value,
@@ -941,6 +1140,21 @@ final class HardwareInput: ObservableObject {
     private let motionLock = NSLock()
     private var carry = HWMotionCarry()
     private var wheel = WheelAccumulator()
+    private var wheelFlushGen = 0
+    private var wheelV = WheelGesture(), wheelH = WheelGesture()
+    private var wheelAxes = WheelAxes()
+    /// The system's scroll sense (see ScrollSense), kept across runs; `lastPad` and `lastUIKit` pair the two reports of one turn.
+    static let scrollSenseKey = "f4.scrollSenseSame"
+    private var scrollSense = ScrollSense(same: (UserDefaults.standard.object(forKey: HardwareInput.scrollSenseKey) as? Double) ?? 1)
+    private var lastPad: (value: Double, at: Double)?
+    private var lastUIKit: (value: Double, at: Double)?
+    private var scrollAxisLogged: Bool?
+    private var scrollSummariesLogged = 0
+    private var pointerMapLogged = 0
+    private var scrollRawLogged = 0
+    private var gcScrollSeen = false
+    private var scrollDecisionsLogged = 0
+    private var scrollRawLast = 0.0
     /// `currentRoute`, for the mouse queue.
     private var route: PointerRoute = .relative
     private var mouseInUseMirror = false
@@ -1039,7 +1253,7 @@ final class HardwareInput: ObservableObject {
         guard sessionActive else { return }
         releaseAll("session end")
         sessionActive = false
-        motionLock.lock(); gcDeltaLive = false; carry.reset(); wheel.reset(); motionLock.unlock()
+        motionLock.lock(); gcDeltaLive = false; carry.reset(); wheel.reset(); wheelV.reset(); wheelH.reset(); motionLock.unlock()
         setPointerLocked(false, byUs: false, why: "session end")
         setMouseInUse(false)
         lastAbsolute = nil
@@ -1169,7 +1383,7 @@ final class HardwareInput: ObservableObject {
         gameButtons.removeAll()
         syncKeys()
         syncButtons()
-        motionLock.lock(); carry.reset(); wheel.reset(); motionLock.unlock()
+        motionLock.lock(); carry.reset(); wheel.reset(); wheelV.reset(); wheelH.reset(); motionLock.unlock()
         if had > 0 { log("released \(had) held input(s) (\(why))") }
     }
 
@@ -1215,7 +1429,7 @@ final class HardwareInput: ObservableObject {
                 pendingButtons.removeAll()
                 gameButtons.removeAll()
                 syncButtons()
-                motionLock.lock(); carry.reset(); wheel.reset(); motionLock.unlock()
+                motionLock.lock(); carry.reset(); wheel.reset(); wheelV.reset(); wheelH.reset(); motionLock.unlock()
             }
             if diagnostics || !base { log("mouse focus: \(mouse ? "program" : "elsewhere") (\(why))") }
         }
@@ -1578,8 +1792,14 @@ final class HardwareInput: ObservableObject {
             }
         }
         m.scroll.valueChangedHandler = { [weak self] _, x, y in
-            let wheel = GCMouseWheel.axes(Double(x), Double(y))
-            self?.scrolled(wheel.dx, wheel.dy)
+            // The first readings of a run go to the log (what this wheel reports per click, and how fast), so a scroll that feels wrong can be read off it.
+            self?.gcScrollSeen = true
+            if let self, self.scrollRawLogged < 400, x != 0 || y != 0 {
+                let t = CACurrentMediaTime()
+                self.log("scroll raw first=\(x) second=\(y) after \(Int((t - self.scrollRawLast) * 1000)) ms")
+                self.scrollRawLogged += 1; self.scrollRawLast = t
+            }
+            self?.gcScrolled(Double(x), Double(y))
         }
         noteMousePresent()
         if fresh {
@@ -1796,6 +2016,7 @@ final class HardwareInput: ObservableObject {
         // library's scaling mode and any fitted desktop window.
         let (x, y) = gameView.mapPoint(p)
         let s = (x: x, y: y)
+        if pointerMapLogged < 40 { pointerMapLogged += 1; log("pointer map \(gameView.mapDescription(p)) -> game cursor (\(x),\(y))") }
         setMouseInUse(true)
         if let last = lastAbsolute, last.x == s.x, last.y == s.y { return }
         lastAbsolute = s
@@ -1906,14 +2127,98 @@ final class HardwareInput: ObservableObject {
     /// Reached from the mouse queue (GCMouse scroll) and from main (UIKit,
     /// which only scrolls a view the pointer is over).
     private func scrolled(_ x: Double, _ y: Double) {
+        let now = CACurrentMediaTime()
         motionLock.lock()
         let blocked = route == .blocked
         let sign = InputSettings.shared.scrollSign
-        let notches = blocked ? [] : wheel.add(x * Double(sign), y * Double(sign))
+        let notches = blocked ? [] : wheel.add(x * Double(sign), y * Double(sign), at: now)
         tickWheel += notches.count
+        wheelFlushGen &+= 1
+        let gen = wheelFlushGen
         motionLock.unlock()
         for n in notches { winios_pointer(0, 0, n.flags, UInt32(bitPattern: n.delta)) }
         if !notches.isEmpty { bumpTicker() }
+        // The last reading of a turn may be less than a notch: look again a moment later (only the newest reading's look counts).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in self?.flushWheel(gen) }
+    }
+
+    /// The GCMouse scroll pad: `first` is the vertical wheel (negative away from the user), `second` the horizontal one. See WheelGesture.
+    private func gcScrolled(_ first: Double, _ second: Double) {
+        let now = CACurrentMediaTime()
+        motionLock.lock()
+        let blocked = route == .blocked
+        let sign = Int(InputSettings.shared.scrollSign)
+        let axes = wheelAxes.map(first, second)
+        if axes.changed { wheelV.reset(); wheelH.reset() }
+        let nV = blocked ? 0 : wheelV.add(axes.vertical, at: now), nH = blocked ? 0 : wheelH.add(axes.horizontal, at: now)
+        tickWheel += abs(nV) + abs(nH)
+        wheelFlushGen &+= 1
+        let gen = wheelFlushGen
+        let axisNote = (axes.changed || scrollAxisLogged != wheelAxes.secondIsVertical) ? wheelAxes.secondIsVertical : nil
+        if axisNote != nil { scrollAxisLogged = wheelAxes.secondIsVertical }
+        if axes.vertical != 0 { lastPad = (axes.vertical, now) }
+        let senseNote = pairSense(now: now)
+        // With the system's sense the game's wheel turns the way the launcher's lists do; `same` is +1 when UIKit's sign equals the pad's, and a positive notch is up.
+        let follow = Int(scrollSense.same)
+        motionLock.unlock()
+        if let second = axisNote { log("scroll axes: the vertical wheel is the \(second ? "second" : "first") value") }
+        if let note = senseNote { log(note) }
+        postNotches(vertical: nV * follow * sign, horizontal: nH * sign)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in self?.flushWheel(gen) }
+        // A lone tiny reading (a slow click) is only counted once nothing bigger followed it for WheelGesture.tinyConfirm.
+        DispatchQueue.main.asyncAfter(deadline: .now() + WheelGesture.tinyConfirm + 0.01) { [weak self] in self?.flushWheel(gen) }
+    }
+
+    /// Whole notches: positive vertical is away from the user (up), positive horizontal is right.
+    private func postNotches(vertical: Int, horizontal: Int) {
+        if (vertical != 0 || horizontal != 0), scrollDecisionsLogged < 200 {
+            scrollDecisionsLogged += 1
+            log("scroll sent vertical=\(vertical) horizontal=\(horizontal) (notches, + is up/right)")
+        }
+        for _ in 0..<min(abs(vertical), 32) { winios_pointer(0, 0, WheelAccumulator.wheel, UInt32(bitPattern: vertical > 0 ? 120 : -120)) }
+        for _ in 0..<min(abs(horizontal), 32) { winios_pointer(0, 0, WheelAccumulator.hwheel, UInt32(bitPattern: horizontal > 0 ? 120 : -120)) }
+        if vertical != 0 || horizontal != 0 { bumpTicker() }
+    }
+
+    /// UIKit's report of one wheel turn (a scroll view of the launcher moved by the wheel): its direction, to be compared with the pad's report of the same turn.
+    func noteSystemScroll(dyPoints: Double) {
+        guard dyPoints.isFinite, dyPoints != 0 else { return }
+        let now = CACurrentMediaTime()
+        motionLock.lock()
+        lastUIKit = (dyPoints, now)
+        let note = pairSense(now: now)
+        motionLock.unlock()
+        if let note { log(note) }
+    }
+
+    /// Call with motionLock held. Compares the newest pad and UIKit reports when they are of the same moment; returns a log line when the stored sense changed.
+    private func pairSense(now: Double) -> String? {
+        guard let pad = lastPad, let ui = lastUIKit,
+              abs(pad.at - ui.at) < ScrollSense.window, now - max(pad.at, ui.at) < ScrollSense.window else { return nil }
+        lastPad = nil; lastUIKit = nil
+        guard scrollSense.observe(uikit: ui.value, pad: pad.value) else { return nil }
+        UserDefaults.standard.set(scrollSense.same, forKey: Self.scrollSenseKey)
+        return "[hwinput] scroll sense: the system scrolls \(scrollSense.same > 0 ? "with" : "against") the wheel pad's vertical value; in a game the wheel follows it"
+    }
+
+    private func flushWheel(_ gen: Int) {
+        motionLock.lock()
+        guard gen == wheelFlushGen else { motionLock.unlock(); return }
+        let notches = route == .blocked ? [] : wheel.flushIdle()
+        let blocked = route == .blocked
+        let sumV = wheelV.summary
+        let nV = blocked ? 0 : wheelV.flushIdle(at: CACurrentMediaTime()), nH = blocked ? 0 : wheelH.flushIdle(at: CACurrentMediaTime())
+        let sign = Int(InputSettings.shared.scrollSign), follow = Int(scrollSense.same)
+        if sumV.readings > 0, scrollSummariesLogged < 200 {
+            scrollSummariesLogged += 1
+            let total = abs(sumV.notches) + abs(nV)
+            motionLock.unlock(); log("scroll gesture: \(sumV.readings) readings over \(sumV.ms) ms, peak \(Int(sumV.peak)), last \(Int(sumV.last)), sum \(Int(wheelV.total)), \(total) notch(es) in all"); motionLock.lock()
+        }
+        tickWheel += notches.count + abs(nV) + abs(nH)
+        motionLock.unlock()
+        for n in notches { winios_pointer(0, 0, n.flags, UInt32(bitPattern: n.delta)) }
+        if !notches.isEmpty { bumpTicker() }
+        postNotches(vertical: nV * follow * sign, horizontal: nH * sign)
     }
 
     // MARK: - route, drawn cursor and automatic lock
@@ -2229,7 +2534,9 @@ final class HardwareInput: ObservableObject {
 
     /// 14 points per notch, the ratio the touch trackpad's two-finger scroll uses.
     func uikitScroll(_ dxPoints: CGFloat, _ dyPoints: CGFloat) {
-        guard Self.enabled, !gcLive else { return }
+        // The GCMouse scroll pad reports the same wheel. The UIKit path stays for a pointer that has no GCMouse (an iPhone with AssistiveTouch); with both, a click counted twice
+        // (the UIKit side as about seven notches). `gcLive` alone is not enough: it only turns true after the mouse has moved or been clicked.
+        guard Self.enabled, !gcLive, !gcScrollSeen, GCMouse.mice().isEmpty else { return }
         guard dxPoints != 0 || dyPoints != 0 else { return }
         noteUIKitPointer()
         scrolled(Double(dxPoints) / 14.0, Double(dyPoints) / 14.0)

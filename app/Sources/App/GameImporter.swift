@@ -91,7 +91,7 @@ final class GameImporter: @unchecked Sendable {
                     let data: Data?
                     do { data = try autoreleasepool { try input.read(upToCount: chunk) } } catch { throw ImportError.unreadable(f.rel) }
                     guard let data, !data.isEmpty else { break }
-                    do { try output.write(contentsOf: data) } catch { throw ImportError.copyFailed(f.rel, error.localizedDescription) }
+                    do { try output.write(contentsOf: data) } catch { throw ImportError.copyFailed(f.rel, ErrorText.plain(error)) }
                     copied += Int64(data.count)
                     if Date().timeIntervalSince(lastReport) > 0.2 { lastReport = Date(); progress(Progress(copied: copied, total: total, file: f.rel)) }
                 }

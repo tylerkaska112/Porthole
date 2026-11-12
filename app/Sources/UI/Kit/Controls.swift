@@ -78,19 +78,25 @@ struct InfoButton: View {
     let id: AnyHashable
     var title: String?
     let text: String
+    /// An error's text: the pop-up then also offers to look it up in the website's documentation.
+    var helpMessage: String?
+    /// A setting's name: the pop-up then also offers to read about it on the website.
+    var docsTopic: String?
+    /// Sits right after a title instead of at the end of a row: smaller, and its touch area reaches into the empty space around it.
+    var compact = false
     @State private var shown = false
     @State private var popoverScope = FocusScope()
 
     var body: some View {
         Button { shown = true } label: {
-            Image(systemName: "info.circle").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.textDim)
-                .frame(width: 44, height: 44).contentShape(Circle())
+            Image(systemName: "info.circle").font(.system(size: compact ? 15 : 18, weight: .semibold)).foregroundStyle(Theme.textDim)
+                .frame(width: compact ? 34 : 44, height: compact ? 22 : 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusTarget(id, radius: 22, scale: 1.12) { shown = true }
         .accessibilityLabel("More information")
         .sheet(isPresented: $shown) {
-            InfoPopover(title: title, text: text, scope: popoverScope) { shown = false }
+            InfoPopover(title: title, text: text, helpMessage: helpMessage, docsTopic: docsTopic, scope: popoverScope) { shown = false }
         }
     }
 }
@@ -98,6 +104,8 @@ struct InfoButton: View {
 struct InfoPopover: View {
     let title: String?
     let text: String
+    var helpMessage: String?
+    var docsTopic: String?
     let scope: FocusScope
     let dismiss: () -> Void
 
@@ -113,7 +121,14 @@ struct InfoPopover: View {
             VStack(alignment: .leading, spacing: 14) {
                 if let title { Text(title).font(.system(size: 20, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text) }
                 ScrollView { Text(text).font(.system(size: 16)).foregroundStyle(Theme.text.opacity(0.92)).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true) }
-                HStack { Spacer(); PillButton(id: "info-ok", title: "Got it", style: .primary, action: dismiss) }
+                HStack {
+                    if let helpMessage { PillButton(id: "info-help", title: "What does this mean?", symbol: "questionmark.circle") { DocsLink.open(helpMessage) } }
+                    else if let docsTopic, DocsLink.documented(docsTopic) {
+                        PillButton(id: "info-docs", title: "Read more online", symbol: "safari") { if let url = DocsLink.url(forSetting: docsTopic) { UIApplication.shared.open(url) } }
+                    }
+                    Spacer()
+                    PillButton(id: "info-ok", title: "Got it", style: .primary, action: dismiss)
+                }
             }
             .padding(.horizontal, 24).padding(.top, 28).padding(.bottom, 16)
         }

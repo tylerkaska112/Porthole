@@ -1,0 +1,44 @@
+diff --git a/build/ntdll-unix/process_ios.c b/build/ntdll-unix/process_ios.c
+index d33973e..853fa94 100644
+--- a/build/ntdll-unix/process_ios.c
++++ b/build/ntdll-unix/process_ios.c
+@@ -4238,6 +4238,10 @@ NTSTATUS WINAPI NtTerminateProcess( HANDLE handle, LONG exit_code )
+                     dprintf(2, "[term-stack] g8-15: %llx %llx %llx %llx %llx %llx %llx %llx\n",
+                             gregs[8], gregs[9], gregs[10], gregs[11],
+                             gregs[12], gregs[13], gregs[14], gregs[15]);
++                    {   /* Porthole 0188: the last blocks this thread ran before the exit (MADEIRA_BLOCK_RING) */
++                        extern void ios_block_ring_dump_current( const char *why );
++                        ios_block_ring_dump_current( "exit" );
++                    }
+ 
+                     /* ml661: the REAL unwind runs first — it is the only thing
+                      * here that produces frames rather than candidates. The
+diff --git a/build/ntdll-unix/signal_arm64_ios.c b/build/ntdll-unix/signal_arm64_ios.c
+index 4af3de9..140cf33 100644
+--- a/build/ntdll-unix/signal_arm64_ios.c
++++ b/build/ntdll-unix/signal_arm64_ios.c
+@@ -835,6 +835,24 @@ static void ios_block_ring_dump( uintptr_t teb, unsigned max_entries, const char
+     free( ents );
+ }
+ 
++/* Porthole 0188: the calling thread's block ring at a deliberate exit (NtTerminateProcess), for a program that quits by itself with no fault to dump at (a protection stub that ends
++ * the run). Only when MADEIRA_BLOCK_RING gave this thread a ring (silent otherwise, so ordinary runs log nothing extra); at most twice per process, 1536 entries each. */
++void ios_block_ring_dump_current( const char *why )
++{
++    static int dumps = 0;
++    uintptr_t tsd_b, teb, ring = 0;
++    mach_vm_size_t got = 0;
++    extern int ios_teb_tls_slot_offset;
++
++    if (dumps >= 2 || !ios_teb_tls_slot_offset) return;
++    __asm__ volatile("mrs %0, TPIDRRO_EL0" : "=r"(tsd_b)); tsd_b &= ~7ULL;
++    teb = *(uintptr_t *)(tsd_b + ios_teb_tls_slot_offset);
++    if (!teb) return;
++    if (mach_vm_read_overwrite( mach_task_self(), (mach_vm_address_t)(teb + 0x1710), 8, (mach_vm_address_t)&ring, &got ) != KERN_SUCCESS || got != 8 || !ring) return;
++    dumps++;
++    ios_block_ring_dump( teb, 1536, why );
++}
++
+ /* ml1203: WALK THE JUMP CHAIN BACK FROM THE WRITER.
+  *
+  * The writer the watch caught sits in jump-threaded code: one instruction, then

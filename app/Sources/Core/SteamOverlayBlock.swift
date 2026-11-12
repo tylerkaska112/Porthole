@@ -30,7 +30,7 @@ enum SteamOverlayBlock {
                     try FileManager.default.moveItem(at: on, to: off)
                     log("[steam-overlay] \(name) set aside so the overlay cannot hook the game")
                 }
-            } catch { log("[steam-overlay] could not change \(name): \(error.localizedDescription)") }
+            } catch { log("[steam-overlay] could not change \(name): \(ErrorText.plain(error))") }
         }
     }
 }

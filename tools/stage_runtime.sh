@@ -34,6 +34,9 @@ if [ -d "$GL_ASSETS/gl" ]; then
   rm -f "$STAGE/Resources/licenses"; cp -R "$APP/licenses" "$STAGE/Resources/licenses"; cp "$GL_ASSETS"/licenses/* "$STAGE/Resources/licenses/" 2>/dev/null || true
   echo "OpenGL assets: $(ls "$STAGE/Resources/gl" | tr '\n' ' ')"
 fi
+# Vulkan (opt-in per game: engine lines vulkan, d3d11 = dxvk, d3d12 = vkd3d): Wine's winevulkan and vulkan-1, vkd3d-proton and DXVK, built by build/vkd3d-proton/build.sh and build/dxvk/build.sh
+# into vendor/Madeira/app/Madeira/vulkan. They are linked into a prefix only for a session that asks for them, so a game that does not ask sees no vulkan-1.dll.
+[ -d "$APP/vulkan/arm64ec-windows" ] && ln -s "$APP/vulkan" "$STAGE/Resources/vulkan"
 for f in prefix-template.tar.gz cacert.pem madeira-jit.js; do ln -s "$APP/$f" "$STAGE/Resources/$f"; done
 cp -R "$APP/arm64ec-windows" "$STAGE/Resources/arm64ec-windows"
 for dll in "$@"; do cp "$dll" "$STAGE/Resources/arm64ec-windows/"; echo "added $(basename "$dll") to arm64ec-windows"; done

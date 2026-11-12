@@ -1,0 +1,6 @@
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I B4 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I 150 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+[21:48:41.587] [INFO] [mem-pressure] CRITICAL: app 3277 MB, free 819 MB, gpu 878 MB; malloc gave back 0 MB
+[21:50:03.432] [INFO] [mem-pressure] CRITICAL: app 3281 MB, free 815 MB, gpu 750 MB; malloc gave back 0 MB
+[21:50:03.671] [INFO] [mem-alert] shown to the person: Memory is almost full. Close other apps. If this keeps happening, turn on Swap in this game's settings.

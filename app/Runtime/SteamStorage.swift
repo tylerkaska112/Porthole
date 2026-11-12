@@ -34,6 +34,26 @@ enum SteamStorageCapacity {
     }
 }
 
+/// What the drive is formatted as, asked of the file system itself ("msdos" is FAT12/16/32 on Apple's systems, which cannot hold a file over 4 GB; "exfat" and "apfs" can).
+enum SteamStorageFileSystem {
+    static func typeName(at url: URL) -> String? {
+        #if canImport(Darwin)
+        var info = statfs()
+        guard statfs(url.path, &info) == 0 else { return nil }
+        return withUnsafePointer(to: &info.f_fstypename) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: Int(MFSTYPENAMELEN)) { String(cString: $0) }
+        }
+        #else
+        return nil
+        #endif
+    }
+    static func isFAT(at url: URL) -> Bool { typeName(at: url)?.lowercased() == "msdos" }
+    /// Whether a path is the device's own storage: a folder inside an app or app-group container (that is what On My iPad is). A drive is mounted elsewhere.
+    static func isDeviceStoragePath(_ path: String) -> Bool {
+        path.contains("/Containers/Data/") || path.contains("/Containers/Shared/") || path.contains("/Containers/Bundle/")
+    }
+}
+
 enum SteamStorageOperation {
     /// A network/depot failure is not evidence that a healthy volume vanished.
     /// Cancellation must not trigger another provider lookup or change availability.
@@ -133,6 +153,13 @@ struct SteamStorageCatalog: Codable, Equatable {
         return external
     }
 
+    /// Stops using the registered folder. Games that were put on it are no longer listed (their files are not touched).
+    mutating func forgetExternal() {
+        guard let id = external?.id else { return }
+        assignments = assignments.filter { $0.value.location.libraryID != id }
+        external = nil
+    }
+
     mutating func register(_ library: SteamStorageLibrary) throws {
         guard UUID(uuidString: library.id) != nil, let bookmark = library.bookmark, !bookmark.isEmpty,
               external == nil || external?.id == library.id else { throw SteamStorageError.invalidRecord }
@@ -199,7 +226,7 @@ enum SteamStorageAvailability: String, Codable {
 }
 
 enum SteamStorageError: Error, LocalizedError {
-    case unavailable(SteamStorageAvailability), unsafePath, unsupportedLocation, invalidRecord, mappingConflict
+    case unavailable(SteamStorageAvailability), unsafePath, unsupportedLocation, invalidRecord, mappingConflict, fileSystemTooLimited, onDeviceStorage, sessionRunning
     var errorDescription: String? {
         switch self {
         case .unavailable(.disconnected): return "Reconnect the registered SSD and try again."
@@ -211,6 +238,9 @@ enum SteamStorageError: Error, LocalizedError {
         case .unsupportedLocation: return "Select a dedicated folder on a locally attached drive. Cloud and network folders are unsupported."
         case .invalidRecord: return "The saved library registration is invalid."
         case .mappingConflict: return "The Windows SSD drive mapping is already in use. The registered library folder is unchanged."
+        case .sessionRunning: return "A game or Steam is still running. Close it (Home, then swipe the game away or use Close in the menu), then try again."
+        case .onDeviceStorage: return "That folder is on the device itself (On My iPad or an app's folder), not on an external drive. Open the drive in the picker (it is listed under Locations) and choose a folder on it."
+        case .fileSystemTooLimited: return "This drive cannot hold files over 4 GB (it is formatted FAT32), and most games have some. Format it as exFAT on a computer, then choose the folder again."
         }
     }
 }
@@ -218,7 +248,9 @@ enum SteamStorageError: Error, LocalizedError {
 /// Replace only an owned symlink; never replace a directory or payload. The
 /// caller establishes ownership from internal metadata before calling this.
 enum SteamStorageMapping {
-    static func replace(_ link: URL, root: URL, libraryID: String, ownerID: String?) throws {
+    /// `claimsExistingSymlink`: the link sits in Porthole's own Wine prefix, where only one external library can be registered, so a link left there by an earlier
+    /// registration (or by a download that made it before any owner was recorded) is ours to replace. A real file or folder is never replaced.
+    static func replace(_ link: URL, root: URL, libraryID: String, ownerID: String?, claimsExistingSymlink: Bool = false) throws {
         try SteamStorageIdentity.verify(libraryID, root: root)
         let fm = FileManager.default
         do {
@@ -227,7 +259,7 @@ enum SteamStorageMapping {
                 throw SteamStorageError.mappingConflict
             }
             let sameTarget = link.resolvingSymlinksInPath().standardizedFileURL.path == root.resolvingSymlinksInPath().standardizedFileURL.path
-            guard ownerID == libraryID || sameTarget else { throw SteamStorageError.mappingConflict }
+            guard ownerID == libraryID || sameTarget || claimsExistingSymlink else { throw SteamStorageError.mappingConflict }
         } catch let error as NSError where error.domain == NSCocoaErrorDomain &&
             [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { }
         let temporary = link.deletingLastPathComponent().appendingPathComponent(".madeira-link-" + UUID().uuidString)
@@ -450,13 +482,15 @@ enum SteamExternalAccess {
         return try outcome.get()
     }
 
-    static func register(_ url: URL, replacing current: SteamStorageLibrary? = nil) throws -> SteamStorageLibrary {
+    static func register(_ url: URL, replacing current: SteamStorageLibrary? = nil, refuseDeviceStorage: Bool = false) throws -> SteamStorageLibrary {
         try coordinate(url: url, write: true) { root in
+            if refuseDeviceStorage, SteamStorageFileSystem.isDeviceStoragePath(root.path) { throw SteamStorageError.onDeviceStorage }
             let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isUbiquitousItemKey, .volumeIsLocalKey, .volumeIsReadOnlyKey])
             guard values.isDirectory == true, values.isUbiquitousItem != true, values.volumeIsLocal == true else {
                 throw SteamStorageError.unsupportedLocation
             }
             guard values.volumeIsReadOnly != true else { throw SteamStorageError.unavailable(.readOnly) }
+            if SteamStorageFileSystem.isFAT(at: root) { throw SteamStorageError.fileSystemTooLimited }   // FAT: nothing over 4 GB
             let id: String
             if let current {
                 try SteamStorageIdentity.verify(current.id, root: root)

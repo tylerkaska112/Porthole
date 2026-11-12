@@ -65,20 +65,46 @@ enum LogCleaner {
         return out + ns.substring(from: last)
     }
 
+    /// Is `needle` (lower case, ASCII) in `haystack` (already lower-cased)? A byte search: the case-insensitive `range(of:)` of Foundation costs about 70 ms a megabyte per word, and
+    /// eight of them ran on every piece of every log.
+    private static func has(_ haystack: [UInt8], _ needle: String) -> Bool {
+        let n = Array(needle.utf8)
+        guard !n.isEmpty, haystack.count >= n.count else { return false }
+        return haystack.withUnsafeBufferPointer { h in n.withUnsafeBufferPointer { nb in memmem(h.baseAddress!, h.count, nb.baseAddress!, nb.count) != nil } }
+    }
+
+    /// E-mail addresses become `<email>`. Only the lines that hold an "@" go through the regular expression (it costs about 0.4 s a megabyte, and most lines have none).
+    private static func redactEmails(_ text: String) -> String {
+        guard let emails else { return text }
+        var out = ""
+        out.reserveCapacity(text.utf8.count)
+        var first = true
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if !first { out.append("\n") }
+            first = false
+            if line.utf8.contains(64) {
+                let l = String(line)
+                out += emails.stringByReplacingMatches(in: l, range: NSRange(l.startIndex..., in: l), withTemplate: "<email>")
+            } else { out.append(contentsOf: line) }
+        }
+        return out
+    }
+
     private static func cleanPiece(_ text: String, names: [String]) -> String {
         var out = text
-        if out.contains("/Containers/") || out.contains("/containers/") { replace(&out, containerPaths, "$1<id>") }
-        if out.contains("/Users/") { replace(&out, homePaths, "$1<user>") }
-        if out.contains("@") { replace(&out, emails, "<email>") }
-        if out.contains("7656119") { replace(&out, steamIDs, "<steamid>") }
-        if out.range(of: "epicuserid", options: .caseInsensitive) != nil { replace(&out, epicIDs, "$1<epic-id>") }
-        if out.range(of: "epicusername", options: .caseInsensitive) != nil { replace(&out, epicNamesQuoted, "$1<account>"); replace(&out, epicNames, "$1<account>") }
-        if out.range(of: "auth_password", options: .caseInsensitive) != nil || out.range(of: "authpassword", options: .caseInsensitive) != nil { replace(&out, authPasswords, "$1<redacted>") }
-        if out.range(of: "token", options: .caseInsensitive) != nil || out.range(of: "api", options: .caseInsensitive) != nil || out.range(of: "secret", options: .caseInsensitive) != nil
-            || out.range(of: "password", options: .caseInsensitive) != nil { replace(&out, namedSecrets, "$1$2<redacted>") }
-        out = redactIPv6(out)
+        // What is in this piece, found once on a lower-cased copy of its bytes; only the steps that have something to do run.
+        let lower = text.utf8.map { $0 >= 65 && $0 <= 90 ? $0 | 32 : $0 }
+        if has(lower, "/containers/") { replace(&out, containerPaths, "$1<id>") }
+        if has(lower, "/users/") { replace(&out, homePaths, "$1<user>") }
+        if lower.contains(64) { out = redactEmails(out) }
+        if has(lower, "7656119") { replace(&out, steamIDs, "<steamid>") }
+        if has(lower, "epicuserid") { replace(&out, epicIDs, "$1<epic-id>") }
+        if has(lower, "epicusername") { replace(&out, epicNamesQuoted, "$1<account>"); replace(&out, epicNames, "$1<account>") }
+        if has(lower, "auth_password") || has(lower, "authpassword") { replace(&out, authPasswords, "$1<redacted>") }
+        if has(lower, "token") || has(lower, "api") || has(lower, "secret") || has(lower, "password") { replace(&out, namedSecrets, "$1$2<redacted>") }
+        if has(lower, "::") { out = redactIPv6(out) }
         for name in names where name.count >= 3 {
-            if out.range(of: name, options: .caseInsensitive) != nil { out = out.replacingOccurrences(of: name, with: "<account>", options: .caseInsensitive) }
+            if has(lower, name.lowercased()) { out = out.replacingOccurrences(of: name, with: "<account>", options: .caseInsensitive) }
         }
         return String(decoding: redactPublicIPs(Array(out.utf8)), as: UTF8.self)
     }

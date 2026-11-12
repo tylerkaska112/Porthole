@@ -22,6 +22,7 @@
 #include "../../build/madeira_cfg.h"   /* ml1095: one config file */
 #include "../../build/madeira_redact.h"   /* the arguments are logged with credential-like values redacted */
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <pwd.h>
 #include <limits.h>
 #include <string.h>
@@ -614,6 +615,54 @@ static uint16_t madeira_pe_machine(const char *unix_path)
     }
     fclose(f);
     return machine;
+}
+
+/* A .NET single-file program (a "dotnet publish -p:PublishSingleFile" exe, such as Memoria.Patcher.exe):
+ * its apphost / singlefilehost carries the bundle marker, an 8-byte header offset (non-zero once it is a
+ * bundle, zero in a plain apphost) followed by the SHA-256 of ".net core bundle" (dotnet/runtime
+ * src/native/corehost/apphost/bundle_marker.c). Only a "C:\..." path under the prefix's drive_c is read (the
+ * first 32 MB: the host is at the start of the file). Used to give such programs MADEIRA_SMC_HOT_PAGE=0:
+ * CoreCLR keeps patching its own code, and with hot SMC pages on, the FEX invalidation lock stuck
+ * ([fexlock] STUCK read-wait, 2026-11-10 logs of Memoria.Patcher.exe) right after the first
+ * "[smc-hot] page ... took 64 write faults". */
+static BOOL madeira_target_is_dotnet_bundle(const char *exe, const char *prefix)
+{
+    static const uint8_t sig[32] = {
+        0x8b, 0x12, 0x02, 0xb9, 0x6a, 0x61, 0x20, 0x38, 0x72, 0x7b, 0x93, 0x02, 0x14, 0xd7, 0xa0, 0x32,
+        0x13, 0xf5, 0xb9, 0xe6, 0xef, 0xae, 0x33, 0x18, 0xee, 0x3b, 0x2d, 0xce, 0x24, 0xb3, 0x6a, 0xae };
+    char probe[PATH_MAX];
+    if (!((exe[0] == 'C' || exe[0] == 'c') && exe[1] == ':' && exe[2] == '\\')) return NO;
+    size_t skip = strlen(prefix) + strlen("/drive_c/");
+    if (snprintf(probe, sizeof(probe), "%s/drive_c/%s", prefix, exe + 3) >= (int)sizeof(probe)) return NO;
+    for (char *p = probe + skip; *p; p++) if (*p == '\\') *p = '/';
+    int fd = open(probe, O_RDONLY);
+    if (fd < 0) return NO;
+    struct stat st;
+    BOOL found = NO;
+    if (fstat(fd, &st) == 0 && st.st_size > 64)
+    {
+        size_t len = (size_t)st.st_size < (32u << 20) ? (size_t)st.st_size : (32u << 20);
+        const uint8_t *map = mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (map != MAP_FAILED)
+        {
+            for (size_t i = 8; i + sizeof(sig) <= len && !found; )
+            {
+                const uint8_t *hit = memchr(map + i, sig[0], len - i - sizeof(sig) + 1);
+                if (!hit) break;
+                i = (size_t)(hit - map);
+                if (memcmp(hit, sig, sizeof(sig)) == 0)
+                {
+                    uint64_t off = 0;
+                    memcpy(&off, hit - 8, 8);
+                    if (off != 0) found = YES;
+                }
+                i++;
+            }
+            munmap((void *)map, len);
+        }
+    }
+    close(fd);
+    return found;
 }
 
 /* The machine of the file the launch below will run, or 0 when it is not
@@ -1390,6 +1439,7 @@ static int madeira_split_launch_args(const char *input, char *storage, size_t st
     return (int)argc;
 }
 
+static dispatch_source_t g_progname_timer;
 static void *wine_process_thread(void *arg) {
     @autoreleasepool {
         /* Perf: the guest main thread runs ON this pthread. Promote to
@@ -1398,6 +1448,15 @@ static void *wine_process_thread(void *arg) {
          * thread_ios.c — default QoS costs tens of ms of sleep leeway). */
         pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
         LOG("Wine process thread started");
+        /* The program name (setprogname) is a pointer Wine keeps into the argv strings of whichever pseudo-process started last, and those strings live on the stack of
+         * the thread that runs it. When that thread ends the stack is unmapped and the pointer dangles: iOS code that reads the name later (libsystem_configuration's
+         * nwi_state_copy, called from UIKit's AssistantServices) then crashes the whole app, as in the Blender run that ended with c0000135. Keep the name pointing at a
+         * constant: the timer undoes a helper process's name soon after it starts, the end of the session does it for the last one. */
+        dispatch_source_t progname_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+        dispatch_source_set_timer(progname_timer, dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), 500 * NSEC_PER_MSEC, 100 * NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(progname_timer, ^{ setprogname("Porthole"); });
+        dispatch_resume(progname_timer);
+        g_progname_timer = progname_timer;
 
         /* ml588: seeding itself now happens in wineserver_start(), BEFORE the
          * server loads the registry. Kept here as a safety net for any path
@@ -1483,6 +1542,31 @@ static void *wine_process_thread(void *arg) {
          * so the next log proves it arrived rather than leaving us to infer it. */
         setenv("FNA3D_FORCE_DRIVER", "D3D11", 0);
 
+        /* .NET single-file programs (Memoria.Patcher.exe, 2026-11-10 log): CoreCLR maps a
+         * bundled assembly part by part. It reserves a placeholder, splits it at 4 KB
+         * boundaries with VirtualFree(MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) and fills the
+         * pieces with MapViewOfFile3. The host's pages are 16 KB, so ntdll refuses the first
+         * 4 KB split (STATUS_CONFLICTING_ADDRESSES, "[free-refused] ml1285 ... size=0x1000"),
+         * CoreCLR throws instead of falling back, and the program ends with
+         * "Failed to load System.Private.CoreLib.dll (error code 0x800701E7)" (host exit
+         * code 0x80008089). This switch (a retail CLRConfig knob in .NET 8, 9, 10 and main)
+         * makes CoreCLR copy the image parts into ordinary memory instead. It changes
+         * nothing in a program that is not .NET, or a .NET program that loads its
+         * assemblies from files (Wine's loader handles those). overwrite=0: a line in the
+         * game's own settings (env.DOTNET_PELoader_DisableMapping = 0) still wins. */
+        setenv("DOTNET_PELoader_DisableMapping", "1", 0);
+
+        /* The next two failures of the same program (Memoria.Patcher.exe, 2026-11-10 17:43 log,
+         * after the switch above got CoreLib loaded): "GC heap initialization failed with error
+         * 0x8007000E" ([jumbo#1] size=0x3fe782e000 = 256 GB, st=0xc0000017). CoreCLR's GC reserves
+         * a 256 GB region range at start; the 512 GB map here cannot give it. 4 GB was granted in
+         * the earlier log that set it by hand (env.DOTNET_GCRegionRange = 0x100000000) and is
+         * more than a 6 GB phone can use as managed heap. W^X off is what the tested lists for
+         * .NET games (Quaver and others) set: the JIT's double mapping of code stops some starts.
+         * Both overwrite=0: a line in the game's own settings wins. */
+        setenv("DOTNET_GCRegionRange", "0x100000000", 0);
+        setenv("DOTNET_EnableWriteXorExecute", "0", 0);
+
         /* OpenGL backend for the winios GL driver (build/win32u-unix/opengl_ios.c):
          *   zink - desktop OpenGL 3.3-4.x: Mesa OSMesa + Zink on MoltenVK, from the
          *          bundle's gl/ folder (build/mesa-ios, build/moltenvk-ios)
@@ -1554,7 +1638,12 @@ static void *wine_process_thread(void *arg) {
         {
             NSError *aerr = nil;
             AVAudioSession *session = [AVAudioSession sharedInstance];
-            [session setCategory:AVAudioSessionCategoryPlayback error:&aerr];
+            /* Porthole: with the setting on (SessionController sets "f4.mixAudio.now" at every start), other apps' sound (music, a video on a
+             * second screen) keeps playing next to the game's instead of being stopped. */
+            BOOL mix = [[NSUserDefaults standardUserDefaults] boolForKey:@"f4.mixAudio.now"];
+            [session setCategory:AVAudioSessionCategoryPlayback
+                     withOptions:mix ? AVAudioSessionCategoryOptionMixWithOthers : 0
+                           error:&aerr];
             if (aerr) LOG("AVAudioSession setCategory failed: %{public}s",
                           aerr.localizedDescription.UTF8String);
             aerr = nil;
@@ -1832,6 +1921,8 @@ static void *wine_process_thread(void *arg) {
                     "MADEIRA_DINPUT_PAD",        /* ml1240: the game's "XInput and DirectInput" */
                     "MADEIRA_FEX_AVX",           /* ml1184: the game's "AVX and AVX2" */
                     "MADEIRA_FRAMEGEN",          /* ml1184: the game's "Frame generation" */
+                    "DXMT_METALFX_SPATIAL_SWAPCHAIN",   /* the game's "Upscaling" */
+                    "MADEIRA_LSFG", "MADEIRA_LSFG_SHADERS", "MADEIRA_LSFG_CTL", "MADEIRA_LSFG_GENERATED", "MADEIRA_LSFG_FLOW",   /* Lossless Scaling frame generation */
                     "DXMT_ENABLE_NVEXT", "DXMT_WSI_MONITOR_IDENTITY", "DXMT_WSI_MODE_TABLE",   /* the game's "Report an NVIDIA GPU" */
                     "MADEIRA_GPU_VENDOR", "MADEIRA_GPU_DEVICE", "MADEIRA_GPU_NAME",   /* the game's "Graphics card the game sees" */
                 };
@@ -2102,6 +2193,12 @@ static void *wine_process_thread(void *arg) {
         const BOOL has_i386_set = madeira_bundle_has_i386(bundleForProbe);
         const uint16_t target_machine = madeira_target_machine(madeira_exe, g_prefix_path, bundleForProbe);
         const BOOL is_i386_target = has_i386_set && target_machine == MADEIRA_IMAGE_FILE_MACHINE_I386;
+        /* A .NET single-file program: hot SMC pages off (overwrite=0: a line of the game's own wins). */
+        if (madeira_target_is_dotnet_bundle(madeira_exe, g_prefix_path))
+        {
+            setenv("MADEIRA_SMC_HOT_PAGE", "0", 0);
+            dprintf(STDERR_FILENO, "[WineProc] .NET single-file program: MADEIRA_SMC_HOT_PAGE=%s\n", getenv("MADEIRA_SMC_HOT_PAGE"));
+        }
         dprintf(STDERR_FILENO, "[WineProc] PE probe: machine=0x%x%s\n", target_machine,
                 is_i386_target ? " (i386: WoW64)" :
                 target_machine == MADEIRA_IMAGE_FILE_MACHINE_I386 ? " (i386, but the bundle has no i386-windows)" : "");
@@ -2683,6 +2780,7 @@ static void *wine_process_thread(void *arg) {
         unsetenv("MADEIRA_SRV_FGETPATH");
         g_madeira_srv_fgetpath = 0;
         unsetenv("MADEIRA_FEX_AVX"); unsetenv("MADEIRA_FRAMEGEN");   /* ml1184 */
+        unsetenv("DXMT_METALFX_SPATIAL_SWAPCHAIN"); unsetenv("MADEIRA_LSFG"); unsetenv("MADEIRA_LSFG_SHADERS"); unsetenv("MADEIRA_LSFG_CTL"); unsetenv("MADEIRA_LSFG_GENERATED"); unsetenv("MADEIRA_LSFG_FLOW");
         unsetenv("DXMT_ENABLE_NVEXT"); unsetenv("DXMT_WSI_MONITOR_IDENTITY"); unsetenv("DXMT_WSI_MODE_TABLE");
         unsetenv("MADEIRA_GPU_VENDOR"); unsetenv("MADEIRA_GPU_DEVICE"); unsetenv("MADEIRA_GPU_NAME");
         /* madeira-bcd: the server's per-launch switches end with the session */
@@ -2696,6 +2794,8 @@ static void *wine_process_thread(void *arg) {
         wineserver_stop();
 
         dprintf(STDERR_FILENO, "[WineProc] Wine process thread finished cleanly\n");
+        if (g_progname_timer) { dispatch_source_cancel(g_progname_timer); g_progname_timer = nil; }
+        setprogname("Porthole");   /* before this thread's stack, where the name points, is gone */
 
         // Steam S0: this thread's TEB was mirrored into pthread TSD slot
         // 275 (FEX's hardcoded 0x898) which we don't own via

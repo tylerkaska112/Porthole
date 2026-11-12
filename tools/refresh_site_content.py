@@ -17,6 +17,7 @@ import argparse, datetime, html, json, os, re, sys
 ap = argparse.ArgumentParser()
 ap.add_argument("--site", default=os.path.expanduser("~/Desktop/porthole-site"))
 ap.add_argument("--builds", type=int, default=25)
+ap.add_argument("--only-builds", metavar="N,N,...", help="list only these build numbers (the public releases), newest first: private test builds never appear on the site")
 ap.add_argument("--max-build", type=int, help="list only builds up to this number, newest first by build number: the public release and what came before it (later private test builds stay off the site)")
 ap.add_argument("--release", nargs=2, metavar=("VERSION", "BUILD"), help="the newest PUBLIC release, for the download page's line (leave out to leave that line alone)")
 args = ap.parse_args()
@@ -26,7 +27,13 @@ root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 entries = json.load(open(os.path.join(root, "CHANGELOG.json"), encoding="utf-8"))
 if not entries:
     sys.exit("CHANGELOG.json is empty")
-if args.max_build:
+if args.only_builds:
+    wanted = {int(n) for n in args.only_builds.split(",") if n.strip()}
+    entries = sorted((x for x in entries if int(x["build"]) in wanted), key=lambda x: int(x["build"]), reverse=True)
+    missing = wanted - {int(x["build"]) for x in entries}
+    if missing:
+        sys.exit(f"CHANGELOG.json has no entry for build(s) {sorted(missing)}")
+elif args.max_build:
     entries = sorted((x for x in entries if int(x["build"]) <= args.max_build), key=lambda x: int(x["build"]), reverse=True)
     if not entries:
         sys.exit(f"no build up to {args.max_build} in CHANGELOG.json")
@@ -69,7 +76,11 @@ for entry in entries[: args.builds]:
     body = listing("Added", entry.get("added", [])) + listing("Changed", entry.get("changed", [])) + listing("Fixed", entry.get("fixed", []))
     summary = entry.get("summary", "")
     rows.append(f'<details><summary>{e(entry["version"])} (build {e(str(entry["build"]))}): {e(summary)}</summary><div class="a">{body or "<p>No details.</p>"}</div></details>')
-builds = (f'\n  <h2 id="builds">Every build, newest first</h2>\n  <p class="fine">The last {len(rows)} builds, exactly as the app lists them in Settings &#8250; Updates. This list is made from the project\'s change log.</p>\n'
+if args.only_builds:
+    heading = ('Every release, newest first', f'Every public release, as the app lists them in Settings &#8250; Updates. Test builds made between releases are not listed here.')
+else:
+    heading = ('Every build, newest first', f'The last {len(rows)} builds, exactly as the app lists them in Settings &#8250; Updates. This list is made from the project\'s change log.')
+builds = (f'\n  <h2 id="builds">{heading[0]}</h2>\n  <p class="fine">{heading[1]}</p>\n'
           f'  <div class="faq">\n    ' + "\n    ".join(rows) + "\n  </div>\n  ")
 page = read("changelog.html")
 page = between(page, "builds:start", "builds:end", builds, fallback_anchor='<p class="fine" style="margin-top:30px">Every release is also on the project')
@@ -86,6 +97,11 @@ if args.release:
     if old and re.sub(r"Page updated .*", "", old.group(1)) == re.sub(r"Page updated .*", "", line):
         new_dl = dl
     changed.append(("download.html", write("download.html", new_dl)))
+    # the structured data search engines read names the same version
+    for page in ("index.html", "download.html"):
+        text = read(page)
+        updated = re.sub(r'("softwareVersion":\s*")[^"]*(")', lambda m: m.group(1) + args.release[0] + m.group(2), text)
+        changed.append((page + " (structured data)", write(page, updated)))
 
 # 3. sitemap.xml: lastmod from each page file
 sm = read("sitemap.xml")

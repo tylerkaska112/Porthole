@@ -1,0 +1,125 @@
+diff -ruN a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+--- a/src/winemetal/unix/winemetal_unix.c	2026-11-06 05:18:49
++++ b/src/winemetal/unix/winemetal_unix.c	2026-11-06 05:18:49
+@@ -1846,6 +1846,21 @@
+   return STATUS_SUCCESS;
+ }
+ 
++/* Porthole (Cycles on Metal), slot 170. */
++static NTSTATUS
++_MTLComputePipelineState_limits(void *obj) {
++  struct unixcall_pso_limits *params = obj;
++  struct WMTComputePipelineLimits *out = (void *)(uintptr_t)params->out;
++  if (!out) return STATUS_INVALID_PARAMETER;
++  if (wmtr_enabled()) return STATUS_NOT_IMPLEMENTED;
++  id<MTLComputePipelineState> pso = (id<MTLComputePipelineState>)params->pipeline;
++  out->max_total_threads_per_threadgroup = (uint32_t)pso.maxTotalThreadsPerThreadgroup;
++  out->thread_execution_width = (uint32_t)pso.threadExecutionWidth;
++  out->static_threadgroup_memory_length = (uint32_t)pso.staticThreadgroupMemoryLength;
++  out->reserved = 0;
++  return STATUS_SUCCESS;
++}
++
+ /* Porthole (Cycles on Metal), slots 165-169: compute pipelines with linked functions and intersection function tables. Local rendering only. */
+ static NTSTATUS
+ _MTLDevice_newComputePipelineStateEx(void *obj) {
+@@ -3499,6 +3514,11 @@
+       [encoder setIntersectionFunctionTable:(id<MTLIntersectionFunctionTable>)body->table atBufferIndex:body->index];
+       break;
+     }
++    case WMTComputeCommandSetThreadgroupMemoryLength: {
++      struct wmtcmd_compute_setthreadgroupmemory *body = (struct wmtcmd_compute_setthreadgroupmemory *)next;
++      [encoder setThreadgroupMemoryLength:(NSUInteger)body->length atIndex:body->index];
++      break;
++    }
+     case WMTComputeCommandUpdateFence: {
+       struct wmtcmd_compute_fence_op *body = (struct wmtcmd_compute_fence_op *)next;
+       [encoder updateFence:(id<MTLFence>)body->fence];
+@@ -8781,6 +8801,7 @@
+     &_MTLComputePipelineState_functionHandle,   /* 167 */
+     &_MTLIntersectionFunctionTable_setFunction,   /* 168 */
+     &_MTLIntersectionFunctionTable_setBuffer,   /* 169 */
++    &_MTLComputePipelineState_limits,   /* 170 */
+ };
+ 
+ #ifndef DXMT_NATIVE
+@@ -8962,5 +8983,6 @@
+     NULL, /* 167 */
+     NULL, /* 168 */
+     NULL, /* 169 */
++    NULL, /* 170 */
+ };
+ #endif
+diff -ruN a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+--- a/src/winemetal/winemetal.h	2026-11-06 05:18:49
++++ b/src/winemetal/winemetal.h	2026-11-06 05:18:49
+@@ -656,6 +656,15 @@
+ WINEMETAL_API void MTLIntersectionFunctionTable_setFunction(obj_handle_t table, obj_handle_t function_handle, uint32_t index);
+ WINEMETAL_API void MTLIntersectionFunctionTable_setBuffer(obj_handle_t table, obj_handle_t buffer, uint64_t offset, uint32_t index);
+ 
++/* Porthole (Cycles on Metal), slot 170: what a compute pipeline allows (Cycles sizes its threadgroups from these). */
++struct WMTComputePipelineLimits {
++  uint32_t max_total_threads_per_threadgroup;
++  uint32_t thread_execution_width;
++  uint32_t static_threadgroup_memory_length;
++  uint32_t reserved;
++};
++WINEMETAL_API void MTLComputePipelineState_limits(obj_handle_t pipeline, struct WMTComputePipelineLimits *limits);
++
+ WINEMETAL_API uint64_t NSString_lengthOfBytesUsingEncoding(obj_handle_t str, enum WMTStringEncoding encoding);
+ 
+ WINEMETAL_API obj_handle_t NSObject_description(obj_handle_t nserror);
+@@ -1064,6 +1073,7 @@
+   WMTComputeCommandUpdateFence,
+   WMTComputeCommandSetAccelerationStructure,   /* Porthole */
+   WMTComputeCommandSetIntersectionFunctionTable,   /* Porthole */
++  WMTComputeCommandSetThreadgroupMemoryLength,   /* Porthole */
+ };
+ 
+ struct wmtcmd_compute_nop {
+@@ -1156,6 +1166,14 @@
+   uint16_t reserved[3];
+   struct WMTMemoryPointer next;
+   obj_handle_t table;
++  uint8_t index;
++};
++
++struct wmtcmd_compute_setthreadgroupmemory {
++  enum WMTComputeCommandType type;
++  uint16_t reserved[3];
++  struct WMTMemoryPointer next;
++  uint64_t length;
+   uint8_t index;
+ };
+ 
+diff -ruN a/src/winemetal/winemetal_thunks.c b/src/winemetal/winemetal_thunks.c
+--- a/src/winemetal/winemetal_thunks.c	2026-11-06 05:18:49
++++ b/src/winemetal/winemetal_thunks.c	2026-11-06 05:18:49
+@@ -408,6 +408,14 @@
+   UNIX_CALL(169, &params);
+ }
+ 
++WINEMETAL_API void
++MTLComputePipelineState_limits(obj_handle_t pipeline, struct WMTComputePipelineLimits *limits) {
++  struct unixcall_pso_limits params;
++  params.pipeline = pipeline;
++  params.out = PtrToUInt64(limits);
++  UNIX_CALL(170, &params);
++}
++
+ WINEMETAL_API obj_handle_t
+ MTLLibrary_newFunction(obj_handle_t library, const char *name) {
+   struct unixcall_generic_obj_uint64_obj_ret params;
+diff -ruN a/src/winemetal/winemetal_thunks.h b/src/winemetal/winemetal_thunks.h
+--- a/src/winemetal/winemetal_thunks.h	2026-11-06 05:18:49
++++ b/src/winemetal/winemetal_thunks.h	2026-11-06 05:18:49
+@@ -153,6 +153,9 @@
+ struct unixcall_new_accel { obj_handle_t device; uint64_t size; uint64_t ret_resource_id; obj_handle_t ret; };
+ struct unixcall_accel_build { obj_handle_t encoder; obj_handle_t structure; uint64_t info; obj_handle_t scratch; uint64_t scratch_offset; };
+ 
++/* Porthole, slot 170. */
++struct unixcall_pso_limits { obj_handle_t pipeline; uint64_t out; };
++
+ /* Porthole, slots 165-169. */
+ struct unixcall_newpsoex { obj_handle_t device; uint64_t info; obj_handle_t ret_error; obj_handle_t ret; };
+ struct unixcall_new_ift { obj_handle_t pipeline; uint64_t function_count; uint64_t ret_resource_id; obj_handle_t ret; };

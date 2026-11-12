@@ -79,7 +79,7 @@ struct SharedBindsBrowser: View {
         if gameKey == nil { gameKey = await store.gameRef(for: game)?.id }
         guard let key = gameKey else { unidentified = true; items = []; return }
         do { items = try await store.list(gameID: key, sort: sort) }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = ErrorText.plain(error) }
     }
 }
 
@@ -153,7 +153,7 @@ struct SharedBindDetailSheet: View {
             Task { await load() }
         }.preferredColorScheme(Theme.scheme) }
         .confirm("Report this set?", message: "Use this for spam or sets that are not what they say.", confirmTitle: "Report", destructive: true, isPresented: $confirmFlag) {
-            Task { do { try await store.flag(id: summary.id); message = "Reported. Thank you." } catch { message = error.localizedDescription } }
+            Task { do { try await store.flag(id: summary.id); message = "Reported. Thank you." } catch { message = ErrorText.plain(error) } }
         }
     }
 
@@ -208,7 +208,7 @@ struct TouchLayoutPreview: View {
                     let side = CGFloat(c.size) * scale
                     ZStack {
                         Circle().fill(Color.white.opacity(0.22)); Circle().strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
-                        Text(c.isStick ? (c.action == "stick-arrows" ? "\u{2191}\u{2190}\u{2192}\u{2193}" : "WASD") : c.label)
+                        Text(c.faceText)
                             .font(.system(size: max(7, side * 0.3), weight: .bold, design: .rounded)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.4).padding(2)
                     }
                     .frame(width: side, height: side).position(x: CGFloat(c.x) * w, y: CGFloat(c.y) * h)
@@ -268,7 +268,7 @@ struct SharedBindReviewSheet: View {
         sending = true; error = nil
         Task {
             do { let r = try await store.review(id: setID, thumbUp: thumbUp, comment: comment); sending = false; onDone(r); dismiss() }
-            catch { sending = false; self.error = error.localizedDescription }
+            catch { sending = false; self.error = ErrorText.plain(error) }
         }
     }
 }
@@ -320,7 +320,7 @@ struct BindSetSharingGroup: View {
                 let result = try await store.publish(s, for: g)
                 model.update(g) { guard var sets = $0.bindSets, let i = sets.firstIndex(where: { $0.id == s.id }) else { return }; sets[i].remoteID = result.id; $0.bindSets = sets }
                 message = result.textStatus == "pending" ? "Shared. The name and notes show after they have been approved." : "Shared."
-            } catch { message = error.localizedDescription }
+            } catch { message = ErrorText.plain(error) }
             busy = false
         }
     }
@@ -333,7 +333,7 @@ struct BindSetSharingGroup: View {
                 try await store.unpublish(remoteID: id)
                 model.update(g) { guard var sets = $0.bindSets, let i = sets.firstIndex(where: { $0.id == s.id }) else { return }; sets[i].remoteID = nil; $0.bindSets = sets }
                 message = "No longer shared."
-            } catch { message = error.localizedDescription }
+            } catch { message = ErrorText.plain(error) }
             busy = false
         }
     }

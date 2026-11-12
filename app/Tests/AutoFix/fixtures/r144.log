@@ -1,0 +1,11 @@
+[fex-arena] ml799 hardware high band 16GB: native reserve FAILED kr=3
+[fex-arena] ml799 constrained 8GB: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @16-32G: native reserve FAILED kr=3
+[fex-arena] ml799 8GB @8-16G: native reserve FAILED kr=3
+I 38 FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+I AC FEX: HostFeatures=0 (ml538: DISABLEAVX expected; AVX off => Skia takes SSE paths) rev=ml538
+D AC Load module UnityPlayer.dll (unityplayer.dll-56a3347ef0b6a7d7): 716F570000
+00ac:err:seh:UnhandledExceptionFilter [uef] 0059 UnhandledExceptionFilter code=c0000005 at 000000716F7FC5D0: top_filter=000000716FDA3030 nested=0
+00ac:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0xc0000005) syscalls=0 unix_calls=8838
+0038:err:process:NtTerminateProcess NtTerminateProcess(handle=0xffffffffffffffff, exit_code=0x0) syscalls=0 unix_calls=9394
+[08:11:57.386] [INFO] [launch] stop requested while the game was starting: closing the app

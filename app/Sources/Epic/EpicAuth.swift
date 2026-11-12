@@ -102,7 +102,7 @@ final class EpicAuth: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.signInError = (error as? EpicAuthError)?.message ?? error.localizedDescription
+                    self.signInError = (error as? EpicAuthError)?.message ?? ErrorText.plain(error)
                     self.isBusy = false
                 }
             }

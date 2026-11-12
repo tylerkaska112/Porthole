@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 The Porthole authors. See LICENSE.
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import Metal
 
 /// One engine switch kept in madeira.cfg, shown on Settings > Engine options.
@@ -237,7 +239,12 @@ enum EngineOptions {
 /// at launch they are exported (or unset, so a previous game's choice never carries over) and the game's own madeira.cfg lines are written.
 struct GameEngine: Codable, Equatable {
     var avx: Bool?                  // AVX and AVX2 through FEX's 128-bit emulation (MADEIRA_FEX_AVX)
-    var frameGeneration: Bool?      // experimental MetalFX frame interpolation (MADEIRA_FRAMEGEN)
+    var frameGeneration: Bool?      // the old MetalFX frame interpolation: no longer offered or exported, kept so that saved games still decode
+    var upscaleFactor: Double?      // MetalFX spatial upscaling: 0 = to the screen (the engine works the factor out), else the picture the game draws is enlarged by this factor (DXMT_METALFX_SPATIAL_SWAPCHAIN + d3d11.metalSpatialUpscaleFactor); nil = off
+    var upscaleMethod: Int?         // what enlarges the picture: nil/0 = MetalFX, 1 = Lossless Scaling LS1, 2 = Lossless Scaling LS1 performance (Direct3D 11; only where the licence gate allows it)
+    var upscaleSharpness: Int?      // the Lossless Scaling upscalers' sharpness level 1-5 (nil = 3)
+    var losslessScaling: Bool?      // frame generation with the owner's Lossless Scaling shaders (MADEIRA_LSFG); only where the licence gate allows it
+    var losslessGenerated: Int?     // frames made between two real ones (1 = double, 2 = triple), nil = 1
     var cpuCount: Int?              // cores reported to the program (MADEIRA_CPU_COUNT)
     var anisotropy: Int?            // Direct3D 9 anisotropic filtering limit (DXMT_D9_ANISO_LIMIT)
     var reducedX87: Bool?           // reduced-precision x87 (FEX_X87REDUCEDPRECISION): nil = the engine's own default, which is ON for 32-bit programs, so Off is exported as 0
@@ -253,22 +260,66 @@ struct GameEngine: Codable, Equatable {
     var mouseSpeed: Double?         // this game's mouse speed (PORTHOLE_MOUSE_SPEED); nil = the app-wide Keyboard and mouse setting
     var mouseLook: Bool?            // the mouse always moves this game's camera (PORTHOLE_MOUSE_LOOK); nil = the app-wide setting
     var padAssist: PadAssistSettings? // gyro aim and turbo for player 1 (PadAssist.swift, from Madeira): nil = both off
+    var d3d11Route: String?         // the Direct3D 10/11 runtime: nil = DXMT (on Metal), "dxvk" = DXVK on Vulkan (madeira.cfg d3d11)
+    var d3d12Route: String?         // the Direct3D 12 runtime: nil = madeira-d3d12 (on Metal), "vkd3d" = vkd3d-proton on Vulkan (madeira.cfg d3d12)
+    var vulkanLibrary: String?      // the Vulkan library the Vulkan routes use: nil = the engine's own (MoltenVK), "moltenvk" or "kosmickrisp" (madeira.cfg vulkan)
     var isEmpty: Bool { self == GameEngine() }
 }
 
 /// Applies a game's engine settings right before it starts, and the app-wide ones that need the app's help.
 enum EngineLaunch {
+    /// The screen's own pixels, landscape (an iPad Pro 13": 2752 x 2064): what "upscale to the screen" enlarges the game's picture to (the engine keeps the aspect and stops at 2x).
+    static func screenPixels() -> (width: Int, height: Int) {
+        let b = UIScreen.main.nativeBounds
+        return (Int(max(b.width, b.height)), Int(min(b.width, b.height)))
+    }
+
+
+    /// The graphics choices in effect for a game, one short text for the `[benchmark]` line: the route, the Vulkan library, upscaling, frame generation and the AVX and core-count switches.
+    static func summary(for game: Game) -> String {
+        let e = game.engine ?? GameEngine()
+        func effective(_ key: String, _ own: String?, _ fallback: String) -> String {
+            // What the game's config says wins (it already holds the picker's line, and the game's own text where that overrides it); the picker next, then the app-wide choice.
+            let game = MadeiraConfig.gameValue(key) ?? "", app = MadeiraConfig.get(key) ?? ""
+            if !game.isEmpty { return game }
+            if let own { return own }
+            return !app.isEmpty ? app : fallback
+        }
+        var parts = ["d3d11=" + effective("d3d11", e.d3d11Route, "dxmt"), "d3d12=" + effective("d3d12", e.d3d12Route, "madeira-d3d12"), "vulkan=" + effective("vulkan", e.vulkanLibrary, "off-unless-needed")]
+        parts.append("upscale=" + (e.upscaleFactor.map { $0 == 0 ? "screen" : "\($0)x" } ?? "off") + ((e.upscaleMethod ?? 0) > 0 ? "/ls\(e.upscaleMethod ?? 0)" : ""))
+        parts.append("framegen=" + (e.losslessScaling == true ? "on" : "off"))
+        if e.avx == true { parts.append("avx=on") }
+        if let n = e.cpuCount { parts.append("cores=\(n)") }
+        return parts.joined(separator: " ")
+    }
+
     /// Exports this game's choices. Every variable is set or unset, so nothing from an earlier game stays.
     static func apply(for game: Game) {
+
         let e = game.engine ?? GameEngine()
         if !EngineOptions.value("donor-pool-mb").isEmpty, InstallCheck.donorMemory != .ready {
             LogStore.shared.log("[engine-options] Donor memory is on but \(InstallCheck.donorMemoryNote.lowercased())", level: .error)
         }
         func flag(_ name: String, _ on: Bool?) { if on == true { setenv(name, "1", 1) } else { unsetenv(name) } }
         flag("MADEIRA_FEX_AVX", e.avx)
-        flag("MADEIRA_FRAMEGEN", e.frameGeneration)
-        // Frame generation shows two pictures per game frame, which only works when the screen can: tell it how fast the screen can go (the engine skips a frame it cannot show twice).
-        if e.frameGeneration == true { setenv("MADEIRA_FRAMEGEN_HZ", String(UIScreen.main.maximumFramesPerSecond), 1) } else { unsetenv("MADEIRA_FRAMEGEN_HZ") }
+        // The old MetalFX frame interpolation (MADEIRA_FRAMEGEN) is gone from the app: a game that saved it as on does not get it. Lossless Scaling's frame generation is the only one.
+        unsetenv("MADEIRA_FRAMEGEN"); unsetenv("MADEIRA_FRAMEGEN_HZ")
+        // Lossless Scaling frame generation: only while the licence receipt is valid for the signed-in account. The engine looks at a control file (the in-game menu rewrites it) and reads the shaders
+        // from a file that is in the prefix for this game only. Never together with the MetalFX one.
+        if MainActor.assumeIsolated({ LosslessScaling.shared.usable }) {
+            let want = e.losslessScaling == true
+            let ok = MainActor.assumeIsolated { LosslessScaling.shared.startGame(enabled: want, generated: e.losslessGenerated ?? 1) }
+            setenv("MADEIRA_LSFG_CTL", LosslessScaling.windowsControlPath, 1)
+            setenv("MADEIRA_LSFG_SHADERS", LosslessScaling.windowsShaderPath, 1)
+            setenv("MADEIRA_FRAMEGEN_HZ", String(UIScreen.main.maximumFramesPerSecond), 1)
+            unsetenv("MADEIRA_LSFG"); unsetenv("MADEIRA_LSFG_GENERATED"); unsetenv("MADEIRA_LSFG_FLOW")
+            if want, !ok { LogStore.shared.log("[engine] Lossless Scaling frame generation was asked for but the shaders could not be prepared", level: .error) }
+            LogStore.shared.log("[engine] Lossless Scaling is available in the in-game menu (\(want && ok ? "on" : "off") at the start)")
+        } else {
+            if e.losslessScaling == true { LogStore.shared.log("[engine] Lossless Scaling frame generation was asked for but the licence check does not allow it (Settings > Stores > Lossless Scaling)", level: .error) }
+            unsetenv("MADEIRA_LSFG"); unsetenv("MADEIRA_LSFG_SHADERS"); unsetenv("MADEIRA_LSFG_GENERATED"); unsetenv("MADEIRA_LSFG_FLOW"); unsetenv("MADEIRA_LSFG_CTL")
+            MainActor.assumeIsolated { LosslessScaling.shared.sessionEnded() }
+        }
         // Both states are exported: the WoW64 backend turns reduced precision ON when nothing sets it (PR 210), so "Off" has to say 0 or it does nothing for 32-bit games.
         if let x87 = e.reducedX87 { setenv("FEX_X87REDUCEDPRECISION", x87 ? "1" : "0", 1) } else { unsetenv("FEX_X87REDUCEDPRECISION") }
         // DXMT's memory census reports from the encode thread several times a second in a 64-bit game (a third of the log); once every 10 s unless madeira.cfg chooses (PR 244).
@@ -291,12 +342,24 @@ enum EngineLaunch {
             if let v = e.mouseLook { mouseLines.append("env.PORTHOLE_MOUSE_LOOK = \(v ? "1" : "0")") }
             if !mouseLines.isEmpty { own = mouseLines.joined(separator: "\n") + (own.isEmpty ? "" : "\n" + own) }
             if e.largeReservations == true { own = "oversize-reserve = 1\nfft-arena-patch = 1" + (own.isEmpty ? "" : "\n" + own) }
+            // The graphics route this game asks for (Vulkan, experimental), as the lines the engine reads; the game's own text below wins where both set a key.
+            var routeLines: [String] = []
+            if let v = e.d3d11Route { routeLines.append("d3d11 = \(v)") }
+            if let v = e.d3d12Route { routeLines.append("d3d12 = \(v)") }
+            if let v = e.vulkanLibrary { routeLines.append("vulkan = \(v)") }
+            if !routeLines.isEmpty { own = routeLines.joined(separator: "\n") + (own.isEmpty ? "" : "\n" + own); LogStore.shared.log("[engine] graphics route for this game: " + routeLines.joined(separator: ", ")) }
             // A known game's own lines (GameFixes), first: the person's text wins where both set a key. The app reads some of them before the runtime starts.
             if let fix = GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID), !fix.configLines.isEmpty { own = fix.configLines.joined(separator: "\n") + (own.isEmpty ? "" : "\n" + own) }
             // A Unity game with Rewired's Windows.Gaming.Input plugin sees no controller unless the host pads are also gamepads (see GameFixes.usesRewiredWindowsGamingInput).
             if GameFixes.usesRewiredWindowsGamingInput(program: AppModel.unixURL(forWindows: game.exe)), !own.contains("MADEIRA_WGI_HOST_PADS") {
                 own = "env.MADEIRA_WGI_HOST_PADS = 1" + (own.isEmpty ? "" : "\n" + own)
                 LogStore.shared.log("[engine] Rewired's Windows.Gaming.Input plugin found: the controller is also offered as a Windows.Gaming.Input gamepad")
+            }
+            // Ubisoft's launch stub (UplayLaunch.exe, what an Epic copy of a Ubisoft game lists) starts Ubisoft Connect (upc.exe) and exits at once with code 0. Without this the session
+            // ended with it a second after it began (Steep, 2026-11-06): the session now goes on while the launcher it started is running.
+            if game.exe.lowercased().split(whereSeparator: { $0 == "\\" || $0 == "/" }).last == "uplaylaunch.exe", !own.contains("MADEIRA_WAIT_CHILDREN") {
+                own = "env.MADEIRA_WAIT_CHILDREN = 1" + (own.isEmpty ? "" : "\n" + own)
+                LogStore.shared.log("[engine] Ubisoft's launch stub found: the session waits for the launcher it starts")
             }
             let pairs = try MadeiraConfig.applyGame(own.isEmpty ? nil : own)
             if !pairs.isEmpty { LogStore.shared.log("[game-cfg] " + pairs.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")) }
@@ -323,12 +386,56 @@ enum EngineLaunch {
         } else {
             for name in GPUCards.identityNames { unsetenv(name) }
         }
+        // Resolutions through DXGI. DXMT's default mode list for a game that asks DXGI (Unreal games, many Direct3D 11 and 12 games) is "640x480, 800x600 and the resolution
+        // Porthole is set to", so a game's resolution menu had one real choice and upscaling had nothing to enlarge from. DXMT_WSI_MODE_TABLE hands such a game the same
+        // table user32 already lists (640x360 up to the Resolution setting: 960x540, 1280x720, 1600x900...). On for every game now; an `env.DXMT_WSI_MODE_TABLE = 0` line
+        // (the game's own or the global config) turns it off.
+        if (MadeiraConfig.gameValue("env.DXMT_WSI_MODE_TABLE") ?? MadeiraConfig.get("env.DXMT_WSI_MODE_TABLE")) == nil {
+            setenv("DXMT_WSI_MODE_TABLE", "1", 1)
+        }
+        // Upscaling: the picture the game draws is enlarged with MetalFX's spatial scaler instead of the plain stretch (the game's Resolution setting is what it draws at).
+        // 0 = "to the screen": the engine works the factor out from the screen's pixels (DXMT_METALFX_FIT for Direct3D 11, madeira.cfg `metalfx-upscale = fit:WxH` for Direct3D 12),
+        // at most 2x, and does nothing when the game already draws about as large as the screen. A number is a fixed factor (Direct3D 11 and 12, at most 2).
+        // A factor in a dxmt line of the person's wins.
+        let weSetUpscaleKey = UserDefaults.standard.bool(forKey: "f4.upscaleCfgSet")
+        if let f = e.upscaleFactor, f == 0 || f > 1 {
+            setenv("DXMT_METALFX_SPATIAL_SWAPCHAIN", "1", 1)
+            if f == 0 {
+                let px = Self.screenPixels()
+                let fit = "\(px.width)x\(px.height)"
+                setenv("DXMT_METALFX_FIT", fit, 1)
+                _ = MadeiraConfig.set("metalfx-upscale", "fit:" + fit)
+                LogStore.shared.log("[engine] upscaling on: the game's picture is enlarged to the screen (\(fit) pixels, at most 2x) with MetalFX")
+            } else {
+                let factor = min(f, 2.0)
+                unsetenv("DXMT_METALFX_FIT")
+                _ = MadeiraConfig.set("metalfx-upscale", factor == factor.rounded() ? String(Int(factor)) : String(factor))
+                if !dxmt.contains("metalSpatialUpscaleFactor") { dxmt = (dxmt.isEmpty ? "" : dxmt + ";") + "d3d11.metalSpatialUpscaleFactor=\(factor == factor.rounded() ? String(Int(factor)) : String(factor))" }
+                LogStore.shared.log("[engine] upscaling on: the game's picture is enlarged \(factor)x with MetalFX")
+            }
+            UserDefaults.standard.set(true, forKey: "f4.upscaleCfgSet")
+        } else {
+            unsetenv("DXMT_METALFX_FIT")
+            if MadeiraConfig.get("env.DXMT_METALFX_SPATIAL_SWAPCHAIN") == nil { unsetenv("DXMT_METALFX_SPATIAL_SWAPCHAIN") }
+            if weSetUpscaleKey { _ = MadeiraConfig.set("metalfx-upscale", nil); UserDefaults.standard.set(false, forKey: "f4.upscaleCfgSet") }
+        }
+        // Upscaling that the in-game menu can change while the game runs: a control file in the prefix (written with the choice above) that the engine looks at twice a second.
+        if LiveUpscaling.isAllowed {
+            // Lossless Scaling's upscalers read their shaders from the same file the frame generation does: it has to be in the prefix before the game starts.
+            let method = MainActor.assumeIsolated({ LosslessScaling.shared.usable }) ? (e.upscaleMethod ?? 0) : 0
+            if method > 0, e.upscaleFactor != nil { _ = MainActor.assumeIsolated { LosslessScaling.shared.prepareForGame() } }
+            MainActor.assumeIsolated { LiveUpscaling.shared.startGame(saved: e.upscaleFactor, method: method, sharpness: e.upscaleSharpness ?? 3) }
+            setenv("MADEIRA_UPSCALE_CTL", LiveUpscaling.windowsControlPath, 1)
+        } else {
+            unsetenv("MADEIRA_UPSCALE_CTL")
+            MainActor.assumeIsolated { LiveUpscaling.shared.sessionEnded() }
+        }
         if dxmt.isEmpty { unsetenv("DXMT_CONFIG") } else {
             setenv("DXMT_CONFIG", dxmt, 1)
             LogStore.shared.log("[engine] DXMT config: \(dxmt)", level: dxmt.utf16.count > 259 ? .error : .info)
             if dxmt.utf16.count > 259 { LogStore.shared.log("[engine] the DXMT options are \(dxmt.utf16.count) characters; DXMT reads at most 259 and drops all of them, so shorten the dxmt lines", level: .error) }
         }
-        let chosen = [e.avx == true ? "avx" : nil, e.frameGeneration == true ? "framegen" : nil, e.reducedX87.map { $0 ? "x87" : "x87=off" },
+        let chosen = [e.avx == true ? "avx" : nil, e.reducedX87.map { $0 ? "x87" : "x87=off" },
                       e.largeReservations == true ? "large-reservations" : nil,
                       e.cpuCount.map { "cpus=\($0)" }, e.anisotropy.map { "aniso=\($0)" }, e.controllerMode.map { "pad=\($0)" }, e.gpuCard.map { "gpu=\($0)" }].compactMap { $0 }
         if !chosen.isEmpty { LogStore.shared.log("[engine] this game: " + chosen.joined(separator: " ")) }
