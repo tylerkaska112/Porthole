@@ -326,6 +326,41 @@ do {   // other failures: no Windows depot, no content servers, no space
     run(c)
     if case .failed(let message) = c.state { check(message.contains("not enough space") && message.contains("free"), "failures: too little space is reported before anything is written (\(message))") } else { check(false, "failures: no space fails") }
     check(!fm.fileExists(atPath: paths.driveC.appendingPathComponent("Program Files (x86)/Steam/steamapps/common/Sample Game/Game.exe").path), "failures: and nothing was written")
+    // Only what is missing on the device needs room: an install that is all there already (a repair) and one file missing from it (an update that adds a file).
+    let spacePaths = freshPaths("space-update")
+    let spaceFake = makeStore(appid: 480, name: "Sample Game", depots: [depotA])
+    let spaceFirst = SteamInstaller(appid: 480, name: "Sample Game", steamApps: spacePaths.steamApps, backend: spaceFake)
+    run(spaceFirst)
+    check(spaceFirst.state == .finished, "space: the first install finishes (\(spaceFirst.state))")
+    let repair = SteamInstaller(appid: 480, name: "Sample Game", steamApps: spacePaths.steamApps, backend: spaceFake)
+    repair.selection.verify = true; repair.freeSpaceOverride = { 100 << 20 }
+    run(repair)
+    check(repair.state == .finished, "space: a repair of a game that is all on the device needs no room beyond what is there (\(repair.state))")
+    let missingFile = spacePaths.driveC.appendingPathComponent("Program Files (x86)/Steam/steamapps/common/Sample Game/data/levels/one.dat")
+    let missingData = (try? Data(contentsOf: missingFile)) ?? Data()
+    try? fm.removeItem(at: missingFile)
+    let tight = SteamInstaller(appid: 480, name: "Sample Game", steamApps: spacePaths.steamApps, backend: spaceFake)
+    tight.selection.verify = true; tight.freeSpaceOverride = { 100 << 20 }
+    run(tight)
+    if case .failed(let message) = tight.state { check(message.contains("not enough space") && message.contains("updating") && message.contains("more"), "space: an update that adds a file says how much more it needs (\(message))") } else { check(false, "space: a missing file with too little room fails (\(tight.state))") }
+    let roomy = SteamInstaller(appid: 480, name: "Sample Game", steamApps: spacePaths.steamApps, backend: spaceFake)
+    roomy.selection.verify = true; roomy.freeSpaceOverride = { 4 << 30 }
+    run(roomy)
+    check(roomy.state == .finished && (try? Data(contentsOf: missingFile)) == missingData, "space: with room for the missing file it is fetched (\(roomy.state))")
+    // The measuring itself: whole file, missing file, a file longer than it will be, and a file that was only extended to its length (holds no blocks) count their blocks, not their length.
+    let measure = root.appendingPathComponent("space-measure"); try? fm.createDirectory(at: measure, withIntermediateDirectories: true)
+    let whole = measure.appendingPathComponent("whole.bin"), longer = measure.appendingPathComponent("longer.bin"), sparse = measure.appendingPathComponent("sparse.bin")
+    try? Data(count: 300_000).write(to: whole); try? Data(count: 900_000).write(to: longer)
+    if let h = try? FileHandle(forWritingTo: { fm.createFile(atPath: sparse.path, contents: nil); return sparse }()) { try? h.truncate(atOffset: 10 << 20); try? h.close() }
+    check(SteamInstaller.bytesToAdd(files: [(whole.path, 300_000)]) == 0, "space: a file that is all there adds nothing")
+    check(SteamInstaller.bytesToAdd(files: [(measure.appendingPathComponent("none.bin").path, 12345)]) == 12345, "space: a file that is not there adds its whole size")
+    check(SteamInstaller.bytesToAdd(files: [(longer.path, 500_000)]) == 0, "space: a file that is longer on the device than it will be adds nothing")
+    check(SteamInstaller.bytesToAdd(files: [(sparse.path, 10 << 20)]) == 10 << 20, "space: a file only extended to its length holds no space yet and counts all of it")
+    let full: UInt64 = 60 << 30
+    check(SteamInstaller.spaceNeeded(fullBytes: full, installedBytes: nil, hasPartialDownload: false) == UInt64(Double(full) * 1.15), "space: a new install is checked against all of it")
+    check(SteamInstaller.spaceNeeded(fullBytes: full, installedBytes: full - (2 << 30), hasPartialDownload: false) == UInt64(Double(2 << 30) * 1.15), "space: an update is checked against what it adds")
+    check(SteamInstaller.spaceNeeded(fullBytes: full - (2 << 30), installedBytes: full, hasPartialDownload: false) == 0, "space: a smaller version needs nothing up front")
+    check(SteamInstaller.spaceNeeded(fullBytes: full, installedBytes: nil, hasPartialDownload: true) == 0, "space: a download with files on the device is left to the installer's own count")
     let gone = makeStore(appid: 480, name: "Sample Game", depots: [depotA]); gone.appInfoFailure = SteamContentError(message: "The sign-in for downloads has expired. Sign in for downloads again.")
     let d = SteamInstaller(appid: 480, name: "Sample Game", steamApps: freshPaths("expired").steamApps, backend: gone)
     run(d)

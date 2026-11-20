@@ -283,6 +283,13 @@ enum ItchInstallResult {
     func sessionEnded() {
         guard let id = runningID, let game = pending[id]?.game ?? installed[id]?.game else { return }
         runningID = nil
+        // The setup never started (JIT could not be switched on, say): no launch screen is shown for a setup, so say why here (see GogInstaller.sessionEnded).
+        if let why = AppModel.shared.session.takeFailure() {
+            installs[id]?.state = .ready
+            error = why
+            LogStore.shared.log("[itch-install] the installer could not start: \(why)", level: .error)
+            return
+        }
         let snapshot = before[id] ?? []
         Task {
             do {

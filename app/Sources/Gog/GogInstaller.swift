@@ -292,6 +292,14 @@ struct GogInstalledGame: Codable {
     func sessionEnded() {
         guard let id = runningID, let game = pending[id] ?? installed[id]?.game else { return }
         runningID = nil
+        // The setup never started (JIT could not be switched on, say): the launch screen is not shown for a setup, so this is the only place that can say why. Without it the person
+        // only read "The installer did not install the game" (a problem report, 1.3.0).
+        if let why = AppModel.shared.session.takeFailure() {
+            installs[id]?.state = .ready
+            error = why
+            LogStore.shared.log("[gog-install] the setup could not start: \(why)", level: .error)
+            return
+        }
         Task {
             do {
                 let record = try await worker.finish(game)

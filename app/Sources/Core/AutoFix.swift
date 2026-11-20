@@ -19,6 +19,8 @@ enum AutoFix {
         case swapCoverage(String)
         /// One line of the game's own madeira.cfg text ("env.MADEIRA_X64_IMAGE_NOCOPY = 1").
         case config(key: String, line: String)
+        /// The game starts through Valve's Steam client, which it needs to be running (the game's "Through Steam / Run directly" choice goes back to Through Steam).
+        case throughSteam
         /// Nothing is changed: the cause is not a setting of the game (the install lacks a capability, say), and the person is told.
         case advice
     }
@@ -48,6 +50,8 @@ enum AutoFix {
         var configText = ""
         /// Whether this install may map the large address space the engine reserves (the "Extended Virtual Addressing" capability).
         var largeAddressAllowed = true
+        /// The game has a Steam link (it was downloaded through Steam) but is set to "Run directly", so Steam's client is not started for it.
+        var runsDirectly = false
     }
 
     struct Rule: Equatable {
@@ -194,6 +198,26 @@ enum AutoFix {
              endings: [.unexpected, .stopped],
              change: .swapCoverage("wide"),
              suits: { $0.swapMB > 0 && $0.swapCoverage.isEmpty }),
+        // G.I. Joe Wrath of Cobra (compat report #301, Epic, 1.3.0): the game started and drew at 60 frames a second, but its own Epic Online Services login was refused by Epic's
+        // servers with errors.com.epicgames.oauth.corrective_action_required (18206), twice, so it sat at its sign-in. Porthole had fetched the sign-in code without trouble:
+        // it is the account that needs something done on Epic's side, which no setting of the game changes.
+        Rule(id: "epic-account-action", title: "Epic wants something done on the account",
+             reason: "The game started, but Epic's servers refused its sign-in and asked for a step on the account (corrective action required), so the game could not log in.",
+             done: "Nothing was changed. Sign in at epicgames.com in a browser and do what Epic asks (a code, new terms, a missing detail), then sign out of Epic in Porthole's Settings and sign in again.",
+             all: ["errors.com.epicgames.oauth.corrective_action_required"],
+             endings: [.unexpected, .stopped, .early],
+             change: .advice),
+        // Green Hell (compat report #275) and Ultimate Marvel vs. Capcom 3 (#277), 1.3.0, both set to "Run directly": the game's Steamworks start-up logged "did not locate a running
+        // instance of Steam" and the program ended at once with exit code 53 (0x35). 15 other logs carry the Steamworks line and the games rated great went on playing, so the line
+        // alone is not enough; with the exit code it is in two logs, both of this kind. Crash Bandicoot N. Sane Trilogy (#330) has both lines too, but it started through Steam
+        // (a child program of its own ended with 53), so the rule is only for a game that runs directly.
+        Rule(id: "needs-steam-client", title: "It needs Steam to be running",
+             reason: "The game looked for Steam's client, did not find one, and ended at once. This game is set to Run directly, so Steam's client is never started for it.",
+             done: "This game starts through Steam now.",
+             all: ["did not locate a running instance of Steam", "the program ended with exit code 53 (0x35)"],
+             endings: [.early, .unexpected, .stopped],
+             change: .throughSteam,
+             suits: { $0.runsDirectly }),
     ]
 
     /// Fixes that do not come from a line of the log but from what is known about the game: Madeira's or Porthole's tested setup, and what people who say it works use. They are
@@ -214,6 +238,7 @@ enum AutoFix {
         case .swap(let megabytes, _): return "Turn on a \(megabytes % 1024 == 0 ? "\(megabytes / 1024) GB" : "\(megabytes) MB") swap file for this game, so its memory can spill to storage."
         case .swapCoverage: return "Let this game's swap file cover more of its memory."
         case .config(_, let line): return "Add this engine line to this game: \(line)"
+        case .throughSteam: return "Start this game through Steam (its Through Steam / Run directly choice), so Steam's client is running for it."
         case .advice: return ""
         }
     }

@@ -118,6 +118,14 @@ final class SteamInstaller {
 
     /// Where a download keeps what it has finished, so it can continue later.
     static func progressFolder(appID: Int, steamApps: URL) -> URL { steamApps.appendingPathComponent("downloading/\(appID)") }
+    /// What must be free before a download starts, for the buttons that check it up front (the installer then measures the exact need itself). A fresh install needs all of it (and a
+    /// little over); an update needs what the new version adds to the installed one; a download that has files on the device already needs nothing here, the installer counts what is left.
+    /// Nothing means "do not stop the person": 0.
+    static func spaceNeeded(fullBytes: UInt64, installedBytes: UInt64?, hasPartialDownload: Bool) -> UInt64 {
+        if hasPartialDownload { return 0 }
+        guard let installedBytes else { return UInt64(Double(fullBytes) * 1.15) }
+        return fullBytes > installedBytes ? UInt64(Double(fullBytes - installedBytes) * 1.15) : 0
+    }
     static func hasPartialDownload(appID: Int, steamApps: URL) -> Bool {
         let done = progressFolder(appID: appID, steamApps: steamApps).appendingPathComponent("done.bin")
         return ((try? done.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) > 0
@@ -330,15 +338,65 @@ final class SteamInstaller {
             sum + entry.element.files.reduce(0) { $0 + (Self.isWanted($1) && lastOwner[Self.overlapKey($1.path)] == entry.offset ? $1.size : 0) }
         }
 
-        // Room for it? Keep half a gigabyte free for the system.
-        let need = Int64(total) + 512 << 20
-        if let free = freeSpaceOverride?() ?? Self.freeSpace(at: steamApps), free < need {
-            fail("There is not enough space on this device: \(name) needs \(Self.size(Int64(total))) and \(Self.size(max(0, free))) is free.", id); return
+        // Room for it? Only what is not on the device yet needs room: an update rewrites the changed parts of files that are already there, a resumed download has most of its
+        // bytes on the disk, a repair has all of them. (The old check asked for the whole game every time, so a 2 GB update of a 60 GB game wanted 60 GB free.)
+        // Half a gigabyte stays free for the system. Looking at thousands of files is done off the main thread: on a drive each one is a round trip.
+        state = .preparing("Checking free space\u{2026}")
+        let replacesAll = workshop != nil && !workshopPlanMatches()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let more = replacesAll ? self.total : self.bytesToAdd()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, id == self.token, !self.state.isFinal else { return }
+                let free = self.freeSpaceOverride?() ?? Self.freeSpace(at: self.steamApps)
+                if more > 0, let free, free < Int64(more) + 512 << 20 {
+                    if more < self.total {
+                        self.fail("There is not enough space on this device: updating \(self.name) needs about \(Self.size(Int64(more))) more and \(Self.size(max(0, free))) is free.", id)
+                    } else {
+                        self.fail("There is not enough space on this device: \(self.name) needs \(Self.size(Int64(self.total))) and \(Self.size(max(0, free))) is free.", id)
+                    }
+                    return
+                }
+                SteamLog.event("[steam-depot] space: \(Self.size(Int64(more))) more than the device holds of \(Self.size(Int64(self.total))), \(free.map { Self.size($0) } ?? "unknown") free")
+                self.continueTransfer(id)
+            }
         }
+    }
+
+    private var currentPlan: String { manifests.map { "\($0.depotID):\($0.manifestID)" }.joined(separator: ",") }
+    private func workshopPlanMatches() -> Bool {
+        (try? String(contentsOf: progressFolder.appendingPathComponent("plan.txt"), encoding: .utf8)) == currentPlan
+    }
+
+    /// How many bytes the files to write need that the device does not hold yet: per file the new size less what it already has allocated (a half-fetched file is a sparse file,
+    /// so its blocks are counted, not its length). A file that is longer on the disk than it will be needs nothing.
+    private func bytesToAdd() -> UInt64 {
+        var files: [(path: String, size: UInt64)] = []
+        for (depotIndex, manifest) in manifests.enumerated() {
+            for file in manifest.files where Self.isWanted(file) && file.size > 0 && lastOwner[Self.overlapKey(file.path)] == depotIndex {
+                files.append((gameFolder.appendingPathComponent(file.path).path, file.size))
+            }
+        }
+        return Self.bytesToAdd(files: files)
+    }
+    static func bytesToAdd(files: [(path: String, size: UInt64)]) -> UInt64 {
+        var held = [UInt64](repeating: 0, count: files.count)
+        held.withUnsafeMutableBufferPointer { buffer in
+            let output = buffer
+            DispatchQueue.concurrentPerform(iterations: files.count) { i in
+                var info = stat()
+                if stat(files[i].path, &info) == 0, info.st_blocks > 0 { output[i] = UInt64(info.st_blocks) * 512 }
+            }
+        }
+        var more: UInt64 = 0
+        for (i, file) in files.enumerated() { more += file.size - min(held[i], file.size) }
+        return more
+    }
+
+    private func continueTransfer(_ id: Int) {
         // An update of a Workshop item replaces its files: what an older version had and this one does not must not stay behind.
         if workshop != nil {
-            let samePlan = (try? String(contentsOf: progressFolder.appendingPathComponent("plan.txt"), encoding: .utf8)) == manifests.map { "\($0.depotID):\($0.manifestID)" }.joined(separator: ",")
-            if !samePlan { try? fm.removeItem(at: gameFolder) }
+            if !workshopPlanMatches() { try? fm.removeItem(at: gameFolder) }
         }
         do {
             try fm.createDirectory(at: gameFolder, withIntermediateDirectories: true)

@@ -85,81 +85,157 @@ do {   // the layout, on many screens and at every size
         check(inInsets, "layout \(name): inside the safe area on the sides")
         let normal = VirtualPadLayout.frames(in: size, insets: insets, scale: 1)
         check(normal.count == VirtualPadLayout.Item.allCases.count, "layout \(name): every control has a place")
-        let tiny = normal.filter { min($0.value.width, $0.value.height) < 28 }.keys
-        check(tiny.isEmpty || size.height < 340, "layout \(name): no control smaller than 28 pt at the normal size (\(tiny.count) are)")
+        let tiny = normal.filter { min($0.value.width, $0.value.height) < 18 }.keys
+        check(tiny.isEmpty || size.height < 340, "layout \(name): no control smaller than 18 pt at the normal size (\(tiny.count) are; each also takes touches 12 pt beyond its edge)")
     }
     let phone = VirtualPadLayout.frames(in: CGSize(width: 852, height: 393), insets: .init(left: 59, right: 59, top: 0, bottom: 21), scale: 1)
     let big = VirtualPadLayout.frames(in: CGSize(width: 1366, height: 1024), insets: .init(), scale: 1)
     check(big[.leftStick]!.width <= phone[.leftStick]!.width * 1.4, "layout: on an iPad the controls are a big phone's, not twice the size (\(Int(big[.leftStick]!.width)) vs \(Int(phone[.leftStick]!.width)))")
-    check(phone[.leftStick]!.maxX < phone[.dpad]!.minX && phone[.face]!.minX > phone[.rightStick]!.maxX, "layout: stick then direction pad on the left, right stick then the diamond on the right")
+    check(phone[.dpad]!.maxY < phone[.leftStick]!.minY && phone[.face]!.maxY < phone[.rightStick]!.minY, "layout: the direction pad over the left stick, the diamond over the right")
     check(phone[.leftTrigger]!.maxY < phone[.leftBumper]!.minY && phone[.rightTrigger]!.maxY < phone[.rightBumper]!.minY, "layout: the trigger above the bumper in each corner")
     check(phone[.back]!.maxX < phone[.start]!.minX, "layout: View left of Menu")
 }
 
-do {   // the layout presets
-    let screens: [(String, CGSize, VirtualPadLayout.Insets)] = [
-        ("iPhone 15 Pro", CGSize(width: 852, height: 393), .init(left: 59, right: 59, top: 0, bottom: 21)),
-        ("iPhone SE", CGSize(width: 667, height: 375), .init()),
-        ("small iPhone", CGSize(width: 568, height: 320), .init()),
-        ("iPad Pro 13", CGSize(width: 1366, height: 1024), .init(left: 0, right: 0, top: 24, bottom: 20)),
-        ("iPad mini", CGSize(width: 1133, height: 744), .init(left: 0, right: 0, top: 24, bottom: 20)),
+do {   // the Porthole arrangement, the only one
+    let screens: [(String, CGSize, VirtualPadLayout.Insets, Bool)] = [
+        ("iPhone 15 Pro, notch on the left", CGSize(width: 852, height: 393), .init(left: 59, right: 0, top: 0, bottom: 21), false),
+        ("iPhone 15 Pro, notch on the right", CGSize(width: 852, height: 393), .init(left: 0, right: 59, top: 0, bottom: 21), false),
+        ("iPhone 17 Pro Max, landscape", CGSize(width: 956, height: 440), .init(left: 62, right: 62, top: 0, bottom: 21), false),
+        ("iPhone SE, landscape", CGSize(width: 667, height: 375), .init(), false),
+        ("small iPhone, landscape", CGSize(width: 568, height: 320), .init(), false),
+        ("iPad Pro 13, landscape", CGSize(width: 1376, height: 1032), .init(), true),
+        ("iPad Air 11, landscape", CGSize(width: 1180, height: 820), .init(), true),
+        ("iPad mini, landscape", CGSize(width: 1133, height: 744), .init(), true),
     ]
-    check(VirtualPadLayout.Preset.allCases.count == 8 && Set(VirtualPadLayout.Preset.allCases.map(\.title)).count == 8, "presets: eight layouts, each with its own name")
-    check(VirtualPadLayout.Preset.standard.items == Set(VirtualPadLayout.Item.allCases) && VirtualPadLayout.Preset(rawValue: "racing") == .racing && VirtualPadLayout.Preset(rawValue: "nonsense") == nil, "presets: the standard one has every control, and a name that is not one is no layout")
-    for preset in VirtualPadLayout.Preset.allCases {
-        var fitAll = true, menuClear = true, inside = true, hasExactly = true
-        for (_, size, insets) in screens {
-            for scale in stride(from: 0.5, through: 1.5, by: 0.25) {
-                let f = VirtualPadLayout.frames(in: size, insets: insets, scale: CGFloat(scale), preset: preset)
-                if !VirtualPadLayout.fits(f, in: size, insets: insets) { fitAll = false }
-                if Set(f.keys) != preset.items { hasExactly = false }
-                if f.values.contains(where: { $0.maxX > size.width - VirtualPadLayout.menuEdge + 0.5 }) { menuClear = false }
-                if f.values.contains(where: { $0.minX < insets.left - 0.5 || $0.maxX > size.width - insets.right + 0.5 }) { inside = false }
-            }
+    for (name, size, insets, wide) in screens {
+        var fitAll = true, menuClear = true, inside = true, exact = true
+        for scale in stride(from: 0.5, through: 1.5, by: 0.25) {
+            let f = VirtualPadLayout.frames(in: size, insets: insets, scale: CGFloat(scale), preset: .porthole, wide: wide)
+            if !VirtualPadLayout.fits(f, in: size, insets: insets) { fitAll = false }
+            if Set(f.keys) != VirtualPadLayout.Preset.porthole.items { exact = false }
+            if f.values.contains(where: { $0.maxX > size.width - VirtualPadLayout.menuEdge + 0.5 }) { menuClear = false }
+            if f.values.contains(where: { $0.minX < insets.left - 0.5 || $0.maxX > size.width - insets.right + 0.5 }) { inside = false }
         }
-        check(fitAll, "preset \(preset.title): every control is on screen and none touches another, on five screens at five sizes")
-        check(hasExactly, "preset \(preset.title): it has the controls it says it has, and no others")
-        check(menuClear, "preset \(preset.title): the strip for the menu swipe on the right edge is clear")
-        check(inside, "preset \(preset.title): inside the safe area on the sides")
-        let phone = VirtualPadLayout.frames(in: CGSize(width: 852, height: 393), insets: .init(left: 59, right: 59, top: 0, bottom: 21), scale: 1, preset: preset)
-        check(phone.values.allSatisfy { min($0.width, $0.height) >= 28 }, "preset \(preset.title): no control smaller than 28 pt on an iPhone 15 Pro at the normal size (each also takes touches 12 pt beyond its edge)")
-        check(!preset.detail.isEmpty && preset.detail.count < 160, "preset \(preset.title): it has a short description")
-    }
-    check(VirtualPadLayout.preset(game: "racing", last: "retro") == .racing && VirtualPadLayout.preset(game: nil, last: "retro") == .retro && VirtualPadLayout.preset(game: nil, last: nil) == .standard
-          && VirtualPadLayout.preset(game: "gone", last: "minimal") == .minimal && VirtualPadLayout.preset(game: "gone", last: "also gone") == .standard, "presets: a game's own choice wins, then the one chosen last, then the standard (and a name that no longer exists is skipped)")
-    for preset in VirtualPadLayout.Preset.allCases {
-        let f = VirtualPadLayout.frames(in: CGSize(width: 852, height: 393), insets: .init(left: 59, right: 59, top: 0, bottom: 21), scale: 1, preset: preset)
+        check(fitAll, "porthole \(name): every control is on screen and none touches another, at every size from 0.5 to 1.5")
+        check(exact, "porthole \(name): all ten controls, no others")
+        check(menuClear, "porthole \(name): the strip for the menu swipe on the right edge is clear")
+        check(inside, "porthole \(name): inside the safe area on the sides")
+        let f = VirtualPadLayout.frames(in: size, insets: insets, scale: 1, preset: .porthole, wide: wide)
+        check(f.values.allSatisfy { min($0.width, $0.height) >= 18 } || size.height < 340, "porthole \(name): no control smaller than 18 pt at the normal size (each also takes touches 12 pt beyond its edge)")
+        guard let ls = f[.leftStick], let rs = f[.rightStick], let dp = f[.dpad], let fc = f[.face], let lt = f[.leftTrigger], let rt = f[.rightTrigger],
+              let lb = f[.leftBumper], let rb = f[.rightBumper], let back = f[.back], let start = f[.start] else { check(false, "porthole \(name): every control is there"); continue }
+        check(near(ls.midX + rs.midX, size.width, 0.5) && near(dp.midX, ls.midX, 0.5) && near(fc.midX, rs.midX, 0.5), "porthole \(name): the sticks mirror each other, the pad is centred over the left stick and the face buttons over the right")
+        check(near(lt.minX + rt.maxX, size.width, 0.5) && near(lb.minX + rb.maxX, size.width, 0.5) && near(lt.minX, lb.minX, 0.5), "porthole \(name): each trigger sits over its bumper and the two sides mirror")
+        check(near(back.minX + start.maxX, size.width, 0.5) && near(back.minY, start.minY, 0.5) && back.maxX < start.minX, "porthole \(name): View and Menu are centred on the screen, View on the left")
+        check(ls.maxY <= size.height - insets.bottom + 0.5 && dp.maxY < ls.minY && fc.maxY < rs.minY && lt.maxY < lb.minY, "porthole \(name): the pad over the stick, the face buttons over theirs, the trigger over the bumper")
+        check(ls.maxX < lt.minX && rt.maxX < rs.minX, "porthole \(name): the triggers and bumpers are between the sticks")
         let covered = f.values.reduce(CGFloat(0)) { $0 + $1.width * $1.height }
-        check(covered / (852 * 393) < 0.16, "preset \(preset.title): the controls cover less than 16% of an iPhone 15 Pro's screen (\(Int(covered / (852 * 393) * 100))%)")
-        let free = CGRect(x: 320, y: 60, width: 852 - 320 - 320, height: 393 - 60 - 60)
-        check(!f.values.contains(where: { $0.intersects(free) }) || preset == .racing || preset == .playstation, "preset \(preset.title): the middle of the screen is left free")
+        check(covered / (size.width * size.height) < 0.23, "porthole \(name): the controls cover under 23% of the screen (\(Int(covered / (size.width * size.height) * 100))%)")
+        if let room = VirtualPadLayout.centreRoom(frames: f, top: size.height * 0.75) {
+            check(near(room.midX, size.width / 2, 0.5) && room.minX > lt.maxX && room.maxX < rt.minX && room.maxY < back.minY, "porthole \(name): the room for the overlays is centred, between the trigger columns and above View and Menu")
+        }
     }
-    // choosing a style brings the shape of that controller
-    check(VirtualPadStyle.allCases.map(\.nativePreset) == [.xbox, .playstation, .switchPad, .retro], "styles: each one has its own controller's layout (Xbox, PlayStation, Switch, and the Super Nintendo's pad)")
-    check(Set(VirtualPadStyle.allCases.map(\.nativePreset)).count == 4, "styles: four styles, four different layouts")
-    check(VirtualPadLayout.Preset.retro.items.isDisjoint(with: [.leftStick, .rightStick, .leftTrigger, .rightTrigger]), "the Super Nintendo's pad has no sticks and no triggers")
+    let phoneF = VirtualPadLayout.frames(in: CGSize(width: 852, height: 393), insets: .init(), scale: 1, preset: .porthole, wide: false)
+    let padF = VirtualPadLayout.frames(in: CGSize(width: 1376, height: 1032), insets: .init(), scale: 1, preset: .porthole, wide: true)
+    check((padF[.leftStick]?.width ?? 0) > (phoneF[.leftStick]?.width ?? 0) * 1.3, "porthole: the controls are drawn bigger on an iPad than on a phone")
+    check(VirtualPadLayout.centreRoom(frames: padF, top: 774) != nil, "porthole: a 13-inch iPad has room for the overlays under a 16:9 picture")
+    check(VirtualPadLayout.Preset.allCases == [.porthole, .cornerSticks] && VirtualPadLayout.Preset(rawValue: "racing") == nil && VirtualPadLayout.preset(game: "racing", last: "retro") == .porthole && VirtualPadLayout.preset(game: nil, last: nil) == .porthole,
+          "presets: Porthole and Corner sticks, and a name an earlier build stored that no longer exists is read as Porthole")
+    check(VirtualPadLayout.preset(game: "cornerSticks", last: nil) == .cornerSticks && VirtualPadLayout.preset(game: nil, last: "cornerSticks") == .cornerSticks && VirtualPadLayout.preset(game: "porthole", last: "cornerSticks") == .porthole,
+          "presets: a game's own choice wins over the one chosen last")
+    check(!VirtualPadLayout.Preset.porthole.detail.isEmpty && VirtualPadLayout.Preset.porthole.detail.count < 190, "porthole: it has a short description")
     check(VirtualPadStyle.classic.label("View") == "Select" && VirtualPadStyle.classic.label("Menu") == "Start" && VirtualPadStyle.classic.label("LB") == "L" && VirtualPadStyle.classic.label("RB") == "R", "the Super Nintendo's pad says Select, Start, L and R")
-    let phoneSize = CGSize(width: 852, height: 393), phoneInsets = VirtualPadLayout.Insets(left: 59, right: 59, top: 0, bottom: 21)
-    func frames(_ p: VirtualPadLayout.Preset) -> [VirtualPadLayout.Item: CGRect] { VirtualPadLayout.frames(in: phoneSize, insets: phoneInsets, scale: 1, preset: p) }
-    let std = frames(.standard), mir = frames(.mirrored), retro = frames(.retro), racing = frames(.racing), minimal = frames(.minimal)
-    let psf = frames(.playstation)
-    check(psf[.dpad]!.maxX < psf[.leftStick]!.minX && psf[.leftStick]!.maxX <= psf[.rightStick]!.minX && psf[.rightStick]!.maxX < psf[.face]!.minX, "playstation: the direction pad, then the left stick and the right stick side by side, then the diamond")
-    check(psf[.leftStick]!.minY == psf[.rightStick]!.minY && psf[.rightStick]!.minX - psf[.leftStick]!.maxX < psf[.leftStick]!.width * 0.4, "playstation: the two sticks are level with each other and close together")
-    check(psf[.leftStick]!.midX < phoneSize.width / 2 && psf[.rightStick]!.midX > phoneSize.width / 2 - 1, "playstation: the sticks are in the middle, one each side of the centre of the screen")
-    check(psf[.leftStick]!.width == std[.leftStick]!.width && psf[.leftTrigger] != nil && psf[.back] != nil, "playstation: the same sizes and shoulders as the standard")
-    let xb = frames(.xbox), sw = frames(.switchPad)
-    check(xb[.leftStick]!.minY < xb[.dpad]!.minY && xb[.face]!.minY < xb[.rightStick]!.minY, "xbox: the left stick and the diamond sit higher than the direction pad and the right stick")
-    check(xb[.leftStick]!.minX < xb[.dpad]!.minX && xb[.rightStick]!.maxX < xb[.face]!.minX, "xbox: the left stick outside the pad, the right stick inside the diamond")
-    check(sw[.leftStick]!.maxY <= sw[.dpad]!.minY && abs(sw[.leftStick]!.midX - sw[.dpad]!.midX) < 1, "switch: the left stick directly over the direction pad")
-    check(sw[.face]!.maxY <= sw[.rightStick]!.minY && abs(sw[.face]!.midX - sw[.rightStick]!.midX) < 1, "switch: the diamond directly over the right stick")
-    check(psf[.leftStick]!.minX > psf[.dpad]!.maxX && xb[.leftStick]!.minX < xb[.dpad]!.minX && sw[.leftStick]!.minX == sw[.dpad]!.minX, "the PlayStation, Xbox and Switch layouts really differ from one another")
-    check(mir[.leftStick]!.midX > phoneSize.width / 2 && mir[.face]!.midX < phoneSize.width / 2 && std[.leftStick]!.midX < phoneSize.width / 2, "mirrored: the left stick is on the right and the face buttons on the left (the standard has them the other way)")
-    check(mir[.leftStick]!.width == std[.leftStick]!.width && mir[.face]!.minY == std[.face]!.minY, "mirrored: the same sizes and heights as the standard")
-    check(retro[.dpad]!.width > std[.dpad]!.width && retro[.face]!.width > std[.face]!.width, "retro: a bigger direction pad and bigger face buttons than the standard")
-    check(retro[.leftStick] == nil && retro[.rightStick] == nil, "retro: no sticks")
-    check(racing[.rightTrigger]!.height > racing[.rightTrigger]!.width * 2 && racing[.rightTrigger]!.maxX > racing[.leftTrigger]!.maxX, "racing: the pedals are tall, the gas at the edge and the brake beside it")
-    check(racing[.leftStick]!.width > std[.leftStick]!.width && racing[.rightStick] == nil && racing[.dpad] == nil, "racing: a bigger steering stick, no right stick or direction pad")
-    check(minimal[.face]!.width > std[.face]!.width && minimal[.rightStick] == nil && minimal[.dpad] == nil && minimal[.leftTrigger] == nil, "minimal: bigger face buttons and nothing else but a stick, bumpers, View and Menu")
+}
+
+do {   // the Corner sticks arrangement (drawn by the person for an iPad)
+    let screens: [(String, CGSize, VirtualPadLayout.Insets, Bool)] = [
+        ("iPhone 15 Pro", CGSize(width: 852, height: 393), .init(left: 59, right: 59, top: 0, bottom: 21), false),
+        ("iPhone SE", CGSize(width: 667, height: 375), .init(), false),
+        ("small iPhone", CGSize(width: 568, height: 320), .init(), false),
+        ("iPad Pro 13", CGSize(width: 1376, height: 1032), .init(left: 0, right: 0, top: 24, bottom: 20), true),
+        ("iPad Air 11", CGSize(width: 1180, height: 820), .init(left: 0, right: 0, top: 24, bottom: 20), true),
+        ("iPad mini", CGSize(width: 1133, height: 744), .init(left: 0, right: 0, top: 24, bottom: 20), true),
+    ]
+    for (name, size, insets, wide) in screens {
+        var allFit = true, menuClear = true, inInsets = true
+        for scale in stride(from: 0.5, through: 1.5, by: 0.1) {
+            let f = VirtualPadLayout.frames(in: size, insets: insets, scale: CGFloat(scale), preset: .cornerSticks, wide: wide)
+            if !VirtualPadLayout.fits(f, in: size, insets: insets) { allFit = false }
+            if f.values.contains(where: { $0.maxX > size.width - VirtualPadLayout.menuEdge + 0.5 }) { menuClear = false }
+            if f.values.contains(where: { $0.minX < insets.left - 0.5 || $0.maxX > size.width - insets.right + 0.5 }) { inInsets = false }
+        }
+        check(allFit, "corner sticks \(name): at every size from 0.5 to 1.5 all ten controls are on screen and none touches another")
+        check(menuClear && inInsets, "corner sticks \(name): clear of the menu's edge strip and inside the safe area")
+        let f = VirtualPadLayout.frames(in: size, insets: insets, scale: 1, preset: .cornerSticks, wide: wide)
+        check(f.count == VirtualPadLayout.Item.allCases.count, "corner sticks \(name): every control has a place")
+        let mirror = abs((f[.leftStick]!.minX) - (size.width - f[.rightStick]!.maxX)) < 0.5 && abs(f[.dpad]!.midY - f[.leftStick]!.midY) < 0.5 && abs(f[.face]!.midY - f[.rightStick]!.midY) < 0.5
+        check(mirror, "corner sticks \(name): the two sides are mirror images, the direction pad and the face buttons level with the sticks")
+        check(f[.leftStick]!.maxX < f[.dpad]!.minX && f[.face]!.maxX < f[.rightStick]!.minX, "corner sticks \(name): the direction pad and the face buttons are beside the sticks, towards the middle")
+        check(f[.leftTrigger]!.maxY < f[.leftBumper]!.minY && f[.leftBumper]!.maxY < f[.leftStick]!.minY && f[.rightTrigger]!.maxY < f[.rightBumper]!.minY && f[.rightBumper]!.maxY < f[.rightStick]!.minY,
+              "corner sticks \(name): a trigger over a bumper over the stick, in each corner")
+        check(abs(f[.leftTrigger]!.midX - f[.leftStick]!.midX) < 0.5 && abs(f[.rightBumper]!.midX - f[.rightStick]!.midX) < 0.5, "corner sticks \(name): the triggers and bumpers are centred on their stick")
+        check(f[.back]!.maxX < f[.start]!.minX && f[.dpad]!.maxX < f[.back]!.minX && f[.start]!.maxX < f[.face]!.minX, "corner sticks \(name): View and Menu sit between the direction pad and the face buttons")
+    }
+    let ipad = VirtualPadLayout.frames(in: CGSize(width: 1376, height: 1032), insets: .init(), scale: 1, preset: .cornerSticks, wide: true)
+    let room = VirtualPadLayout.centreRoom(frames: ipad, top: 700)
+    check(room != nil && room!.width > 400 && room!.height > 60 && room!.minX > ipad[.dpad]!.maxX && room!.maxX < ipad[.face]!.minX, "corner sticks: the middle between the direction pad and the face buttons is open, for the overlays")
+    check(VirtualPadLayout.centreRoom(frames: VirtualPadLayout.frames(in: CGSize(width: 1376, height: 1032), insets: .init(), scale: 1, preset: .porthole, wide: true), top: 774) != nil, "porthole: its centre room is still found with the wider rule")
+}
+
+do {   // where the game's picture goes
+    let ipad = CGSize(width: 1376, height: 1032), air = CGSize(width: 1180, height: 820), mini = CGSize(width: 1133, height: 744), phone = CGSize(width: 852, height: 393)
+    let g169 = CGSize(width: 1280, height: 720), g43 = CGSize(width: 1024, height: 768), g219 = CGSize(width: 2560, height: 1080)
+    let centred = PictureBand.fit(screen: ipad, guest: g169, up: false), up = PictureBand.fit(screen: ipad, guest: g169, up: true)
+    check(near(centred.width, 1376) && near(centred.height, 774) && near(centred.minY, (1032 - 774) / 2), "picture: centred, a 16:9 picture fills the width of a 13-inch iPad with room above and below")
+    check(near(up.width, centred.width) && near(up.height, centred.height) && up.minY == 0 && near(up.minX, centred.minX), "picture: moved up it is the same size, against the top edge, and still centred sideways")
+    let upPad = PictureBand.rect(screen: ipad, guest: g169, placement: nil, isPad: true, controlsOn: true, enabled: true)
+    check(near(upPad.minY, PictureBand.padCornerInset) && near(upPad.width, centred.width) && near(upPad.minX, 0), "picture: on an iPad it sits a corner's radius below the top edge, so the rounded corners do not cut it")
+    check(PictureBand.fit(screen: ipad, guest: g43, up: true).maxY <= 1032 + 0.001 && near(PictureBand.fit(screen: ipad, guest: g43, up: true).height, 1032), "picture: a 4:3 picture fills the whole iPad (nothing to move into)")
+    for (size, guest) in [(ipad, g169), (air, g219), (phone, g169), (mini, g43)] {
+        let r = PictureBand.fit(screen: size, guest: guest, up: true)
+        check(r.minX >= -0.001 && r.minY >= -0.001 && r.maxX <= size.width + 0.001 && r.maxY <= size.height + 0.001 && near(r.width / r.height, guest.width / guest.height, 0.001), "picture: the whole picture is on the screen, with its own shape (\(Int(size.width))x\(Int(size.height)), \(Int(guest.width))x\(Int(guest.height)))")
+    }
+    check(PictureBand.applies(screen: ipad, guest: g169, isPad: true, controlsOn: true, enabled: true), "picture: goes up on a 13-inch iPad with on-screen controls (258 pt free)")
+    check(PictureBand.applies(screen: air, guest: g169, isPad: true, controlsOn: true, enabled: true), "picture: goes up on an 11-inch iPad Air (156 pt free, 136 after the corner margin)")
+    check(!PictureBand.applies(screen: mini, guest: g169, isPad: true, controlsOn: true, enabled: true), "picture: stays on an iPad mini, which has only 107 pt free (87 after the corner margin)")
+    check(!PictureBand.applies(screen: phone, guest: g169, isPad: false, controlsOn: true, enabled: true) && !PictureBand.applies(screen: phone, guest: g169, isPad: true, controlsOn: true, enabled: true), "picture: never moves on a phone")
+    check(!PictureBand.applies(screen: ipad, guest: g169, isPad: true, controlsOn: false, enabled: true), "picture: stays when the on-screen controls are not in use (mouse and keyboard, a real controller)")
+    check(!PictureBand.applies(screen: ipad, guest: g169, isPad: true, controlsOn: true, enabled: false), "picture: stays when the setting is off")
+    check(!PictureBand.applies(screen: ipad, guest: g43, isPad: true, controlsOn: true, enabled: true), "picture: stays when it already fills the screen (a 4:3 game on a 4:3 iPad)")
+    check(!PictureBand.applies(screen: CGSize(width: 1032, height: 1376), guest: g169, isPad: true, controlsOn: true, enabled: true), "picture: stays on an iPad held upright")
+    // 4:3 and squarer pictures fill the screen by default, even where there would be room
+    let g54 = CGSize(width: 1280, height: 1024), g1610 = CGSize(width: 1920, height: 1200)
+    let tall = CGSize(width: 1500, height: 1000)     // a screen so wide that even a 4:3 picture would leave room if it were shrunk, and a 5:4 one too
+    check(!PictureBand.applies(screen: ipad, guest: g54, isPad: true, controlsOn: true, enabled: true) && !PictureBand.applies(screen: tall, guest: g43, isPad: true, controlsOn: true, enabled: true), "picture: 4:3 and 5:4 pictures are left full screen by default")
+    check(PictureBand.applies(screen: ipad, guest: g1610, isPad: true, controlsOn: true, enabled: true), "picture: a 16:10 picture can still go up on a 13-inch iPad (172 pt free)")
+    // a layout's own placement
+    let top = PicturePlacement(across: 0.5, down: 0, scale: 1), small = PicturePlacement(across: 1, down: 0, scale: 0.5)
+    let phoneRect = PictureBand.rect(screen: phone, guest: g169, placement: small, isPad: false, controlsOn: true, enabled: true)
+    check(near(phoneRect.width, 852 * 0 + 393 * 16 / 9 * 0.5, 0.01) && phoneRect.minY == 0 && near(phoneRect.maxX, 852), "picture: a layout's placement works on a phone: half size, in the top right corner (\(Int(phoneRect.width)) pt wide)")
+    check(PictureBand.rect(screen: ipad, guest: g43, placement: top, isPad: true, controlsOn: true, enabled: true).minY == 0 && PictureBand.rect(screen: ipad, guest: g43, placement: PicturePlacement(down: 1, scale: 0.8), isPad: true, controlsOn: true, enabled: true).maxY == 1032,
+          "picture: a layout's placement is kept for a 4:3 picture too")
+    check(PictureBand.rect(screen: ipad, guest: g169, placement: top, isPad: true, controlsOn: true, enabled: false).minY == PictureBand.padCornerInset, "picture: a layout's placement does not depend on the iPad setting")
+    check(PictureBand.rect(screen: ipad, guest: g169, placement: top, isPad: true, controlsOn: false, enabled: true) == PictureBand.fit(screen: ipad, guest: g169, up: false), "picture: the layout's placement waits until its controls are showing")
+    check(PictureBand.rect(screen: ipad, guest: g169, placement: nil, isPad: true, controlsOn: true, enabled: true) == PictureBand.fit(screen: ipad, guest: g169, up: true, cornerInset: PictureBand.padCornerInset) && PictureBand.rect(screen: phone, guest: g169, placement: nil, isPad: false, controlsOn: true, enabled: true) == PictureBand.fit(screen: phone, guest: g169, up: false), "picture: automatic is the iPad rule, and nothing on a phone")
+    for p in [PicturePlacement(across: 0, down: 0, scale: 0.5), PicturePlacement(across: 1, down: 1, scale: 1), PicturePlacement(across: 0.5, down: 0.5, scale: 0.7)] {
+        for (size, guest) in [(ipad, g169), (phone, g169), (phone, g43), (air, g219)] {
+            let r = PictureBand.fit(screen: size, guest: guest, placement: p)
+            check(r.minX >= -0.001 && r.minY >= -0.001 && r.maxX <= size.width + 0.001 && r.maxY <= size.height + 0.001 && near(r.width / r.height, guest.width / guest.height, 0.001), "picture: a placed picture is whole, on the screen, with its own shape")
+        }
+    }
+    // rounded corners
+    let c = PictureBand.padCornerInset
+    let fullTop = PictureBand.fit(screen: ipad, guest: g169, placement: PicturePlacement(down: 0), cornerInset: c)
+    check(near(fullTop.minY, c) && near(fullTop.height, 774), "corners: a picture against the top that reaches both sides is moved down by the margin and keeps its size")
+    check(PictureBand.fit(screen: ipad, guest: g43, placement: PicturePlacement(down: 0), cornerInset: c).minY == 0, "corners: a picture that fills the height has no room to move, so it stays")
+    check(near(PictureBand.fit(screen: ipad, guest: g169, placement: PicturePlacement(down: 1), cornerInset: c).maxY, 1032 - c), "corners: a picture against the bottom that reaches both sides is moved up by the margin")
+    check(PictureBand.fit(screen: ipad, guest: g169, placement: PicturePlacement(across: 0.5, down: 0, scale: 0.6), cornerInset: c).minY == 0, "corners: a picture that stays clear of the sides needs no margin")
+    check(near(PictureBand.fit(screen: ipad, guest: g169, placement: PicturePlacement(across: 1, down: 0, scale: 0.6), cornerInset: c).minY, c), "corners: nor does one in a corner of the screen (it gets the margin)")
+    let tight = CGSize(width: 1376, height: 790)
+    check(near(PictureBand.fit(screen: tight, guest: g169, placement: PicturePlacement(down: 0), cornerInset: c).minY, 790 - 774), "corners: with less room than the margin it moves down as far as there is room (\(790 - 774) pt)")
+    check(PictureBand.rect(screen: phone, guest: g169, placement: PicturePlacement(down: 0), isPad: false, controlsOn: true, enabled: true).minY == 0, "corners: no margin on a phone")
+    let bad = PicturePlacement(across: .nan, down: 9, scale: -3).sanitized()
+    check(bad.across == 0.5 && bad.down == 1 && bad.scale == 0.5 && PicturePlacement(across: 0.3, down: 0.6, scale: 0.84).sanitized() == PicturePlacement(across: 0.5, down: 0.5, scale: 0.84), "picture: a placement from a file is snapped to the three positions and a size in range")
 }
 
 do {   // the styles

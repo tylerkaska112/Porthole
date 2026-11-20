@@ -22,6 +22,8 @@ import UIKit
     @Published private(set) var availability: SteamStorageAvailability = .disconnected
     @Published private(set) var problem: String?
     @Published private(set) var checking = false
+    /// Whether the drive has been tried at least once since the app opened: before that, "not reachable" only means "not asked yet".
+    @Published private(set) var checkedOnce = false
     private var loadFailure: Error?
     private weak var liveAccess: SteamExternalLease?
     private var opening: Task<SteamExternalLease, Error>?
@@ -65,6 +67,29 @@ import UIKit
         availability = .available
         problem = nil
         NotificationCenter.default.post(name: Self.reconnected, object: registration.id)
+    }
+
+    /// The apps recorded as fully installed on the registered folder.
+    var installedExternalIDs: Set<Int> {
+        guard let id = external?.id else { return [] }
+        return Set(catalog.assignments.values.filter { $0.location.libraryID == id && $0.installed }.map(\.appID))
+    }
+
+    /// A folder picked on a drive (the drive itself, or a folder on it): finds the Steam library inside it (`SteamLibraryFinder`), registers that and reads its games into the
+    /// catalog. `newIDs` are the installed games that were not recorded before; the caller puts them in the Home library (a scan only fills the catalog).
+    func adopt(picked: URL) async throws -> (driveName: String, installed: Int, newIDs: [Int]) {
+        let scoped = picked.startAccessingSecurityScopedResource()
+        defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
+        let found = await Task.detached(priority: .utility) { SteamLibraryFinder.find(in: picked) }.value
+        let target = found ?? picked
+        if found != nil, found != picked { SteamLog.event("[steam-storage] library found inside the picked folder: \(target.lastPathComponent)") }
+        try await register(target)
+        let before = installedExternalIDs
+        await scan()
+        let after = installedExternalIDs
+        let name = (try? picked.resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? picked.lastPathComponent
+        SteamLog.event("[steam-storage] scan: \(after.count) installed game(s) on the folder, \(after.subtracting(before).count) new")
+        return (name, after.count, after.subtracting(before).sorted())
     }
 
     /// How many games are recorded as living on the registered folder.
@@ -353,6 +378,7 @@ import UIKit
         let started = ProcessInfo.processInfo.systemUptime
         defer {
             checking = false
+            checkedOnce = true
             let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
             SteamLog.event("[steam-storage] check state=\(availability.rawValue) elapsed-ms=\(elapsed)")
         }
@@ -361,6 +387,19 @@ import UIKit
             await scan()
             NotificationCenter.default.post(name: Self.reconnected, object: external.id)
         } catch { }
+    }
+
+    /// A game whose files are on the registered drive while the drive cannot be reached. The library does not show it until the drive is back (its tile is kept).
+    func isAway(_ game: Game) -> Bool {
+        guard checkedOnce, availability != .available, availability != .readOnly, let id = game.dockAppID ?? game.steamAppID else { return false }
+        return isExternal(id)
+    }
+
+    /// A quick look at whether the registered drive can be reached now (a small read; nothing is scanned or written). Updates `availability`, which the library follows.
+    func probe() async {
+        guard let external = catalog.external, !checking else { return }
+        _ = try? await perform(libraryID: external.id, write: false) { _ in true }
+        checkedOnce = true
     }
 
     /// Unavailable text for a game's page and for Play.

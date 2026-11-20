@@ -16,6 +16,7 @@ final class ControlsEditorView: UIView {
     private let topBar = ControlsEditorPanel()
     private let doneButton = ControlsEditorView.chip("Done", prominent: true)
     private let undoButton = ControlsEditorView.chip("Undo"), redoButton = ControlsEditorView.chip("Redo")
+    private let selectButton = ControlsEditorView.chip("Select")
     private let addButton = ControlsEditorView.chip("+ Add"), startButton = ControlsEditorView.chip("Presets \u{25BE}"), lookButton = ControlsEditorView.chip("Look off")
     private var trayOpen = false
     private let hint = UILabel()
@@ -34,7 +35,21 @@ final class ControlsEditorView: UIView {
     private var bottomAtBottom: NSLayoutConstraint!, bottomAtTop: NSLayoutConstraint!
     private var picker: KeyPickerView?
     private var ghost: UIView?
+    /// The single selected control (nil when none or several are selected), and everything selected.
     private var selection: TouchControlSpec?
+    private var selections: [TouchControlSpec] = []
+
+    // The panel for several selected controls: line up, space out, flip, one size, copy, delete.
+    private let multi = UIStackView()
+    private let countLabel = UILabel()
+    private let alignButton = ControlsEditorView.chip("Align \u{25BE}"), spreadButton = ControlsEditorView.chip("Space \u{25BE}"), flipButton = ControlsEditorView.chip("Flip")
+    private let multiCopyButton = ControlsEditorView.chip("Copy"), multiDeleteButton = ControlsEditorView.chip("Delete"), multiCloseButton = ControlsEditorView.chip("\u{2715}")
+    private let multiSlider = UISlider(), multiSizeLabel = UILabel()
+
+    // Nudge: arrows for placing the selection exactly, behind a button so the panel stays as it was until they are asked for.
+    private var nudgeOpen = false, nudgeFine = true
+    private let nudgeToggle = ControlsEditorView.chip("Nudge"), multiNudgeToggle = ControlsEditorView.chip("Nudge")
+    private var nudgeRows: [UIStackView] = [], nudgeSteps: [UIButton] = []
 
     /// What the tray offers (action id, face): the sticks, the mouse, and the keys most games use. "More" opens every key.
     private static let trayItems: [(action: String, face: String)] = [
@@ -46,6 +61,8 @@ final class ControlsEditorView: UIView {
         // The pad's controls, for a gamepad or a mix of pad and keys.
         ("stick-ls", "L stick"), ("stick-rs", "R stick"), ("dpad-pad", "D-pad"), ("pad-a", "A"), ("pad-b", "B"), ("pad-x", "X"), ("pad-y", "Y"),
         ("pad-lb", "LB"), ("pad-rb", "RB"), ("pad-lt", "LT"), ("pad-rt", "RT"), ("pad-start", "Menu"), ("pad-back", "View"),
+        // Where the performance numbers and the people in a Discord call go while playing.
+        ("overlay-perf", "Perf\nnumbers"), ("overlay-discord", "Discord\ncall"),
     ]
 
     init(controls: CustomControlsView) {
@@ -71,7 +88,7 @@ final class ControlsEditorView: UIView {
     }
 
     private func buildTopBar() {
-        let row = UIStackView(arrangedSubviews: [doneButton, addButton, undoButton, redoButton, startButton, lookButton, optionsButton])
+        let row = UIStackView(arrangedSubviews: [doneButton, addButton, selectButton, undoButton, redoButton, startButton, lookButton, optionsButton])
         row.axis = .horizontal; row.spacing = 6; row.alignment = .center
         topBar.contentView.addSubview(row)
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -82,7 +99,7 @@ final class ControlsEditorView: UIView {
         hint.textColor = .white; hint.font = .systemFont(ofSize: 12, weight: .medium); hint.numberOfLines = 0; hint.textAlignment = .center
         hint.backgroundColor = UIColor(white: 0, alpha: 0.6); hint.layer.cornerRadius = 10; hint.layer.masksToBounds = true
         hint.translatesAutoresizingMaskIntoConstraints = false
-        hint.text = "  Tap + Add, then tap a tile or hold it and drag it in \u{00B7} drag to move \u{00B7} drag the corner dot or pinch to resize \u{00B7} tap a control to change it  "
+        hint.text = "  Tap + Add, then tap a tile or hold it and drag it in \u{00B7} drag to move \u{00B7} drag the corner dot or pinch to resize \u{00B7} drag across empty space to select several \u{00B7} tap a control to change it  "
         addSubview(hint)
         NSLayoutConstraint.activate([topBar.centerXAnchor.constraint(equalTo: centerXAnchor), topBar.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8),
                                      topBar.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 8),
@@ -92,10 +109,9 @@ final class ControlsEditorView: UIView {
                                      hint.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12)])
         startButton.showsMenuAsPrimaryAction = true
         optionsButton.showsMenuAsPrimaryAction = true
-        startButton.menu = UIMenu(title: "Replace every control with\u{2026} (Undo brings them back)", children: [
-            UIAction(title: "Mouse and keys layout") { [weak self] _ in self?.controls?.replaceLayout(.mouseAndKeys) },
-            UIAction(title: "First person layout") { [weak self] _ in self?.controls?.replaceLayout(.firstPerson) },
-            UIAction(title: "Gamepad layout") { [weak self] _ in self?.controls?.replaceLayout(.gamepad) },
+        // Every layout Porthole ships (ShippedLayouts.all), then an empty screen.
+        let shipped = ShippedLayouts.all.map { l in UIAction(title: "\(l.title) layout") { [weak self] _ in self?.controls?.replaceLayout(l.layout) } }
+        startButton.menu = UIMenu(title: "Replace every control with\u{2026} (Undo brings them back)", children: shipped + [
             UIAction(title: "Empty screen", attributes: .destructive) { [weak self] _ in self?.controls?.replaceLayout(TouchLayout()) },
         ])
     }
@@ -128,15 +144,81 @@ final class ControlsEditorView: UIView {
         deleteButton.setTitleColor(.systemRed, for: .normal)
         let first = UIStackView(arrangedSubviews: [doesButton, labelButton, UIView(), copyButton, deleteButton, closeButton])
         first.axis = .horizontal; first.spacing = 8; first.alignment = .center
-        let second = UIStackView(arrangedSubviews: [latchButton, Self.caption("Size"), sizeSlider, sizeLabel])
+        let second = UIStackView(arrangedSubviews: [latchButton, Self.caption("Size"), sizeSlider, sizeLabel, nudgeToggle])
         second.axis = .horizontal; second.spacing = 8; second.alignment = .center
-        settings.axis = .vertical; settings.spacing = 10; settings.addArrangedSubview(first); settings.addArrangedSubview(second)
-        for v in [tray, settings] { v.translatesAutoresizingMaskIntoConstraints = false; bottom.contentView.addSubview(v) }
+        settings.axis = .vertical; settings.spacing = 10; settings.addArrangedSubview(first); settings.addArrangedSubview(second); settings.addArrangedSubview(makeNudgeRow())
+        multiDeleteButton.setTitleColor(.systemRed, for: .normal)
+        countLabel.textColor = .white; countLabel.font = .systemFont(ofSize: 14, weight: .bold)
+        multiSlider.minimumValue = Float(TouchLayout.sizeRange.lowerBound); multiSlider.maximumValue = Float(TouchLayout.sizeRange.upperBound)
+        multiSlider.minimumTrackTintColor = .systemYellow; multiSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        multiSizeLabel.textColor = .white; multiSizeLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium); multiSizeLabel.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        let multiFirst = UIStackView(arrangedSubviews: [countLabel, alignButton, spreadButton, flipButton, UIView(), multiCopyButton, multiDeleteButton, multiCloseButton])
+        multiFirst.axis = .horizontal; multiFirst.spacing = 8; multiFirst.alignment = .center
+        let multiSecond = UIStackView(arrangedSubviews: [Self.caption("Size of all"), multiSlider, multiSizeLabel, multiNudgeToggle])
+        multiSecond.axis = .horizontal; multiSecond.spacing = 8; multiSecond.alignment = .center
+        multi.axis = .vertical; multi.spacing = 10; multi.addArrangedSubview(multiFirst); multi.addArrangedSubview(multiSecond); multi.addArrangedSubview(makeNudgeRow())
+        // The size numbers can be tapped to type an exact size.
+        for label in [sizeLabel, multiSizeLabel] { label.isUserInteractionEnabled = true; label.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(askSize))) }
+        for v in [tray, settings, multi] { v.translatesAutoresizingMaskIntoConstraints = false; bottom.contentView.addSubview(v) }
         NSLayoutConstraint.activate([tray.leadingAnchor.constraint(equalTo: bottom.contentView.leadingAnchor), tray.trailingAnchor.constraint(equalTo: bottom.contentView.trailingAnchor),
                                      tray.topAnchor.constraint(equalTo: bottom.contentView.topAnchor), tray.bottomAnchor.constraint(equalTo: bottom.contentView.bottomAnchor), tray.heightAnchor.constraint(equalToConstant: 86),
                                      settings.leadingAnchor.constraint(equalTo: bottom.contentView.leadingAnchor, constant: 12), settings.trailingAnchor.constraint(equalTo: bottom.contentView.trailingAnchor, constant: -12),
-                                     settings.topAnchor.constraint(equalTo: bottom.contentView.topAnchor, constant: 10), settings.bottomAnchor.constraint(equalTo: bottom.contentView.bottomAnchor, constant: -10)])
-        settings.isHidden = true
+                                     settings.topAnchor.constraint(equalTo: bottom.contentView.topAnchor, constant: 10), settings.bottomAnchor.constraint(equalTo: bottom.contentView.bottomAnchor, constant: -10),
+                                     multi.leadingAnchor.constraint(equalTo: bottom.contentView.leadingAnchor, constant: 12), multi.trailingAnchor.constraint(equalTo: bottom.contentView.trailingAnchor, constant: -12),
+                                     multi.topAnchor.constraint(equalTo: bottom.contentView.topAnchor, constant: 10), multi.bottomAnchor.constraint(equalTo: bottom.contentView.bottomAnchor, constant: -10)])
+        settings.isHidden = true; multi.isHidden = true
+        alignButton.showsMenuAsPrimaryAction = true; spreadButton.showsMenuAsPrimaryAction = true
+        alignButton.menu = UIMenu(title: "Line up the selected controls", children: [
+            UIAction(title: "Left edges", image: UIImage(systemName: "align.horizontal.left")) { [weak self] _ in self?.controls?.align(.left) },
+            UIAction(title: "Centres", image: UIImage(systemName: "align.horizontal.center")) { [weak self] _ in self?.controls?.align(.centreX) },
+            UIAction(title: "Right edges", image: UIImage(systemName: "align.horizontal.right")) { [weak self] _ in self?.controls?.align(.right) },
+            UIAction(title: "Top edges", image: UIImage(systemName: "align.vertical.top")) { [weak self] _ in self?.controls?.align(.top) },
+            UIAction(title: "Middles", image: UIImage(systemName: "align.vertical.center")) { [weak self] _ in self?.controls?.align(.centreY) },
+            UIAction(title: "Bottom edges", image: UIImage(systemName: "align.vertical.bottom")) { [weak self] _ in self?.controls?.align(.bottom) }])
+    }
+
+    /// One row of Nudge arrows (the panel of one control and the panel of several each have one): a press moves the selection a step, holding repeats it, and the step is 1 point or 6.
+    private func makeNudgeRow() -> UIStackView {
+        let step = ControlsEditorView.chip("1 pt")
+        step.addAction(UIAction { [weak self] _ in self?.nudgeFine.toggle(); self?.refresh() }, for: .touchUpInside)
+        nudgeSteps.append(step)
+        let row = UIStackView(arrangedSubviews: [Self.caption("Nudge"), nudgeButton("arrow.left", dx: -1, dy: 0), nudgeButton("arrow.up", dx: 0, dy: -1), nudgeButton("arrow.down", dx: 0, dy: 1),
+                                                 nudgeButton("arrow.right", dx: 1, dy: 0), step, UIView()])
+        row.axis = .horizontal; row.spacing = 8; row.alignment = .center; row.isHidden = true
+        nudgeRows.append(row)
+        return row
+    }
+
+    private func nudgeButton(_ symbol: String, dx: CGFloat, dy: CGFloat) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)), for: .normal)
+        b.tintColor = .white; b.backgroundColor = UIColor(white: 1, alpha: 0.16); b.layer.cornerRadius = 10
+        b.widthAnchor.constraint(equalToConstant: 46).isActive = true; b.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        var timer: Timer?
+        let stepOnce = { [weak self] in
+            guard let self else { return }
+            let k: CGFloat = self.nudgeFine ? 1 : 6
+            self.controls?.nudge(dx: dx * k, dy: dy * k)
+        }
+        b.addAction(UIAction { [weak self] _ in
+            self?.controls?.nudgeBegan(); stepOnce()
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { _ in timer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { _ in stepOnce() } }
+        }, for: .touchDown)
+        b.addAction(UIAction { [weak self] _ in timer?.invalidate(); timer = nil; self?.controls?.nudgeEnded() }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        return b
+    }
+
+    /// The number beside the size slider was tapped: ask for an exact size.
+    @objc private func askSize() {
+        guard let first = controls?.selectedSpec ?? controls?.selectedSpecs.first else { return }
+        let alert = UIAlertController(title: "Size", message: "A width in points, from \(Int(TouchLayout.sizeRange.lowerBound)) to \(Int(TouchLayout.sizeRange.upperBound)). \(selections.count > 1 ? "Every selected control gets it." : "")", preferredStyle: .alert)
+        alert.addTextField { $0.text = "\(Int(first.size))"; $0.keyboardType = .numberPad }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Set", style: .default) { [weak self, weak alert] _ in
+            if let text = alert?.textFields?.first?.text, let v = Double(text) { self?.controls?.setSelectedSize(v) }
+        })
+        Self.present(alert)
     }
 
     private static func caption(_ text: String) -> UILabel {
@@ -147,13 +229,22 @@ final class ControlsEditorView: UIView {
         doneButton.addAction(UIAction { [weak self] _ in self?.onDone?() }, for: .touchUpInside)
         addButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.trayOpen = !(self.trayOpen && self.selection == nil)
-            if self.selection != nil { self.trayOpen = true; self.controls?.select(nil) }      // from a control's settings: let go of it and show the tray
+            self.trayOpen = !(self.trayOpen && self.selections.isEmpty)
+            if !self.selections.isEmpty { self.trayOpen = true; self.controls?.select(nil) }      // from a control's settings: let go of it and show the tray
             self.dismissHint(); self.refresh()
         }, for: .touchUpInside)
         undoButton.addAction(UIAction { [weak self] _ in self?.controls?.undo(); self?.refresh() }, for: .touchUpInside)
         redoButton.addAction(UIAction { [weak self] _ in self?.controls?.redo(); self?.refresh() }, for: .touchUpInside)
         lookButton.addAction(UIAction { [weak self] _ in guard let c = self?.controls else { return }; c.setLook(!(c.layout?.look ?? false)); self?.refresh() }, for: .touchUpInside)
+        selectButton.addAction(UIAction { [weak self] _ in guard let c = self?.controls else { return }; c.multiSelect = !c.multiSelect; self?.dismissHint() }, for: .touchUpInside)
+        multiCopyButton.addAction(UIAction { [weak self] _ in self?.controls?.duplicateSelected() }, for: .touchUpInside)
+        multiDeleteButton.addAction(UIAction { [weak self] _ in self?.controls?.removeSelected() }, for: .touchUpInside)
+        multiCloseButton.addAction(UIAction { [weak self] _ in self?.controls?.select(nil) }, for: .touchUpInside)
+        flipButton.addAction(UIAction { [weak self] _ in self?.controls?.mirror(wholeLayout: false) }, for: .touchUpInside)
+        multiSlider.addAction(UIAction { [weak self] _ in self?.multiSizeChanged(.changed) }, for: .valueChanged)
+        multiSlider.addAction(UIAction { [weak self] _ in self?.multiSizeChanged(.began) }, for: .touchDown)
+        multiSlider.addAction(UIAction { [weak self] _ in self?.multiSizeChanged(.ended) }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        for toggle in [nudgeToggle, multiNudgeToggle] { toggle.addAction(UIAction { [weak self] _ in self?.nudgeOpen.toggle(); self?.refresh() }, for: .touchUpInside) }
         copyButton.addAction(UIAction { [weak self] _ in self?.controls?.duplicateSelected() }, for: .touchUpInside)
         deleteButton.addAction(UIAction { [weak self] _ in self?.controls?.removeSelected() }, for: .touchUpInside)
         closeButton.addAction(UIAction { [weak self] _ in self?.controls?.select(nil) }, for: .touchUpInside)
@@ -175,10 +266,11 @@ final class ControlsEditorView: UIView {
         isHidden = !on
         controls?.editing = on
         guard on, let c = controls else { picker?.removeFromSuperview(); picker = nil; return }
-        c.onSelect = { [weak self] spec in self?.selection = spec; self?.refresh() }
+        c.onSelection = { [weak self] specs in self?.selections = specs; self?.selection = specs.count == 1 ? specs[0] : nil; self?.refresh() }
+        c.onSelectMode = { [weak self] in self?.refresh() }
         c.onHistory = { [weak self] in self?.refresh() }
         c.onEdited = { [weak self] in self?.refreshValues() }
-        selection = nil; trayOpen = false
+        selection = nil; selections = []; trayOpen = false
         showHint()
         refresh()
     }
@@ -200,19 +292,37 @@ final class ControlsEditorView: UIView {
         let opacity = UIMenu(title: "Controls opacity when playing", children: [1.0, 0.8, 0.6, 0.4].map { value in
             UIAction(title: "\(Int(value * 100))%", state: abs(layout.opacity - value) < 0.05 ? .on : .off) { [weak self] _ in self?.controls?.setOpacity(value); self?.refresh() }
         })
-        var children: [UIMenuElement] = [opacity,
+        let picture = Self.pictureMenu(layout.picture) { [weak self] placement in self?.controls?.setPicture(placement); self?.refresh() }
+        // Button size is one setting for the device (Settings > Controls > Touch screen has the same choice): drawn again at once so it can be judged against the layout.
+        let sizeSetting = UserDefaults.standard.string(forKey: TouchButtonSize.key) ?? ""
+        let buttonSize = UIMenu(title: "Button size (every layout on this device)", children: TouchButtonSize.choices.map { choice in
+            UIAction(title: choice.title, state: choice.value == sizeSetting ? .on : .off) { [weak self] _ in
+                UserDefaults.standard.set(choice.value, forKey: TouchButtonSize.key); self?.controls?.buttonSizeChanged(); self?.refresh()
+            }
+        })
+        var children: [UIMenuElement] = [picture, opacity, buttonSize,
             UIAction(title: "Tap feedback (haptics)", state: layout.haptics ? .on : .off) { [weak self] _ in self?.controls?.setHaptics(!layout.haptics); self?.refresh() },
             UIAction(title: "Lock positions and sizes", image: UIImage(systemName: layout.locked ? "lock.fill" : "lock.open"), state: layout.locked ? .on : .off) { [weak self] _ in self?.controls?.setLocked(!layout.locked); self?.refresh() }]
-        if let sel = c.selectedSpec {
+        let locked = layout.locked
+        let group = UIMenu(title: "Several controls", options: .displayInline, children: [
+            UIAction(title: "Select all", image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in self?.controls?.selectAll() },
+            UIAction(title: "Mirror the whole layout (left-handed)", image: UIImage(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right"), attributes: locked ? .disabled : []) { [weak self] _ in self?.controls?.mirror(wholeLayout: true) },
+            UIAction(title: "Copy selection to another layout", image: UIImage(systemName: "doc.on.doc"), attributes: selections.isEmpty ? .disabled : []) { [weak self] _ in self?.controls?.copySelectionToClipboard(); self?.refresh() },
+            UIAction(title: ControlClipboard.count > 0 ? "Paste \(ControlClipboard.count) copied control\(ControlClipboard.count == 1 ? "" : "s") here" : "Paste copied controls here", image: UIImage(systemName: "doc.on.clipboard"),
+                     attributes: locked || ControlClipboard.count == 0 ? .disabled : []) { [weak self] _ in self?.controls?.pasteClipboard() }])
+        children.append(group)
+        if !selections.isEmpty {
             var selected: [UIMenuElement] = [
                 UIAction(title: "Bring to front", image: UIImage(systemName: "square.2.layers.3d.top.filled")) { [weak self] _ in self?.controls?.bringSelectedToFront(); self?.refresh() },
                 UIAction(title: "Send to back", image: UIImage(systemName: "square.2.layers.3d.bottom.filled")) { [weak self] _ in self?.controls?.sendSelectedToBack(); self?.refresh() }]
-            if PadActions.action(sel.action).isKey, !sel.isStick, sel.pad == nil {
+            let sel = selections.first!, one = selections.count == 1
+            if one, PadActions.action(sel.action).isKey, !sel.isStick, sel.pad == nil {
                 selected.append(UIMenu(title: "Combo: also hold\u{2026}", children: TouchControlSpec.comboModifiers.filter { $0 != sel.action }.map { id in
                     UIAction(title: PadActions.label(id), state: sel.with.contains(id) ? .on : .off) { [weak self] _ in self?.controls?.toggleComboModifier(id); self?.refresh() }
                 }))
             }
-            if !sel.isStick, sel.pad == nil, sel.action != "keyboard" {
+            // Shape and colour are for keys and mouse buttons: with several selected they go to every one that has them.
+            if selections.contains(where: \.canTakeShape) {
                 selected.append(UIMenu(title: "Shape", children: [(nil, "Round"), ("rounded", "Rounded square"), ("square", "Square")].map { (value, title) in
                     UIAction(title: title, state: (sel.shape ?? "") == (value ?? "") || (value == nil && sel.shape == "round") ? .on : .off) { [weak self] _ in self?.controls?.setShape(value); self?.refresh() }
                 }))
@@ -220,9 +330,28 @@ final class ControlsEditorView: UIView {
                     UIAction(title: title, state: (sel.colour ?? "") == (value ?? "") ? .on : .off) { [weak self] _ in self?.controls?.setColour(value); self?.refresh() }
                 }))
             }
-            children.append(UIMenu(title: "Selected control", options: .displayInline, children: selected))
+            children.append(UIMenu(title: one ? "Selected control" : "Selected controls", options: .displayInline, children: selected))
         }
         optionsButton.menu = UIMenu(children: children)
+    }
+
+    /// "Game picture": where the picture goes while this layout is on screen (so the controls can be planned around it), and how big. Automatic leaves it to Porthole.
+    private static func pictureMenu(_ current: PicturePlacement?, set: @escaping (PicturePlacement?) -> Void) -> UIMenu {
+        let names: [[(String, Double, Double)]] = [[("Top left", 0, 0), ("Top", 0.5, 0), ("Top right", 1, 0)],
+                                                  [("Left", 0, 0.5), ("Middle", 0.5, 0.5), ("Right", 1, 0.5)],
+                                                  [("Bottom left", 0, 1), ("Bottom", 0.5, 1), ("Bottom right", 1, 1)]]
+        let automatic = UIAction(title: "Automatic", subtitle: "Porthole decides", state: current == nil ? .on : .off) { _ in set(nil) }
+        let positions = UIMenu(title: "Position", image: UIImage(systemName: "rectangle.center.inset.filled"), children: names.flatMap { $0 }.map { name, across, down in
+            UIAction(title: name, state: current.map { $0.across == across && $0.down == down } == true ? .on : .off) { _ in
+                set(PicturePlacement(across: across, down: down, scale: current?.scale ?? 1))
+            }
+        })
+        let sizes = UIMenu(title: "Size", image: UIImage(systemName: "arrow.up.left.and.arrow.down.right"), children: PicturePlacement.scales.map { scale in
+            UIAction(title: scale == 1 ? "As big as it fits" : "\(Int(scale * 100))%", state: current.map { abs($0.scale - scale) < 0.02 } == true ? .on : .off) { _ in
+                set(PicturePlacement(across: current?.across ?? 0.5, down: current?.down ?? 0.5, scale: scale))
+            }
+        })
+        return UIMenu(title: "Game picture", image: UIImage(systemName: "rectangle.inset.filled"), children: [automatic, positions, sizes])
     }
 
     private func refresh() {
@@ -233,19 +362,29 @@ final class ControlsEditorView: UIView {
         undoButton.alpha = c.canUndo ? 1 : 0.4; redoButton.alpha = c.canRedo ? 1 : 0.4
         lookButton.setTitle("Look \(c.layout?.look == true ? "on" : "off")", for: .normal)
         lookButton.backgroundColor = c.layout?.look == true ? UIColor.systemGreen.withAlphaComponent(0.8) : UIColor(white: 1, alpha: 0.16)
-        let sel = selection
-        if sel != nil { trayOpen = false }
-        bottom.isHidden = sel == nil && !trayOpen
+        let sel = selection, any = !selections.isEmpty
+        if any { trayOpen = false }
+        bottom.isHidden = !any && !trayOpen
         addButton.setTitle(trayOpen ? "\u{2212} Tray" : "+ Add", for: .normal)
         addButton.backgroundColor = trayOpen ? UIColor.systemYellow.withAlphaComponent(0.85) : UIColor(white: 1, alpha: 0.16)
         addButton.setTitleColor(trayOpen ? .black : .white, for: .normal)
-        tray.isHidden = sel != nil; settings.isHidden = sel == nil
-        if sel != nil { dismissHint() }
+        let on = c.multiSelect
+        selectButton.setTitle(on ? "Select: on" : "Select", for: .normal)
+        selectButton.backgroundColor = on ? UIColor.systemYellow.withAlphaComponent(0.85) : UIColor(white: 1, alpha: 0.16)
+        selectButton.setTitleColor(on ? .black : .white, for: .normal)
+        tray.isHidden = any; settings.isHidden = sel == nil; multi.isHidden = selections.count < 2
+        for toggle in [nudgeToggle, multiNudgeToggle] {
+            toggle.backgroundColor = nudgeOpen ? UIColor.systemYellow.withAlphaComponent(0.85) : UIColor(white: 1, alpha: 0.16)
+            toggle.setTitleColor(nudgeOpen ? .black : .white, for: .normal)
+        }
+        nudgeRows.forEach { $0.isHidden = !nudgeOpen }
+        nudgeSteps.forEach { $0.setTitle(nudgeFine ? "1 pt" : "6 pt", for: .normal) }
+        if any { dismissHint() }
         refreshValues()
         // The panel never sits on top of the control it edits: use whichever edge the control is clear of, and only fall back to
         // "opposite half" when it is clear of neither.
         var atTop = false
-        if sel != nil, let f = c.selectedFrame {
+        if any, let f = c.selectedFrame {
             let h = max(bottom.bounds.height, 130)
             let clearOfTop = f.minY > topBar.frame.maxY + 14 + h, clearOfBottom = f.maxY < bounds.height - safeAreaInsets.bottom - 14 - h
             atTop = clearOfTop && !clearOfBottom ? true : (clearOfBottom && !clearOfTop ? false : f.midY > bounds.midY)
@@ -257,19 +396,39 @@ final class ControlsEditorView: UIView {
     }
 
     private func refreshValues() {
+        if selections.count > 1, let c = controls {
+            countLabel.text = "\(selections.count) selected"
+            let locked = c.layout?.locked == true
+            let specs = c.selectedSpecs, common = ControlArrange.commonSize(specs)
+            if !multiSlider.isTracking { multiSlider.value = Float(common ?? specs.map(\.size).reduce(0, +) / Double(max(specs.count, 1))) }
+            multiSizeLabel.text = common.map { "\(Int($0))" } ?? "\u{2013}"
+            [alignButton, flipButton, multiCopyButton, multiDeleteButton, multiSlider].forEach { ($0 as UIControl).isEnabled = !locked || $0 === multiCopyButton }
+            spreadButton.isEnabled = !locked
+            multiCopyButton.isEnabled = TouchLayout.maxControls - (c.layout?.controls.count ?? 0) > 0
+            spreadButton.menu = UIMenu(title: "Space the selected controls evenly", children: [
+                UIAction(title: "Across", image: UIImage(systemName: "distribute.horizontal.center"), attributes: selections.count < 3 ? .disabled : []) { [weak self] _ in self?.controls?.distribute(.across) },
+                UIAction(title: "Down", image: UIImage(systemName: "distribute.vertical.center"), attributes: selections.count < 3 ? .disabled : []) { [weak self] _ in self?.controls?.distribute(.down) }])
+            return
+        }
         guard let sel = controls?.selectedSpec else { return }
         selection = sel
         let action = PadActions.action(sel.action)
-        doesButton.setTitle(sel.isStick ? "Stick: \(sel.action == "stick-arrows" ? "arrows" : "W A S D") \u{25BE}" : "Does: \(PadActions.label(sel.action).prefix(16)) \u{25BE}", for: .normal)
-        latchButton.isHidden = !(action.isKey || sel.pad?.isButtonLike == true)
+        doesButton.setTitle(sel.isOverlay ? "\(sel.overlayName) overlay goes here" : (sel.isStick ? "Stick: \(sel.action == "stick-arrows" ? "arrows" : "W A S D") \u{25BE}" : "Does: \(PadActions.label(sel.action).prefix(16)) \u{25BE}"), for: .normal)
+        doesButton.isEnabled = !sel.isOverlay
+        latchButton.isHidden = sel.isOverlay || !(action.isKey || sel.pad?.isButtonLike == true)
         let latched = sel.mode == "latch"
         latchButton.setTitle(latched ? "Latch: on" : "Latch: off", for: .normal)
         latchButton.backgroundColor = latched ? .systemYellow : UIColor(white: 1, alpha: 0.16)
         latchButton.setTitleColor(latched ? .black : .white, for: .normal)
-        labelButton.isHidden = sel.isRound
+        labelButton.isHidden = sel.isRound || sel.isOverlay
         if !sizeSlider.isTracking { sizeSlider.value = Float(sel.size) }
         sizeLabel.text = "\(Int(sel.size))"
         copyButton.isEnabled = (controls?.layout?.controls.count ?? 0) < TouchLayout.maxControls
+    }
+
+    private func multiSizeChanged(_ phase: UIGestureRecognizer.State) {
+        controls?.adjustSelectedSize(Double(multiSlider.value), phase: phase)
+        multiSizeLabel.text = "\(Int(multiSlider.value.rounded()))"
     }
 
     private func sizeChanged(_ phase: UIGestureRecognizer.State) {

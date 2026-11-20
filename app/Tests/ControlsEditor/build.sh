@@ -7,7 +7,7 @@ BUILD="${BUILD:-/tmp/claude-501/controls-editor-build}"; APP="$BUILD/ControlsHar
 if [ "${NOBUILD:-0}" != "1" ]; then
   rm -rf "$BUILD"; mkdir -p "$APP"
   swiftc -swift-version 5 -parse-as-library -Onone -sdk "$SDK" -target arm64-apple-ios18.0-simulator -module-name ControlsHarness -o "$APP/ControlsHarness" \
-    "$S/UI/ControlsKit.swift" "$S/UI/CustomControls.swift" "$S/UI/ControlsEditor.swift" "$S/Core/BindSets.swift" "$S/Core/PadActions.swift" "$HERE/Harness.swift"
+    "$S/UI/ControlsKit.swift" "$S/UI/CustomControls.swift" "$S/UI/ControlsEditor.swift" "$S/Core/BindSets.swift" "$S/Core/PadActions.swift" "$S/Core/ControlArrange.swift" "$S/Core/TouchButtonSize.swift" "$S/Core/LayoutCheck.swift" "$S/Core/ShippedLayouts.swift" "$S/UI/SlideAcross.swift" "$S/UI/CustomPadControls.swift" "$S/Core/TouchPadControls.swift" "$S/Core/PictureBand.swift" "$S/Core/FloatingStick.swift" "$S/Core/VirtualPadModel.swift" "$S/Core/ControllerKind.swift" "$HERE/Harness.swift"
   cat > "$APP/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>ControlsHarness</string><key>CFBundleIdentifier</key><string>site.portholehq.controlsharness</string><key>CFBundleName</key><string>ControlsHarness</string>

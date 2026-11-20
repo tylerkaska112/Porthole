@@ -38,6 +38,9 @@ Step by step: **[docs/INSTALL.md](docs/INSTALL.md)**.
   controller can act as keyboard and mouse, and each game's controller buttons can be remapped.
 - **Keyboard and mouse:** a Bluetooth or USB keyboard and a mouse or trackpad (iPad) work in games like on a PC: every key with its modifiers, five mouse buttons, the wheel,
   the game's own cursor in menus and a locked pointer for looking around. Porthole's menu opens with a key you choose (F10 by default). See `docs/KEYBOARD_MOUSE.md`.
+- **Discord (experimental, off until you turn it on):** a Social tab with your servers, text channels, direct messages and forums, voice calls (with your game's sound in the call, push to talk
+  and a volume for each person), banners over the game for messages and calls, "playing on Porthole" on your profile, and a viewer for other people's Go Live streams. **Porthole is not an
+  official Discord client.** Discord's terms do not allow third-party clients, and an account used with one can be limited or banned: use an account you can afford to lose.
 - **Windows components:** many games need Microsoft's Visual C++ runtime. Porthole downloads Microsoft's own installer from Microsoft,
   checks it against a fixed fingerprint and unpacks the files itself. Nothing of Microsoft's is included in the app.
 - **JIT:** the iOS feature the speed of everything depends on. Built-in method, StikDebug, or another tool: your choice in the setup guide.
@@ -64,6 +67,8 @@ stores you signed in to, updates). A build made with a community server address 
 update is newest, which compatibility badges apply to your games and which shared key binds exist, and sends something only when you choose to:
 a compatibility report (a random per-install key, the game, your device model and your answers) or a key-bind set you share (the same random key,
 the game and the set itself). Never your name, account or any device identifier. Details: [portholehq.site/privacy.html](https://portholehq.site/privacy.html).
+If you turn on the Discord features, you sign in on discord.com's own page (Porthole never sees your password or two-step code), and the account's sign-in token is kept in the iOS
+Keychain, for this device only, and sent only to Discord. Messages, voice and streams go between your device and Discord, not through any server of Porthole's.
 A problem report you choose to send includes the app's log, cleaned of account names, e-mail addresses and public IP addresses first; you can read
 it before it goes. There is no analytics and no account with Porthole.
 

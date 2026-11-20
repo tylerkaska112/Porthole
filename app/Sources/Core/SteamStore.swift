@@ -26,8 +26,6 @@ final class SteamStore: ObservableObject {
         var kindLabel: String? {
             switch kind { case "demo"?: "Demo"; case "beta"?: "Beta"; case "application"?: "Software"; default: nil }
         }
-        /// What has to be free before installing: the size on disk (the download size when only that is known), and a little more for the files being written.
-        var spaceNeeded: UInt64 { UInt64(Double(diskBytes ?? sizeBytes) * 1.15) }
         var folderName: String { SteamInstallFiles.safeFolderName(installDir.isEmpty ? "app_\(id)" : installDir) }
     }
 
@@ -226,6 +224,13 @@ final class SteamStore: ObservableObject {
     private var buildCache: [Int: (build: Int?, at: Date)] = [:]
     func invalidateBuilds() { buildCache = [:] }
     func isInstalled(_ id: Int) -> Bool { installedBuild(id) != nil }
+    /// What has to be free before Download, Update or Resume is pressed for this game: all of it for a new install, only what the new version adds for an installed game, and
+    /// nothing for a download with files on the device already (the installer counts what is still missing). See `SteamInstaller.spaceNeeded`.
+    func spaceNeeded(for game: Owned) -> UInt64 {
+        let installedBytes = isInstalled(game.id) ? SteamInstallFiles.sizeOnDisk(appID: game.id, steamApps: Self.steamApps).map { UInt64($0) } : nil
+        return SteamInstaller.spaceNeeded(fullBytes: game.diskBytes ?? game.sizeBytes, installedBytes: installedBytes,
+                                          hasPartialDownload: SteamInstaller.hasPartialDownload(appID: game.id, steamApps: Self.steamApps))
+    }
     func updateAvailable(_ game: Owned) -> Bool {
         guard let have = installedBuild(game.id) else { return false }
         // Another version than the public one is compared with that version's build, when Steam has said what it is.

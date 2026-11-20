@@ -20,6 +20,7 @@ struct HomeScreen: View {
     @ObservedObject private var compat = CompatStore.shared
     @ObservedObject private var autofix = AutoFixStore.shared
     @ObservedObject private var controllers = SteamControllers.shared
+    @ObservedObject private var drive = ExternalLibrary.shared
     @AppStorage("f4.setupDone") private var setupDone = false
     @State private var installerRan = UserDefaults.standard.string(forKey: "f4.installerRan")
     /// Chips the person hid with the x (kept across launches). The key of a kind of chip changes when there is something new to say (a newer update).
@@ -28,15 +29,14 @@ struct HomeScreen: View {
     @State private var pickSteam: Game?
     @ObservedObject private var friends = SteamFriendsStore.shared
     @ObservedObject private var restarting = RestartCoordinator.shared
-    @State private var showFriends = false
-    @State private var friendsScope = FocusScope()
     @Environment(\.verticalSizeClass) private var vSize
     /// A phone held sideways: the page is sized to the screen with about 30 points to spare, so a row of notices of its own would squeeze the games' shelf.
     private var sideways: Bool { vSize == .compact }
 
     /// Most recently played first.
     private var sortedGames: [Game] {
-        model.games.enumerated().sorted {
+        // A game that is on an external drive that is not connected is left out until the drive is back (its tile and settings are kept).
+        model.games.enumerated().filter { !drive.isAway($0.element) }.sorted {
             let a = $0.element.lastPlayed ?? .distantPast, b = $1.element.lastPlayed ?? .distantPast
             return a != b ? a > b : $0.offset < $1.offset
         }.map(\.element)
@@ -45,7 +45,7 @@ struct HomeScreen: View {
     var body: some View {
         @Bindable var router = router
         NavigationStack(path: $router.homePath) {
-            HomeView(notices: sideways ? [] : notices, games: sortedGames.map(card), featuredPlaying: preparingFeatured,
+            HomeView(notices: [], games: sortedGames.map(card), featuredPlaying: preparingFeatured,
                      act: act, dismiss: dismissNotice, open: { router.homePath.append($0.id) }, play: { card in
                          if let game = model.games.first(where: { $0.id == card.id }) { session.start(game) }
                      }, add: { router.showAdd = true },
@@ -61,12 +61,6 @@ struct HomeScreen: View {
         .task(id: model.games.map(\.id)) { await controllers.refresh(ids: model.games.compactMap { $0.steamAppID ?? $0.dockAppID }) }
         .task(id: steam.signedIn) { if steam.signedIn { await friends.refresh() } }
         .task { await RestartCoordinator.shared.resumeIfPending(model: model) }
-        .sheet(isPresented: $showFriends) {
-            GameSubSheet(title: "Friends", scope: friendsScope, close: { showFriends = false }) {
-                if steam.signedIn { SteamFriendsList() } else { signInHint }
-            }
-            .preferredColorScheme(Theme.scheme)
-        }
         .sheet(item: $reportGame) { ReportSheet(game: $0, crashed: compat.prompt?.crashed ?? false).environmentObject(model).preferredColorScheme(Theme.scheme) }
         .sheet(item: $pickSteam) { game in
             SteamPickerView(initialTerm: SteamArt.searchTerms(name: game.name, exe: game.exe).first ?? game.name) { match in
@@ -76,30 +70,16 @@ struct HomeScreen: View {
         }
     }
 
-    /// The Friends button: on the Home Screen only (a game's page is a different screen on the stack), always there, above everything else.
+    /// The row above the Home Screen: the layout picker (and, held sideways, the notices). On the Home Screen only: a game's page is a different screen on the stack. Friends live in the Social tab.
     private var friendsBar: some View {
         HStack(spacing: 12) {
-            // Held sideways the notices sit here, beside the Friends button, instead of in a row of their own above the hero (which pushed the shelf out of shape).
-            if sideways, !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismissNotice, compact: true) } else { Spacer(minLength: 0) }
+            // The alerts (a game closed unexpectedly, an update, components to download) sit in this one row with the layout picker, in every orientation.
+            if !notices.isEmpty { NoticeStrip(notices: notices, act: act, dismiss: dismissNotice, compact: sideways) } else { Spacer(minLength: 0) }
+            // Pinned to the right edge of a row whose height never changes, so the picker stays where it is whether there are alerts or not.
             HomeLayoutPicker()
-            PillButton(id: "home-friends", title: friendsTitle, symbol: "person.2.fill", style: .glass) { showFriends = true }.fixedSize()
         }
+        .frame(height: sideways ? 48 : 56)
         .padding(.leading, sideways ? 14 : 28).padding(.trailing, 28).padding(.top, 8).padding(.bottom, 4)   // sideways the notices start where the page's own content does
-    }
-
-    /// "Friends", with how many are on Steam right now once the list has loaded.
-    private var friendsTitle: String {
-        let now = friends.friends.filter(\.isOnline).count
-        return steam.signedIn && friends.loaded && now > 0 ? "Friends \u{00B7} \(now) online" : "Friends"
-    }
-
-    private var signInHint: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "person.2.slash").font(.system(size: 40)).foregroundStyle(Theme.textDim)
-            Text("Sign in to Steam to see your friends.").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
-            PillButton(id: "home-friends-signin", title: "Open Steam", symbol: "arrow.right", style: .primary) { showFriends = false; router.openSteam() }
-        }
-        .frame(maxWidth: .infinity).padding(.top, 60)
     }
 
     private var preparingFeatured: Bool { session.isActive && sortedGames.first.map { $0 == session.game } == true }

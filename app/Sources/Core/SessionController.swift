@@ -39,9 +39,10 @@ final class SessionController: ObservableObject {
     }
     /// The settings this launch uses (the game's own overrides over the global ones), and the controls it gets.
     private(set) var activeSettings = LaunchSettings.resolve(for: nil)
-    @Published private(set) var activeLayout: ControlLayout = .standard
-    /// The on-screen controls of the bind set in use, or nil to use the game's normal Controls choice (see BindSets.swift).
+    /// The on-screen controls the game gets: its bind set's layout, else the default's (Universal unless chosen otherwise); nil only while the on-screen game controller is on (see BindSets.swift).
     @Published private(set) var activeTouchLayout: TouchLayout?
+    /// What the in-game menu's Layout card offers: the game's default controls and each of its sets that has a touch layout, with the one in use marked.
+    @Published private(set) var layoutChoices: [LayoutChoice] = []
     /// First-person look speed for the running game; the in-game menu changes it live and saves it to the game's settings.
     @Published private(set) var lookSensitivity = LaunchSettings.defaultLookSensitivity
     private var runningSince: Date?
@@ -67,6 +68,7 @@ final class SessionController: ObservableObject {
     @Published private(set) var launchStep: LaunchStep = .jit
     /// True once a window of the game has put a picture on screen.
     @Published private(set) var launchGameUp = false
+    private var launchCensusLogged = false
     /// The person asked to look at Steam's own window instead of the launch screen.
     @Published var launchPeeking = false { didSet { if launchPeeking != oldValue { LogStore.shared.log("[launch-screen] peeking at Steam: \(launchPeeking)") } } }
     private var launchCancelled = false
@@ -104,29 +106,12 @@ final class SessionController: ObservableObject {
         switch state { case .enablingJIT, .starting, .running: return true; default: return false }
     }
 
-    /// Changes the touch layout while the game runs (the in-game menu) and remembers it for this game.
-    func switchLayout(to layout: ControlLayout) {
-        guard layout != activeLayout else { return }
-        activeLayout = layout
-        updateGame { $0.controls = layout == .standard ? nil : layout }
-        LogStore.shared.log("[controls] layout \(layout == .firstPerson ? "first person" : "mouse and keys")")
-    }
-
     /// The running game's entry as the library holds it. A program started from outside the library (an installer run, which is how a game still being developed is started)
     /// has an entry the library never stores, so edits made in the game are kept on the session's own copy instead of being dropped.
     private func updateGame(_ change: (inout Game) -> Void) {
         guard let g = game else { return }
         if AppModel.shared.games.contains(where: { $0.id == g.id }) { AppModel.shared.update(g, change) }
         else { var copy = g; change(&copy); game = copy }
-    }
-
-    /// The in-game menu's switch for the on-screen game controller: remembered for this game (it comes back the next time it starts).
-    /// The arrangement of the on-screen controller, for this game and as the choice the next game starts with.
-    func setVirtualPadLayout(_ preset: VirtualPadLayout.Preset) {
-        guard isActive, game != nil else { return }
-        updateGame { $0.virtualPadLayout = preset.rawValue }
-        UserDefaults.standard.set(preset.rawValue, forKey: VirtualPadLayout.lastKey)
-        LogStore.shared.log("[pad] on-screen controller layout: \(preset.title)")
     }
 
     /// How the on-screen controller looks, for this game and as the choice the next game starts with.
@@ -137,9 +122,18 @@ final class SessionController: ObservableObject {
         LogStore.shared.log("[pad] on-screen controller style: \(style.title)")
     }
 
+    /// Where the on-screen controller's controls are, for this game and as the choice the next game starts with.
+    func setVirtualPadLayout(_ preset: VirtualPadLayout.Preset) {
+        guard isActive, game != nil else { return }
+        updateGame { $0.virtualPadLayout = preset.rawValue }
+        UserDefaults.standard.set(preset.rawValue, forKey: VirtualPadLayout.lastKey)
+        LogStore.shared.log("[pad] on-screen controller layout: \(preset.title)")
+    }
+
+    /// The in-game menu's switch for the on-screen game controller: remembered for this game (it comes back the next time it starts).
     func setVirtualPad(_ on: Bool) {
         guard isActive, game != nil else { return }
-        updateGame { $0.virtualPad = on ? true : nil }
+        updateGame { $0.virtualPad = on ? true : nil; $0.ownControls = true }
         LogStore.shared.log("[pad] on-screen controller \(on ? "on" : "off") from the in-game menu")
     }
 
@@ -183,16 +177,42 @@ final class SessionController: ObservableObject {
         guard isActive, let g = game else { return }
         let fresh = AppModel.shared.games.first(where: { $0.id == g.id }) ?? g          // not in the library (an installer run): the session's own copy
         if fresh != g { game = fresh }
-        if activeTouchLayout != fresh.activeBindSet?.touch { activeTouchLayout = fresh.activeBindSet?.touch }
+        if activeTouchLayout != fresh.effectiveTouchLayout { activeTouchLayout = fresh.effectiveTouchLayout }
+        let choices = GameLayouts.choices(for: fresh)
+        if layoutChoices != choices { layoutChoices = choices }
         PadInput.shared.updateLive(for: fresh)
+    }
+
+    /// The quick layout switch: a set of this game (or nil for its default controls) becomes the layout in use. Nothing is lost: the sets stay, so another tap goes back.
+    func chooseLayout(set id: UUID?) {
+        LogStore.shared.log("[binds] layout switched to \(id.flatMap { id in game?.bindSets?.first { $0.id == id }?.name } ?? "the default controls") (from the in-game menu)")
+        updateGame { g in
+            if let id { g.activeBindSetID = id; g.ownControls = true }
+            else { g.ownControls = false; g.virtualPad = nil; g.activeBindSetID = nil }
+        }
+        bindSetsChanged()
+    }
+
+    /// A starter layout chosen in the game: a new set made from it and used at once (the layouts the game has are kept).
+    func addLayoutSet(_ layout: TouchLayout, named title: String) {
+        updateGame { GameLayouts.addSet(layout, named: title, to: &$0) }
+        LogStore.shared.log("[binds] new layout \"\(title)\" made in the game from a starter")
+        bindSetsChanged()
     }
 
     /// The on-screen editor moved, added or removed a control: keep the layout in the set in use.
     func saveLiveTouchLayout(_ layout: TouchLayout) {
         guard game != nil else { return }
         updateGame { game in
-            guard let active = game.activeBindSetID, var sets = game.bindSets, let i = sets.firstIndex(where: { $0.id == active }) else { return }
-            sets[i].touch = layout; sets[i].updated = Date(); game.bindSets = sets
+            if let active = game.activeBindSetID, var sets = game.bindSets, let i = sets.firstIndex(where: { $0.id == active }) {
+                sets[i].touch = layout; sets[i].updated = Date(); game.bindSets = sets
+                return
+            }
+            // The layout on screen was the default's (a gamepad or the person's own), not a set of this game: the first change makes this game's own copy, and the default stays as it was.
+            guard game.followsDefaultControls, DefaultControls.current.touchLayout != nil else { return }
+            var set = BindSet(name: "On-screen controls", touch: layout)
+            var n = 2; while (game.bindSets ?? []).contains(where: { $0.name == set.name }) { set.name = "On-screen controls \(n)"; n += 1 }
+            game.bindSets = (game.bindSets ?? []) + [set]; game.activeBindSetID = set.id; game.ownControls = true
         }
     }
 
@@ -233,7 +253,7 @@ final class SessionController: ObservableObject {
                 let started = BuiltinJIT.shared.start(
                     stage: { text in LogStore.shared.log("[jit] \(text)") },
                     onAttached: { [weak self] in self?.refreshJIT() },
-                    report: { [weak self] message in self?.state = .failed(message) })
+                    report: { [weak self] message in self?.state = .failed(JITFailureHint.message(message, facts: Self.jitFacts())) })
                 _ = started
             }
             return
@@ -363,8 +383,15 @@ final class SessionController: ObservableObject {
     /// The start of the failure shown when Steam's client files are not on this device yet (Home turns it into a button that opens Steam).
     static let steamClientMissing = "Steam\u{2019}s client files are not installed yet, and a game started through Steam needs them. Open Steam in Porthole and download them (about 73 MB, from Valve), or set this game to start directly."
 
-    func start(_ game: Game) {
+    func start(_ original: Game) {
         guard !isActive else { return }
+        // The start options as typed on iOS: smart punctuation makes curly quotes and dashes of them, which a Windows program does not understand (LaunchArgumentText).
+        var game = original
+        let plainArgs = LaunchArgumentText.plain(game.args)
+        if plainArgs != game.args {
+            LogStore.shared.log("[run] the start options had curly quotes or dashes from the iOS keyboard: straight ones are used")
+            game.args = plainArgs
+        }
         CopyCheck.shared.refresh(for: game, log: true)
         if let repaired = withProgramRepaired(game) { start(repaired); return }
         // The very first game: show how to play before the game takes over the screen, then start it (finishTour).
@@ -393,7 +420,7 @@ final class SessionController: ObservableObject {
             return
         }
         monoNeededFor = nil
-        launchCancelled = false; wineStarted = false; launchGameUp = false; launchPeeking = false; launchHold = false; restartAdvised = false; launchStep = .jit; launchBegan = Date()
+        launchCancelled = false; wineStarted = false; launchGameUp = false; launchCensusLogged = false; launchPeeking = false; launchHold = false; restartAdvised = false; launchStep = .jit; launchBegan = Date()
         launchViaSteam = game.dockAppID != nil && game.launchDirect != true && GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID)?.alwaysDirect != true
         self.game = game
         activeSettings = LaunchSettings.resolve(for: game)
@@ -401,15 +428,21 @@ final class SessionController: ObservableObject {
         // Read by the audio session setup before Wine boots (WineProcessBridge.m), and applied here too in case that setup does not run again.
         let mixAudio = UserDefaults.standard.bool(forKey: Self.mixAudioKey) || game.softwareID != nil
         UserDefaults.standard.set(mixAudio, forKey: "f4.mixAudio.now")
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: mixAudio ? [.mixWithOthers] : [])
+        if UserDefaults.standard.bool(forKey: "f4.discordVoice.now") {
+            // Discord voice is on (Discord branch): keep the microphone, and let the game's sound out through the same session.
+            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: AVAudioSession.CategoryOptions([.defaultToSpeaker, .allowBluetoothA2DP]).union(mixAudio ? .mixWithOthers : []))
+        } else {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: mixAudio ? [.mixWithOthers] : [])
+        }
         // Tells Windows programs (Blender's Cycles) the highest winemetal call this build has: 171 = GPU binaries built ahead of time (patch 0187). They ask before they use it.
         let slotsFile = AppModel.driveC.appendingPathComponent("windows/porthole-winemetal-slots")
         try? FileManager.default.createDirectory(at: slotsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? "171".write(to: slotsFile, atomically: true, encoding: .utf8)
         // And the system version, which a pack's GPU binaries have to match (major.minor).
         try? SoftwareStore.systemVersion.write(to: slotsFile.deletingLastPathComponent().appendingPathComponent("porthole-ios-version"), atomically: true, encoding: .utf8)
-        activeLayout = game.controls ?? .standard
-        activeTouchLayout = game.activeBindSet?.touch
+        // A game with no controls of its own starts with the person's default (Settings > Controls).
+        activeTouchLayout = game.effectiveTouchLayout
+        layoutChoices = GameLayouts.choices(for: game)
         lookSensitivity = activeSettings.lookSensitivity
         // Fail early and clearly instead of starting Wine on a path that is not there.
         let isSystemPath = game.exe.lowercased().hasPrefix("c:\\windows\\")     // msiexec etc.: the prefix is created at the first launch
@@ -493,7 +526,8 @@ final class SessionController: ObservableObject {
         Task { @MainActor in
             var auth = ""
             do {
-                auth = try await Self.withTimeout(seconds: 10) { try await EpicAuth.shared.gameArguments(appName: appName) }
+                let epicGame = EpicInstaller.shared.game(for: appName)
+                auth = try await Self.withTimeout(seconds: 14) { try await EpicAuth.shared.gameArguments(appName: appName, game: epicGame) }
             } catch {
                 if Self.looksOffline(error) {
                     LogStore.shared.log("[epic] no connection to Epic (\(error.localizedDescription)): starting \(target.name) without Epic's sign-in")
@@ -847,7 +881,7 @@ final class SessionController: ObservableObject {
                 let started = BuiltinJIT.shared.start(
                     stage: { text in LogStore.shared.log("[jit] \(text)") },
                     onAttached: { [weak self] in self?.refreshJIT(); proceed() },
-                    report: { [weak self] message in self?.state = .failed(message) })
+                    report: { [weak self] message in self?.state = .failed(JITFailureHint.message(message, facts: Self.jitFacts())) })
                 _ = started   // on failure `report` has already put the reason on screen; there is deliberately no silent fallback to a different mechanism
             }
         case .stikDebug:
@@ -895,6 +929,14 @@ final class SessionController: ObservableObject {
         }
     }
 
+    /// What Porthole knows about how this install reaches the device, for the words after a failed JIT (see JITFailureHint).
+    private static func jitFacts() -> JITFailureHint.Facts {
+        let signingProblem = TunnelDiagnostics.signingReport().contains { $0.hasPrefix("PROBLEM") }
+        return JITFailureHint.Facts(ownTunnelCannotStart: !InstallCheck.hasTunnel || signingProblem,
+                                    useLocalDevVPN: TunnelManager.useLocalDevVPN,
+                                    vpnInterfaceUp: VPNGuard.vpnInterfaceUp())
+    }
+
     /// Brings our own tunnel up first. If it cannot come up we carry on anyway, in case another VPN (LocalDevVPN) is already providing the tunnel.
     private func withTunnel(_ then: @escaping () -> Void) {
         Task { @MainActor in
@@ -922,6 +964,14 @@ final class SessionController: ObservableObject {
                     self.state = .failed(ErrorText.plain(error))
                     return
                 }
+                // The other way round: this install was signed without the VPN permission, so its own tunnel can never start, and no VPN is on either. JIT would only wait
+                // a minute or more and then say the device is not ready (Hub reports: 30 installs like this). Say what to do at once.
+                if JITMethod.current == .inApp, JITFailureHint.shouldFailBeforeTrying(Self.jitFacts()) {
+                    LogStore.shared.log("[jit] not trying: this install cannot start its own private link and no VPN is on", level: .error)
+                    CellularGuard.shared.disarm()
+                    self.state = .failed(JITFailureHint.noOwnTunnel)
+                    return
+                }
             }
             // The tunnel is up while cellular data still works; only now does cellular data go off, so the tunnel is already connected when there is no network.
             if CellularGuard.shared.armed {
@@ -932,6 +982,14 @@ final class SessionController: ObservableObject {
             }
             then()
         }
+    }
+
+    /// Why the last start failed, for a screen that runs setups (GOG, itch.io): those runs have no launch screen, so nothing else would say. Clears the failure like dismissing it does.
+    /// Nil when the session did not fail.
+    func takeFailure() -> String? {
+        guard case .failed(let why) = state else { return nil }
+        dismiss()
+        return why
     }
 
     func dismiss() {
@@ -1374,11 +1432,11 @@ extension SessionController {
         launchPresentsAtStart = UInt64(madeira_frame_count()) + UInt64(winios_surface_present_count())
         let folder = steam ? "c:\\program files (x86)\\steam\\steamapps\\" : Self.folderPrefix(ofWindowsPath: game.exe)
         launchWatch = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.checkLaunchWindows(folder: folder) }
+            MainActor.assumeIsolated { self?.checkLaunchWindows(folder: folder, steam: steam) }
         }
     }
 
-    private func checkLaunchWindows(folder: String) {
+    private func checkLaunchWindows(folder: String, steam: Bool) {
         guard !launchGameUp else { stopLaunchWatch(); return }
         if state == .ended || state == .idle { stopLaunchWatch(); return }
         let waited = Date().timeIntervalSince(launchBegan)
@@ -1387,7 +1445,20 @@ extension SessionController {
         let count = Int(winios_window_census(&windows, Int32(windows.count)))
         for var w in windows.prefix(count) {
             let image = withUnsafePointer(to: &w.image) { $0.withMemoryRebound(to: CChar.self, capacity: Int(WINIOS_CENSUS_IMAGE)) { String(cString: $0) } }
-            if image.hasPrefix(folder), w.visible != 0, w.w >= 160, w.h >= 120, w.metal != 0 || w.presents > 0 { found = true; break }
+            // A Steam game is under steamapps\common wherever its library is: the client's own (c:\program files (x86)\steam), a library on the device, or the one on an external drive
+            // (c:\madeiraexternallibrary or e:), whose path never starts with the client's folder.
+            let isGameImage = image.hasPrefix(folder) || (steam && image.contains("\\steamapps\\common\\"))
+            if isGameImage, w.visible != 0, w.w >= 160, w.h >= 120, w.metal != 0 || w.presents > 0 { found = true; break }
+        }
+        // Still nothing after a minute: say which windows exist, so a path this check does not know shows in the log.
+        if !found, waited > 60, !launchCensusLogged {
+            launchCensusLogged = true
+            let seen = windows.prefix(count).map { w -> String in
+                var w = w
+                let image = withUnsafePointer(to: &w.image) { $0.withMemoryRebound(to: CChar.self, capacity: Int(WINIOS_CENSUS_IMAGE)) { String(cString: $0) } }
+                return "\(image) \(w.w)x\(w.h) visible=\(w.visible) metal=\(w.metal) presents=\(w.presents)"
+            }
+            LogStore.shared.log("[launch] after \(Int(waited)) s no game window matched (looking under \(folder)); windows: \(seen.isEmpty ? "none" : seen.joined(separator: " | "))")
         }
         // A game started directly (no Wine desktop) draws straight into our view, and the window census is not fed there. Its pictures are the signal instead:
         // the graphics layer counts every frame it presents, and a window of ours (GDI) counts its own.

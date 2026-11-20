@@ -11,6 +11,12 @@
 # The IPA must be the one tools/release_public.sh built (the same file that is uploaded to GitHub), so the checksum on the Hub is the checksum on GitHub.
 # The channel is PUBLIC_HUB_APP_ID from tools/local.env (default "porthole-stable"); it is NOT the maintainer's own channel, which tools/release.sh publishes
 # to. Publishing is state-changing: it writes into the Hub's data folder, and every public install can see the build the moment it is there.
+
+# 1.4.0 (with the Discord features) is not released until the maintainer says so (docs/BRANCH-1.4.0.md).
+if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "1.4.0" ] && [ -z "$ALLOW_DISCORD_RELEASE" ]; then
+  echo "✗ This is the 1.4.0 branch: it is not released, built for the public channel or promoted yet. See docs/BRANCH-1.4.0.md." >&2
+  exit 1
+fi
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -f tools/local.env ] && . tools/local.env

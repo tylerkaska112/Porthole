@@ -5,128 +5,6 @@ import GameController
 import SwiftUI
 import Combine
 
-/// A movement stick that holds W/A/S/D (eight directions, so diagonals work).
-final class MovementStickView: UIView {
-    private let base = CAShapeLayer(), knob = CAShapeLayer()
-    private var held: Set<Int32> = []
-    private var tracking: UITouch?
-    private let side: CGFloat
-    /// Floating (FloatingStick): the stick takes a touch near its place and its base is drawn under the thumb where it lands. `centre` is that place, in this view's own points.
-    var floating = false { didSet { if !floating, tracking == nil { centre = nil; drawBase() } } }
-    private var centre: CGPoint?
-    private var origin: CGPoint { centre ?? CGPoint(x: bounds.midX, y: bounds.midY) }
-
-    /// `MovementStickView()` goes through UIView.init() -> init(frame:), so that path must work (a trap here crashed every game launch in 0.14.0).
-    override init(frame: CGRect) { side = 104; super.init(frame: frame); setup() }
-    init(side: CGFloat) { self.side = side; super.init(frame: .zero); setup() }
-
-    private func setup() {
-        translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: side).isActive = true
-        heightAnchor.constraint(equalToConstant: side).isActive = true
-        base.fillColor = UIColor(white: 0, alpha: 0.35).cgColor
-        base.strokeColor = UIColor(white: 1, alpha: 0.5).cgColor; base.lineWidth = 2
-        knob.fillColor = UIColor(white: 1, alpha: 0.55).cgColor
-        layer.addSublayer(base); layer.addSublayer(knob)
-        isMultipleTouchEnabled = false
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        drawBase()
-    }
-
-    /// The base and the knob at rest, around the stick's own centre or (floating, while a thumb is on it) around the thumb's landing place.
-    private func drawBase() {
-        let c = origin
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        base.path = UIBezierPath(ovalIn: CGRect(x: c.x - side / 2 + 2, y: c.y - side / 2 + 2, width: side - 4, height: side - 4)).cgPath
-        moveKnob(to: c)
-        CATransaction.commit()
-    }
-
-    /// The part of the screen a floating base may be drawn in (the safe area), in this view's points.
-    private func field() -> CGRect? {
-        guard let w = window else { return nil }
-        return convert(w.bounds.inset(by: w.safeAreaInsets), from: w)
-    }
-
-    /// A floating stick also takes a touch in its zone, unless another control is there.
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        if super.point(inside: point, with: event) { return true }
-        guard floating, tracking == nil, let parent = superview else { return false }
-        let near = parent.subviews.filter { $0 !== self && !$0.isHidden && $0.alpha > 0.01 && $0.isUserInteractionEnabled && $0.bounds.width <= side * 2.5 && $0.bounds.height <= side * 2.5 }
-            .map { convert($0.frame, from: parent) }
-        return FloatingStick.takes(point, frame: bounds, neighbours: near)
-    }
-
-    private func moveKnob(to p: CGPoint) {
-        let r: CGFloat = side * 0.19
-        knob.path = UIBezierPath(ovalIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)).cgPath
-    }
-
-    private func update(with p: CGPoint) {
-        let c = origin
-        var dx = p.x - c.x, dy = p.y - c.y
-        let radius = side / 2, length = hypot(dx, dy)
-        if length > radius { dx *= radius / length; dy *= radius / length }
-        moveKnob(to: CGPoint(x: c.x + dx, y: c.y + dy))
-        let dead = radius * 0.3
-        var now: Set<Int32> = []
-        if dy < -dead { now.insert(VK.w) }
-        if dy > dead { now.insert(VK.s) }
-        if dx < -dead { now.insert(VK.a) }
-        if dx > dead { now.insert(VK.d) }
-        for k in held.subtracting(now) { HUDKeys.up(k) }
-        for k in now.subtracting(held) { HUDKeys.down(k) }
-        held = now
-    }
-
-    private func end() {
-        for k in held { HUDKeys.up(k) }
-        held = []; tracking = nil
-        centre = nil
-        drawBase()
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard tracking == nil, let t = touches.first else { return }
-        tracking = t
-        let p = t.location(in: self)
-        if floating { centre = FloatingStick.centre(touch: p, diameter: side, field: field()); drawBase() }
-        update(with: p)
-    }
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let t = tracking, touches.contains(t) { update(with: t.location(in: self)) }
-    }
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { end() } }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { end() } }
-    func release() { end() }
-}
-
-/// A round button that holds a mouse button while the finger is down. Relative events (no ABSOLUTE flag), so the cursor does not jump:
-/// first-person games read the mouse as movement.
-final class MouseHoldButton: UIButton {
-    private let down: UInt32, up: UInt32
-    init(_ title: String, right: Bool, side: CGFloat) {
-        down = right ? 0x8 : 0x2; up = right ? 0x10 : 0x4
-        super.init(frame: .zero)
-        setTitle(title, for: .normal); setTitleColor(.white, for: .normal)
-        titleLabel?.font = .systemFont(ofSize: 15, weight: .heavy)
-        backgroundColor = UIColor(white: 0, alpha: 0.55); layer.cornerRadius = side / 2
-        layer.borderWidth = 2; layer.borderColor = UIColor(white: 1, alpha: 0.35).cgColor
-        translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: side).isActive = true; heightAnchor.constraint(equalToConstant: side).isActive = true
-        addAction(UIAction { [weak self] _ in self?.press() }, for: .touchDown)
-        addAction(UIAction { [weak self] _ in self?.release() }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
-    }
-    required init?(coder: NSCoder) { fatalError() }
-    private var isPressed = false
-    private func press() { isPressed = true; backgroundColor = UIColor.systemOrange.withAlphaComponent(0.8); winios_pointer(0, 0, down, 0) }
-    func release() { guard isPressed else { return }; isPressed = false; backgroundColor = UIColor(white: 0, alpha: 0.55); winios_pointer(0, 0, up, 0) }
-}
-
 /// A view that takes touches itself (not a UIControl): the HUD lets a touch on it through instead of passing it to the game. Every interactive control of the HUD that is a plain UIView
 /// conforms; forgetting it is how a control draws but never answers (the pad controls of a custom layout did so in 1.3.156 and 1.3.157).
 protocol TakesHUDTouches: UIView {}
@@ -145,7 +23,7 @@ final class PassthroughView: UIView {
 final class GameHUDView: UIView {
     /// Diagnostics shown in the full readout: how often the HUD was told something, and how often it really changed.
     static var stateCalls = 0, stateChanges = 0, attaches = 0
-    private var lastState: SessionController.State?
+    private var lastState: SessionController.State? { didSet { updateBannerGate(); noteBandControls(); refreshBandOverlay() } }
     /// A controller, keyboard or mouse in use hides the on-screen controls (settings "Hide on-screen controls when a controller is used" and "... a keyboard or mouse");
     /// a touch on the screen brings them back until it is used again.
     private var hiddenByPad = false
@@ -230,23 +108,19 @@ final class GameHUDView: UIView {
     var onKeyboard: (() -> Void)?
     /// Opens the compatibility report form for the running game. nil (an installer, say) hides the menu entry.
     var onReport: (() -> Void)? { didSet { menuModel.hasReport = onReport != nil } }
-    /// Switches the touch layout while playing (mouse and keys <-> first person); the session remembers the choice for this game.
-    var onSwitchLayout: ((ControlLayout) -> Void)?
     /// Where the last touch landed on the game (Wine desktop pixels); the zoom buttons scroll the wheel there.
     var cursor: (x: Int32, y: Int32) = (640, 360)
-    /// "Right mode": tap and drag use the right button, two-finger tap the left.
-    private(set) var rightMode = false
 
     // The in-game menu (a side panel) and the performance overlay, both SwiftUI, hosted above the controls.
     private let menuModel = GameMenuModel()
     /// The running game's name, for the menu's header.
     var gameName: String? { didSet {
         menuModel.gameName = gameName; isBlender = AppModel.shared.session.game?.isBlender == true
-        virtualPad.preset = VirtualPadLayout.preset(game: AppModel.shared.session.game?.virtualPadLayout, last: UserDefaults.standard.string(forKey: VirtualPadLayout.lastKey))
-        menuModel.virtualPadLayout = virtualPad.preset
         virtualPad.style = VirtualPadStyle.style(game: AppModel.shared.session.game?.virtualPadStyle, last: UserDefaults.standard.string(forKey: VirtualPadStyle.lastKey))
         menuModel.virtualPadStyle = virtualPad.style
-        virtualPadOn = AppModel.shared.session.game?.virtualPad == true
+        virtualPad.preset = VirtualPadLayout.preset(game: AppModel.shared.session.game?.virtualPadLayout, last: UserDefaults.standard.string(forKey: VirtualPadLayout.lastKey))
+        menuModel.virtualPadLayout = virtualPad.preset
+        virtualPadOn = AppModel.shared.session.game?.effectiveVirtualPad == true
         // The HUD outlives a game and PadInput.endSession drops the on-screen controller's sample: a game that starts with the controller already on leaves virtualPadOn unchanged,
         // so its didSet does not run and the game would see no pad although the controller is drawn. Hand the sample over again at every start.
         publishPad()
@@ -265,6 +139,7 @@ final class GameHUDView: UIView {
         if !virtualPadOn { virtualPad.releaseAll(); padMixer.set(VirtualPadSample(), for: "pad") }
         publishPad()
         refreshControlVisibility()
+        refreshBandOverlay()
     } }
     /// What drives the on-screen Xbox pad: the game controller view, and the pad controls of a custom layout (mixed layouts). The game sees one pad, all of them merged.
     private var padMixer = TouchPadMixer()
@@ -273,11 +148,69 @@ final class GameHUDView: UIView {
         let wanted = virtualPadOn || (customControls.usesPad && customLayout != nil)
         PadInput.shared.setVirtual(wanted ? padMixer.merged : nil)
     }
-    static let padScaleKey = "f4.vpad.scale", padAlphaKey = "f4.vpad.alpha"
+    static let padScaleKey = VirtualPadDefaults.scaleKey, padAlphaKey = VirtualPadDefaults.alphaKey
     /// The running game's Steam app id (nil for a game that is not from Steam), for the menu's Workshop tab.
     var steamAppID: Int? { didSet { menuModel.steamAppID = steamAppID } }
     private let perfModel = PerfOverlayModel()
     private var overlayWatch: AnyCancellable?
+
+    // MARK: The picture moved up (iPad)
+    /// The on-screen controls are showing, for the session view to decide whether the picture goes up (PictureBand): the on-screen controller or a custom layout, not hidden by the person or by a
+    /// real controller. Whether they are idle-faded does not count, or the picture would move every time they fade.
+    var bandControlsOn: Bool { lastState == .running && controlsOn && !hiddenByPad && (virtualPadOn || customLayout != nil) }
+    /// Where the layout of the person's own that is showing wants the game's picture (nil = automatic, or no such layout showing).
+    var layoutPicture: PicturePlacement? { customLayout != nil && !virtualPadOn ? customLayout?.picture : nil }
+    /// Set by the session view when `bandControlsOn` or the layout's picture placement changes.
+    var onBandControlsChange: (() -> Void)?
+    private var lastBandKey: (Bool, PicturePlacement?) = (false, nil)
+    private func noteBandControls() {
+        let now = (bandControlsOn, layoutPicture)
+        guard now != lastBandKey else { return }
+        lastBandKey = now
+        onBandControlsChange?()
+    }
+    /// The performance numbers and the call's people go where the layout in use puts them (the spots it has for them), instead of in a corner.
+    private func applyOverlayPlacements() {
+        var perf: OverlayPlacement?, call: OverlayPlacement?
+        if let l = customLayout, !virtualPadOn {
+            // The spot is where the editor shows it, which depends on the screen's size and on left-handed (ControlSpace): as a fraction of the room the controls use.
+            let room = bounds.inset(by: safeAreaInsets).size
+            let space = ControlSpace(field: room, mirrored: TouchHandedness.leftHanded)
+            func spot(_ action: String) -> OverlayPlacement? {
+                l.controls.first { $0.action == action }.map { c in
+                    guard room.width > 0, room.height > 0 else { return OverlayPlacement(x: c.x, y: c.y, scale: c.overlayScale) }
+                    let p = space.point(x: c.x, y: c.y)
+                    return OverlayPlacement(x: Double(p.x / room.width), y: Double(p.y / room.height), scale: c.overlayScale)
+                }
+            }
+            perf = spot("overlay-perf"); call = spot("overlay-discord")
+        }
+        if PerfOverlaySettings.shared.placement != perf { PerfOverlaySettings.shared.placement = perf; placeOverlay() }
+        if DiscordOverlaySettings.shared.placement != call { DiscordOverlaySettings.shared.placement = call; updateDiscordFrame() }
+    }
+    /// The bottom of the game's picture (window points), and whether it has been moved to the top edge.
+    var pictureBottom: CGFloat = 0
+    var pictureUp = false { didSet { if pictureUp != oldValue { refreshBandOverlay() } } }
+    /// While the picture is up and the on-screen controller is showing, the performance numbers and the call's people sit in the room between its trigger columns instead of in a corner.
+    private var bandOverlayActive = false { didSet { if bandOverlayActive != oldValue { applyOverlaySettings(); applyDiscordOverlay() } } }
+    private lazy var bandHost: UIView = {
+        let v = UIHostingConfiguration { BandOverlayView(perfSettings: PerfOverlaySettings.shared, perfModel: self.perfModel, discordSettings: DiscordOverlaySettings.shared, discord: DiscordSession.shared) }
+            .margins(.all, 0).makeContentView()
+        v.backgroundColor = .clear; v.isHidden = true; v.isUserInteractionEnabled = false; v.translatesAutoresizingMaskIntoConstraints = true
+        return v
+    }()
+    private func refreshBandOverlay() {
+        var room: CGRect?
+        if pictureUp, virtualPadOn, lastState == .running, bounds.width > 0 {
+            let s = safeAreaInsets
+            let f = VirtualPadLayout.frames(in: bounds.size, insets: .init(left: s.left, right: s.right, top: s.top, bottom: s.bottom), scale: virtualPad.scale, preset: virtualPad.preset, wide: virtualPad.wide)
+            room = VirtualPadLayout.centreRoom(frames: f, top: pictureBottom)
+        }
+        if let room, bandHost.frame != room { bandHost.frame = room }
+        bandOverlayActive = room != nil
+        let perfOn = PerfOverlaySettings.shared.enabled, call = DiscordOverlaySettings.shared.enabled && !DiscordSession.shared.callMembers.isEmpty
+        bandHost.isHidden = !(bandOverlayActive && lastState == .running && (perfOn || call))
+    }
     private var overlayConstraints: [NSLayoutConstraint] = []
     private var fenceMode = Int(EngineOptions.value("fence-chain")) ?? 1
     private lazy var menuHost: UIView = {
@@ -290,15 +223,40 @@ final class GameHUDView: UIView {
         v.backgroundColor = .clear; v.isUserInteractionEnabled = false; v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }()
+    /// The Discord message banner. Unlike the other overlays it takes touches (tap to answer, swipe up to send away), but only while a banner shows and only inside its card.
+    private lazy var bannerHost: UIView = {
+        let v = UIHostingConfiguration { DiscordBannerView() }.margins(.all, 0).makeContentView()
+        v.backgroundColor = .clear; v.isUserInteractionEnabled = false; v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+    private var bannerTop: NSLayoutConstraint?
+    private var bannerWatch: [AnyCancellable] = []
+
+    /// Banners are for a running game with its menu closed (the menu shows the conversations itself).
+    private func updateBannerGate() { DiscordNotifier.shared.gameShowing = lastState == .running && !menuOpen }
+
+    private func openDiscordConversation(_ conversation: DiscordConversation) {
+        menuModel.tab = .discord
+        openMenu()
+    }
+
     private lazy var perfHost: UIView = {
         let v = UIHostingConfiguration { PerfOverlayView(settings: PerfOverlaySettings.shared, model: self.perfModel) }.margins(.all, 0).makeContentView()
         v.backgroundColor = .clear; v.isHidden = true; v.isUserInteractionEnabled = false; v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }()
 
+    /// The Discord overlay (Discord branch): who is in the call and who is talking. Never takes touches.
+    private lazy var discordHost: UIView = {
+        let v = UIHostingConfiguration { DiscordOverlayView(settings: DiscordOverlaySettings.shared, discord: DiscordSession.shared) }.margins(.all, 0).makeContentView()
+        v.backgroundColor = .clear; v.isHidden = true; v.isUserInteractionEnabled = false; v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+    private var discordWatch: [AnyCancellable] = []
+    private var discordConstraints: [NSLayoutConstraint] = []
+
     private let message = UILabel()
     private let bar = UIStackView()
-    private let controls = PassthroughView()
     /// A bind set's touch layout (BindSets.swift): when one is in use it replaces the built-in controls below.
     private let customControls = CustomControlsView()
     private var customLayout: TouchLayout?
@@ -307,36 +265,31 @@ final class GameHUDView: UIView {
     let padPointer = PadPointerView()
     private let editButton = UIButton(type: .system)      // the pencil, always on screen while a game runs
     private let keyboardButton = UIButton(type: .system)  // opens the keyboard without going through the menu
+    private let talkButton = UIButton(type: .system)      // Discord push to talk: the microphone sends while it is held (only in a call with push to talk on)
+    private var talkWatch: AnyCancellable?
     private var topColumn: UIStackView?
     private var wantsEditAfterCreate = false
     /// The in-game editor (the menu): open the full bind editor over the game, a new set was wanted from a starting layout, and a layout changed on screen.
     var onEditBinds: (() -> Void)?
+    /// The in-game menu's quick layout switch: a set of the game (nil: its default controls), and "+ New" to add a layout from a starter.
+    var onChooseLayout: ((UUID?) -> Void)?
+    var onPickStarter: (() -> Void)?
+    func setLayoutChoices(_ choices: [LayoutChoice]) { if menuModel.layoutChoices != choices { menuModel.layoutChoices = choices } }
     var onCreateLayout: ((TouchLayout) -> Void)? { didSet { _ = oldValue } }
     var onLayoutChanged: ((TouchLayout) -> Void)? { didSet { customControls.onChange = onLayoutChanged } }
     /// The look button of a custom layout flips this; the layout's own "Look" setting (the editor's Look on/off) is the starting point and is never changed by it.
     private var customLookFlipped = false
     private var customLook: Bool { customLayout.map { $0.look != customLookFlipped } ?? false }
-    private let fpControls = PassthroughView()          // the first-person layout
-    private let stick = MovementStickView()
-    private let fpStick = MovementStickView(side: 120)
-    private var fpHolds: [MouseHoldButton] = []
-    private var fpKeys: [KeyButton] = []
-    private(set) var layout: ControlLayout = .standard
-    /// First person: false = drag on the screen looks around; true = the screen behaves as a normal mouse (menus).
-    private(set) var cursorMode = false
     /// Look speed (points -> mouse counts) and the callback the menu buttons use to change it.
-    var lookSensitivity: CGFloat = 2.4 { didSet { menuModel.lookSpeed = Double(lookSensitivity); menuModel.showLookSpeed = layout == .firstPerson || customLook } }
+    var lookSensitivity: CGFloat = 2.4 { didSet { menuModel.lookSpeed = Double(lookSensitivity); menuModel.showLookSpeed = customLook } }
     var onAdjustLook: (Double) -> Void = { _ in }
     /// Touches on the game should turn into mouse LOOK movement instead of clicks.
-    var lookActive: Bool { (layout == .firstPerson && !cursorMode) || customLook }
-    private let cursorToggle = KeyButton("Look", .tap(0), side: 46)
-    private let panel = UIStackView()          // the on-demand "More" keys
-    private let quick = UIStackView()          // the always-visible E / F / Tab / Esc
-    private var latches: [KeyButton] = []
+    var lookActive: Bool { customLook }
     private var controlsOn = true
     private var menuOpen = false {
         didSet {
             guard menuOpen != oldValue else { return }
+            updateBannerGate()
             if menuOpen {
                 refreshMenuModel()
                 menuHost.isHidden = false
@@ -356,9 +309,6 @@ final class GameHUDView: UIView {
             }
         }
     }
-    private var moreOpen = false { didSet { panel.isHidden = !moreOpen; moreButton.backgroundColor = moreOpen ? UIColor.systemBlue.withAlphaComponent(0.85) : UIColor(white: 0, alpha: 0.55) } }
-    private let moreButton = KeyButton("•••", .tap(0), side: 46)
-    private let mouse = KeyButton("Right mode", .tap(0))
     private let back = GameHUDView.barButton("Back to library")
 
     private static func barButton(_ title: String) -> UIButton {
@@ -377,8 +327,9 @@ final class GameHUDView: UIView {
         autoresizingMask = [.flexibleWidth, .flexibleHeight]
         layer.zPosition = 10_000        // draws above the game's own view even before the window's order is corrected
         addSubview(padPointer)
-        buildTopBar(); buildControls(); buildFirstPerson(); buildCustomControls()
+        buildTopBar(); buildControls(); buildCustomControls()
         NotificationCenter.default.addObserver(forName: PowerManager.didChange, object: nil, queue: .main) { [weak self] _ in self?.refreshPower() }
+        NotificationCenter.default.addObserver(forName: TouchHandedness.changed, object: nil, queue: .main) { [weak self] _ in self?.applyOverlayPlacements() }
         // The controller's menu chord (PadChord.swift) opens and closes the menu; the pad is then the menu's, not the game's.
         NotificationCenter.default.addObserver(forName: .padMenuChord, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -418,7 +369,16 @@ final class GameHUDView: UIView {
         keyboardButton.accessibilityLabel = "Keyboard"; keyboardButton.isHidden = true
         keyboardButton.addAction(UIAction { [weak self] _ in self?.menuOpen = false; self?.onKeyboard?() }, for: .touchUpInside)
         keyboardButton.addAction(UIAction { [weak self] _ in self?.refreshHandle(pulse: false) }, for: .touchDown)
-        [editButton, keyboardButton].forEach(bar.addArrangedSubview)
+        talkButton.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)), for: .normal)
+        talkButton.tintColor = .white; talkButton.backgroundColor = UIColor(white: 0, alpha: 0.55); talkButton.layer.cornerRadius = 8
+        talkButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+        talkButton.accessibilityLabel = "Hold to talk"; talkButton.isHidden = true
+        talkButton.addAction(UIAction { [weak self] _ in self?.talkButton.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.85); DiscordSession.shared.setTalking(true) }, for: .touchDown)
+        let letGo = UIAction { [weak self] _ in self?.talkButton.backgroundColor = UIColor(white: 0, alpha: 0.55); DiscordSession.shared.setTalking(false) }
+        talkButton.addAction(letGo, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        [editButton, keyboardButton, talkButton].forEach(bar.addArrangedSubview)
+        // The button follows the call and the setting.
+        talkWatch = DiscordSession.shared.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.refreshTalkButton() } }
         bar.axis = .horizontal; bar.spacing = 6; bar.alignment = .top
 
         let column = UIStackView(arrangedSubviews: [message, bar, back]); topColumn = column
@@ -431,11 +391,6 @@ final class GameHUDView: UIView {
     }
 
     private func buildControls() {
-        controls.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(controls)
-        NSLayoutConstraint.activate([controls.leadingAnchor.constraint(equalTo: leadingAnchor), controls.trailingAnchor.constraint(equalTo: trailingAnchor),
-                                     controls.topAnchor.constraint(equalTo: topAnchor), controls.bottomAnchor.constraint(equalTo: bottomAnchor)])
-
         blenderNav.translatesAutoresizingMaskIntoConstraints = false; blenderNav.isHidden = true
         addSubview(blenderNav)       // on the HUD itself: it stays whichever of the touch layouts is in use
         NSLayoutConstraint.activate([blenderNav.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
@@ -444,87 +399,12 @@ final class GameHUDView: UIView {
         virtualPad.translatesAutoresizingMaskIntoConstraints = false; virtualPad.isHidden = true
         let defaults = UserDefaults.standard
         virtualPad.scale = CGFloat(defaults.object(forKey: Self.padScaleKey) as? Double ?? 1); virtualPad.restingAlpha = CGFloat(defaults.object(forKey: Self.padAlphaKey) as? Double ?? 0.55)
+        virtualPad.wide = UIDevice.current.userInterfaceIdiom == .pad
         virtualPad.onChange = { [weak self] in self?.padMixer.set($0, for: "pad"); self?.publishPad() }
         customControls.onPad = { [weak self] in self?.padMixer.set($0, for: "custom"); self?.publishPad() }
         addSubview(virtualPad)
         NSLayoutConstraint.activate([virtualPad.leadingAnchor.constraint(equalTo: leadingAnchor), virtualPad.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      virtualPad.topAnchor.constraint(equalTo: topAnchor), virtualPad.bottomAnchor.constraint(equalTo: bottomAnchor)])
-
-        stick.translatesAutoresizingMaskIntoConstraints = false
-        controls.addSubview(stick)
-        NSLayoutConstraint.activate([stick.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 20),
-                                     stick.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -56)])
-
-        func row(_ buttons: [UIButton]) -> UIStackView { let s = UIStackView(arrangedSubviews: buttons); s.axis = .horizontal; s.spacing = 5; s.distribution = .fillEqually; return s }
-        func letters(_ chars: String) -> [UIButton] { chars.map { KeyButton(String($0), .tap(VK.letter($0))) } }
-
-        // Always visible: E (inventory), F, Tab, Esc, and the button that opens the rest.
-        func quickKey(_ title: String, _ vk: Int32) -> UIButton { KeyButton(title, .tap(vk), side: 46) }
-        let r1 = row([moreButton, quickKey("Tab", VK.tab), quickKey("Esc", VK.esc)])
-        let r2 = row([quickKey("F", VK.letter("F")), quickKey("E", VK.letter("E"))])
-        r1.distribution = .fill; r2.distribution = .fill
-        [r1, r2].forEach(quick.addArrangedSubview)
-        quick.axis = .vertical; quick.spacing = 6; quick.alignment = .trailing
-        moreButton.addAction(UIAction { [weak self] _ in guard let self else { return }; self.moreOpen.toggle() }, for: .touchUpInside)
-
-        // On demand: everything else. (No number keys: the quickbar is tapped on screen.)
-        let shift = KeyButton("Shift", .latch(VK.shift)), ctrl = KeyButton("Ctrl", .latch(VK.ctrl)), alt = KeyButton("Alt", .latch(VK.alt))
-        latches = [shift, ctrl, alt]
-        mouse.addAction(UIAction { [weak self] _ in self?.toggleMouse() }, for: .touchUpInside)
-        let zoomIn = KeyButton("Zoom +", .tap(0)), zoomOut = KeyButton("Zoom -", .tap(0))
-        zoomIn.addAction(UIAction { [weak self] _ in self?.wheel(120) }, for: .touchUpInside)
-        zoomOut.addAction(UIAction { [weak self] _ in self?.wheel(-120) }, for: .touchUpInside)
-        let rows: [UIStackView] = [
-            row([mouse, zoomIn, zoomOut]),
-            row(letters("QRTMG")),
-            row([KeyButton("Space", .hold(VK.space)), shift, ctrl, alt, KeyButton("Enter", .tap(VK.enter)), KeyButton("Del", .tap(VK.backspace))]),
-        ]
-        rows.forEach(panel.addArrangedSubview)
-        panel.axis = .vertical; panel.spacing = 5; panel.alignment = .fill; panel.isHidden = true
-        panel.translatesAutoresizingMaskIntoConstraints = false
-        quick.translatesAutoresizingMaskIntoConstraints = false
-        controls.addSubview(panel); controls.addSubview(quick)
-        NSLayoutConstraint.activate([quick.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -16),
-                                     quick.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -14),
-                                     panel.trailingAnchor.constraint(equalTo: quick.trailingAnchor),
-                                     panel.bottomAnchor.constraint(equalTo: quick.topAnchor, constant: -8),
-                                     panel.widthAnchor.constraint(lessThanOrEqualToConstant: 400)])
-    }
-
-    private func buildFirstPerson() {
-        fpControls.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(fpControls)
-        NSLayoutConstraint.activate([fpControls.leadingAnchor.constraint(equalTo: leadingAnchor), fpControls.trailingAnchor.constraint(equalTo: trailingAnchor),
-                                     fpControls.topAnchor.constraint(equalTo: topAnchor), fpControls.bottomAnchor.constraint(equalTo: bottomAnchor)])
-        fpStick.translatesAutoresizingMaskIntoConstraints = false
-        fpControls.addSubview(fpStick)
-        let safe = safeAreaLayoutGuide
-        NSLayoutConstraint.activate([fpStick.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 28), fpStick.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -40)])
-
-        func key(_ title: String, _ behavior: KeyButton.Behavior, _ side: CGFloat = 54) -> KeyButton {
-            let b = KeyButton(title, behavior, side: side); fpKeys.append(b); return b
-        }
-        let fire = MouseHoldButton("FIRE", right: false, side: 76), alt = MouseHoldButton("ALT", right: true, side: 76)
-        fpHolds = [fire, alt]
-        let jump = key("Jump", .hold(VK.space), 60), crouch = key("Duck", .hold(VK.ctrl)), use = key("Use", .tap(VK.letter("E"))), sprint = key("Run", .hold(VK.shift))
-        let reload = key("R", .tap(VK.letter("R")), 46), esc = key("Esc", .tap(VK.esc), 46), tab = key("Tab", .tap(VK.tab), 46)
-
-        // Right thumb: fire / alt-fire on the bottom row, jump and use above them.
-        let bottom = UIStackView(arrangedSubviews: [alt, fire]); bottom.spacing = 14; bottom.alignment = .center
-        let upper = UIStackView(arrangedSubviews: [use, jump]); upper.spacing = 14; upper.alignment = .center
-        let thumb = UIStackView(arrangedSubviews: [upper, bottom]); thumb.axis = .vertical; thumb.alignment = .trailing; thumb.spacing = 14
-        // Beside the stick: duck and run.
-        let legs = UIStackView(arrangedSubviews: [sprint, crouch]); legs.axis = .vertical; legs.spacing = 12; legs.alignment = .center
-        // Top right: the rarely needed ones.
-        cursorToggle.addAction(UIAction { [weak self] _ in self?.toggleCursorMode() }, for: .touchUpInside)
-        let top = UIStackView(arrangedSubviews: [reload, tab, esc, cursorToggle]); top.spacing = 10; top.alignment = .center
-        for v in [thumb, legs, top] { v.translatesAutoresizingMaskIntoConstraints = false; fpControls.addSubview(v) }
-        NSLayoutConstraint.activate([
-            thumb.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -22), thumb.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -22),
-            legs.leadingAnchor.constraint(equalTo: fpStick.trailingAnchor, constant: 14), legs.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -40),
-            top.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16), top.topAnchor.constraint(equalTo: safe.topAnchor, constant: 8),
-        ])
-        fpControls.isHidden = true
     }
 
     private func buildCustomControls() {
@@ -542,14 +422,14 @@ final class GameHUDView: UIView {
         layoutEditor.onDone = { [weak self] in self?.endLayoutEditing() }
     }
 
-    /// The pencil: edits the on-screen controls right on the game. With no custom layout yet, one is made from the layout in use (mouse and keys or first person) and used,
+    /// The pencil: edits the on-screen controls right on the game. With no layout of the game's own yet, one is made from Universal and used (a game with the on-screen game controller on has none),
     /// then editing starts at once; nothing else is asked.
     func beginLayoutEditing() {
         menuOpen = false
         guard lastState == .running else { return }
         if customLayout == nil {
             wantsEditAfterCreate = true
-            onCreateLayout?(layout == .firstPerson ? .firstPerson : .mouseAndKeys)
+            onCreateLayout?(ShippedLayouts.universal.layout)
             return
         }
         startEditing()
@@ -559,7 +439,7 @@ final class GameHUDView: UIView {
         controlsOn = true
         refreshControlVisibility()
         topColumn?.isHidden = true                 // the editor has its own bar; the game's top-left stack would sit under it
-        editButton.isHidden = true; keyboardButton.isHidden = true
+        editButton.isHidden = true; keyboardButton.isHidden = true; talkButton.isHidden = true
         layoutEditor.setActive(true)
     }
 
@@ -570,6 +450,13 @@ final class GameHUDView: UIView {
         refreshHandle(pulse: false)
     }
 
+    /// Whether this layout is the one every game starts with: the same controls in the same places (the ids of the controls do not count).
+    static func isMyDefault(_ layout: TouchLayout?) -> Bool {
+        guard let layout, let d = DefaultControls.current.touchLayout else { return false }
+        func shape(_ l: TouchLayout) -> [String] { l.controls.map { "\($0.action)|\($0.label)|\($0.mode)|\($0.x)|\($0.y)|\($0.size)" } }
+        return shape(layout) == shape(d) && layout.look == d.look
+    }
+
     /// The touch layout of the bind set in use (nil = the game's normal Controls choice).
     func setCustomLayout(_ new: TouchLayout?) {
         guard new != customLayout else { return }
@@ -578,31 +465,15 @@ final class GameHUDView: UIView {
         customControls.apply(new)
         publishPad()          // a layout with pad controls makes the game see a controller; one without takes it away again
         menuModel.customLayoutInUse = new != nil          // the built-in layouts are not in use while a set's layout is
-        if new == nil { cursorMode = false }
+        menuModel.layoutIsMyDefault = Self.isMyDefault(new)
         refreshControlVisibility()
         if wantsEditAfterCreate, new != nil { wantsEditAfterCreate = false; startEditing() }
         if new == nil, layoutEditor.isHidden == false { endLayoutEditing() }
     }
 
-    private func toggleCursorMode() {
-        cursorMode.toggle()
-        cursorToggle.setTitle(cursorMode ? "Menu" : "Look", for: .normal)
-        cursorToggle.backgroundColor = cursorMode ? UIColor.systemBlue.withAlphaComponent(0.85) : UIColor(white: 0, alpha: 0.55)
-    }
-
-    func setLayout(_ l: ControlLayout) {
-        guard l != layout else { return }
-        layout = l
-        menuModel.layout = l
-        menuModel.showLookSpeed = l == .firstPerson || customLook
-        if l != .firstPerson { cursorMode = false; cursorToggle.setTitle("Look", for: .normal); cursorToggle.backgroundColor = UIColor(white: 0, alpha: 0.55) }
-        refreshControlVisibility()
-    }
-
     /// Floating sticks (FloatingStick) for every stick the HUD owns.
     private func applyFloating() {
         let on = FloatingStick.enabled
-        stick.floating = on; fpStick.floating = on
         customControls.floatingSticks = on
         virtualPad.floating = on
     }
@@ -615,13 +486,13 @@ final class GameHUDView: UIView {
         let padShown = on && virtualPadOn && layoutEditor.isHidden
         virtualPad.isHidden = !padShown
         if !padShown { virtualPad.releaseAll() }
-        controls.isHidden = !(on && layout == .standard && customLayout == nil && !virtualPadOn)
-        fpControls.isHidden = !(on && layout == .firstPerson && customLayout == nil && !virtualPadOn)
         customControls.isHidden = !(on && customLayout != nil && !virtualPadOn)
         if !(on && customLayout != nil && !virtualPadOn) { customControls.release() }
         editButton.isHidden = !(lastState == .running) || !layoutEditor.isHidden
         keyboardButton.isHidden = editButton.isHidden
-        if !on || layout != .firstPerson || customLayout != nil { fpStick.release(); fpHolds.forEach { $0.release() } }
+        refreshTalkButton()
+        noteBandControls()
+        applyOverlayPlacements()
     }
 
     // MARK: Behaviour
@@ -629,14 +500,13 @@ final class GameHUDView: UIView {
     private func showHelp() {
         let alert = UIAlertController(title: "Touch controls", message: """
             Tap: left click
-            Drag: left button held (belts, selections)
-            Press and hold: right button held (mine, remove)
+            Drag: moves the mouse (or looks around, with Look on)
             Two-finger tap: right click
             Pinch: zoom
             Stick: W A S D
-            E / F / Tab / Esc: always on screen; ••• opens more keys
-            Right mode (under •••): tap and drag use the right button
-            Shift / Ctrl / Alt: tap once to hold, again to release
+            Look / Mouse button: switches what dragging does
+            Keys button: the full keyboard
+            Shift / Ctrl / Alt: tap once to hold, again to release (a layout can latch them)
             """, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         var top = window?.rootViewController
@@ -646,20 +516,19 @@ final class GameHUDView: UIView {
 
     private func toggleControls() { controlsOn.toggle(); refreshControlVisibility(); menuModel.controlsShown = controlsOn }
 
-    private func toggleMouse() {
-        rightMode.toggle()
-        mouse.setTitle(rightMode ? "Right mode: ON" : "Right mode", for: .normal)
-        mouse.backgroundColor = rightMode ? UIColor.systemOrange.withAlphaComponent(0.85) : UIColor(white: 0, alpha: 0.55)
+    private func refreshTalkButton() {
+        let show = !editButton.isHidden && DiscordSession.shared.talkButtonShowing
+        if talkButton.isHidden == show { talkButton.isHidden = !show }
+        if !show { DiscordSession.shared.setTalking(false); talkButton.backgroundColor = UIColor(white: 0, alpha: 0.55) }
     }
-
-    private func wheel(_ delta: Int32) { winios_pointer(cursor.x, cursor.y, 0x800, UInt32(bitPattern: delta)) }
 
     /// Only the controls are interactive; everything else falls through to the game surface.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let v = super.hitTest(point, with: event) else { return nil }
         if !layoutEditor.isHidden, v.isDescendant(of: layoutEditor) { return v }
         if !menuHost.isHidden, v.isDescendant(of: menuHost) { return v }          // the open menu takes every touch, so none reach the game
-        return (v is UIControl || v is TakesHUDTouches || v is MovementStickView || v is CustomStick || v is CustomControlsView || v is VirtualPadView) ? v : nil
+        if bannerHost.isUserInteractionEnabled, v.isDescendant(of: bannerHost) { return v }   // a Discord banner (tap, Join, Decline) while one shows; not listed here, every touch on it fell through to the game
+        return (v is UIControl || v is TakesHUDTouches || v is CustomStick || v is CustomControlsView || v is VirtualPadView) ? v : nil
     }
 
     // MARK: Menu and performance overlay
@@ -671,14 +540,19 @@ final class GameHUDView: UIView {
         m.setPower = { PowerManager.shared.setForSession($0) }
         m.setPadMode = { [weak self] mode in AppModel.shared.session.setPadMode(mode); self?.refreshMenuModel() }
         m.setVirtualPad = { [weak self] on in AppModel.shared.session.setVirtualPad(on); self?.virtualPadOn = on; self?.refreshMenuModel() }
-        // A style is a controller: its look and its own layout come together (the layout can be changed on its own afterwards).
+        // A style is a controller: the names and colours on the buttons (the controls are in the same places for every one).
         m.setVirtualPadStyle = { [weak self] style in
             AppModel.shared.session.setVirtualPadStyle(style)
-            AppModel.shared.session.setVirtualPadLayout(style.nativePreset)
-            self?.virtualPad.style = style; self?.virtualPad.preset = style.nativePreset
+            self?.virtualPad.style = style
             self?.refreshMenuModel()
         }
-        m.setVirtualPadLayout = { [weak self] preset in AppModel.shared.session.setVirtualPadLayout(preset); self?.virtualPad.preset = preset; self?.refreshMenuModel() }
+        // An arrangement is where the controls are: the same for every controller type.
+        m.setVirtualPadLayout = { [weak self] preset in
+            AppModel.shared.session.setVirtualPadLayout(preset)
+            self?.virtualPad.preset = preset
+            self?.refreshMenuModel()
+            self?.refreshControlVisibility()
+        }
         m.adjustVirtualPad = { [weak self] size, opacity in
             guard let self else { return }
             let scale = max(0.6, min(1.4, Double(self.virtualPad.scale) + size)), alpha = max(0.2, min(1, Double(self.virtualPad.restingAlpha) + opacity))
@@ -728,7 +602,6 @@ final class GameHUDView: UIView {
             LogStore.shared.log("[gpu-sync] mode F\(mode) from the in-game menu")
             self?.refreshMenuModel()
         }
-        m.setLayout = { [weak self] l in guard let self, l != self.layout else { return }; self.onSwitchLayout?(l) }
         m.setControlsShown = { [weak self] on in guard let self, on != self.controlsOn else { return }; self.toggleControls() }
         m.setPointerMode = { [weak self] mode in
             UserDefaults.standard.set(mode.rawValue, forKey: PointerMode.key)
@@ -756,7 +629,22 @@ final class GameHUDView: UIView {
         m.openKeyboard = { [weak self] in self?.menuOpen = false; self?.onKeyboard?() }
         m.openFullKeyboard = { [weak self] in self?.menuOpen = false; self?.touchKeyboard.toggle() }
         m.openBinds = { [weak self] in self?.menuOpen = false; self?.onEditBinds?() }
+        m.chooseLayout = { [weak self] id in self?.onChooseLayout?(id) }
+        m.pickStarterLayout = { [weak self] in self?.menuOpen = false; self?.onPickStarter?() }
+        m.setLeftHanded = { [weak self] on in
+            TouchHandedness.set(on)
+            self?.menuModel.leftHanded = on
+            LogStore.shared.log("[controls] left-handed \(on ? "on" : "off") (from the in-game menu)")
+        }
         m.editControls = { [weak self] in self?.beginLayoutEditing() }
+        m.useAsDefault = { [weak self] in
+            guard let self, let layout = self.customLayout else { return }
+            var d = DefaultControls.current
+            d.use(custom: layout)
+            DefaultControls.current = d
+            LogStore.shared.log("[controls] the layout on screen is now the default for every game (\(layout.controls.count) controls)")
+            self.menuModel.layoutIsMyDefault = true
+        }
         m.report = { [weak self] in self?.menuOpen = false; self?.onReport?() }
         m.help = { [weak self] in self?.menuOpen = false; self?.showHelp() }
         m.captureFrame = { [weak self] in
@@ -793,9 +681,22 @@ final class GameHUDView: UIView {
                                      touchKeyboard.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -8),
                                      touchKeyboard.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4)])
         customControls.onToggleKeyboard = { [weak self] in self?.touchKeyboard.toggle() }
-        addSubview(perfHost); addSubview(menuHost)
+        addSubview(perfHost); addSubview(discordHost); addSubview(bandHost); addSubview(menuHost)
         NSLayoutConstraint.activate([menuHost.leadingAnchor.constraint(equalTo: leadingAnchor), menuHost.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      menuHost.topAnchor.constraint(equalTo: topAnchor), menuHost.bottomAnchor.constraint(equalTo: bottomAnchor)])
+        addSubview(bannerHost)
+        let top = bannerHost.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8)
+        let width = bannerHost.widthAnchor.constraint(equalToConstant: 440); width.priority = .defaultHigh
+        bannerTop = top
+        NSLayoutConstraint.activate([top, width, bannerHost.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor), bannerHost.heightAnchor.constraint(equalToConstant: 96),
+                                     bannerHost.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
+                                     bannerHost.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12)])
+        DiscordNotifier.shared.onOpen = { [weak self] conversation in self?.openDiscordConversation(conversation) }
+        bannerWatch = [DiscordNotifier.shared.objectWillChange.sink { [weak self] _ in
+                           DispatchQueue.main.async { self?.bannerHost.isUserInteractionEnabled = DiscordNotifier.shared.bannerTouchable }
+                       },
+                       // Below an achievement pop-up when both show at once.
+                       AchievementToastCenter.shared.$current.sink { [weak self] toast in self?.bannerTop?.constant = toast == nil ? 8 : 92 }]
         addSubview(toastHost)
         NSLayoutConstraint.activate([toastHost.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor), toastHost.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor),
                                      toastHost.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor), toastHost.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor)])
@@ -804,6 +705,8 @@ final class GameHUDView: UIView {
         overlayWatch = PerfOverlaySettings.shared.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.applyOverlaySettings() }
         }
+        discordWatch = [DiscordOverlaySettings.shared.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.applyDiscordOverlay() } },
+                        DiscordSession.shared.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.applyDiscordOverlay() } }]
     }
 
     // MARK: Opening the menu
@@ -904,8 +807,8 @@ final class GameHUDView: UIView {
         let p = PowerManager.shared
         menuModel.padMode = AppModel.shared.session.game?.engine?.controllerMode
         menuModel.virtualPad = virtualPadOn
-        menuModel.virtualPadLayout = virtualPad.preset
         menuModel.virtualPadStyle = virtualPad.style
+        menuModel.virtualPadLayout = virtualPad.preset
         menuModel.virtualPadScale = Double(virtualPad.scale); menuModel.virtualPadOpacity = Double(virtualPad.restingAlpha)
         menuModel.padHidReady = PadInput.shared.hidReady
         menuModel.padKindName = ControllerInput.shared.kind == .none ? "" : ControllerInput.shared.kind.displayName
@@ -922,14 +825,15 @@ final class GameHUDView: UIView {
         menuModel.upMethod = up.method.rawValue; menuModel.upSharpness = up.sharpness; menuModel.upLossless = LosslessScaling.shared.usable
         menuModel.upStatus = LiveUpscaling.shared.statusText()
         menuModel.fenceMode = fenceMode
-        menuModel.layout = layout
         menuModel.customLayoutInUse = customLayout != nil
+        menuModel.layoutIsMyDefault = Self.isMyDefault(customLayout)
+        menuModel.leftHanded = TouchHandedness.leftHanded
         menuModel.controlsShown = controlsOn
         menuModel.autoHideSeconds = UserDefaults.standard.integer(forKey: Self.autoHideKey)
         menuModel.floatingSticks = FloatingStick.enabled
         menuModel.pointerMode = PointerMode.current
         menuModel.pointerSpeed = PointerMode.speed
-        menuModel.showLookSpeed = layout == .firstPerson || customLook
+        menuModel.showLookSpeed = customLook
         menuModel.lookSpeed = Double(lookSensitivity)
         menuModel.hasReport = onReport != nil
         menuModel.gameName = gameName
@@ -945,22 +849,31 @@ final class GameHUDView: UIView {
         overlayTallest = tallest
         perfModel.tallest = tallest
     }
-    override func layoutSubviews() { super.layoutSubviews(); updateOverlayRoom() }
+    override func layoutSubviews() {
+        super.layoutSubviews(); updateOverlayRoom(); updateDiscordFrame(); refreshBandOverlay()
+        // The overlays' spots follow the screen's size (the editor's mapping depends on it): work them out again when the room changes.
+        let room = bounds.inset(by: safeAreaInsets).size
+        if room != lastOverlayRoom { lastOverlayRoom = room; applyOverlayPlacements() }
+    }
+    private var lastOverlayRoom = CGSize.zero
 
     /// The overlay's host fills the room on screen (the safe area less a margin, and below the top-left stack when the overlay is in that corner) and the overlay itself
     /// sits in its corner inside it. The host never has to be re-sized when the overlay grows or shrinks, which a host sized to its content did not follow.
     private var overlayCorner: OverlayCorner?
+    private var overlayWasPlaced = false
     private func placeOverlay() {
         let corner = PerfOverlaySettings.shared.corner
-        guard corner != overlayCorner else { return }
-        overlayCorner = corner
+        let placed = PerfOverlaySettings.shared.placement != nil
+        guard corner != overlayCorner || placed != overlayWasPlaced else { return }
+        overlayCorner = corner; overlayWasPlaced = placed
         NSLayoutConstraint.deactivate(overlayConstraints)
         let g = safeAreaLayoutGuide
-        let top: NSLayoutConstraint = corner == .topLeading
+        // A spot the layout chose is a point of the room the controls use (the screen inside its safe area), so the room is exactly that.
+        let top: NSLayoutConstraint = !placed && corner == .topLeading
             ? perfHost.topAnchor.constraint(equalTo: (topColumn ?? self).bottomAnchor, constant: 6)
-            : perfHost.topAnchor.constraint(equalTo: g.topAnchor, constant: 8)
-        overlayConstraints = [perfHost.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 12), perfHost.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -12),
-                              top, perfHost.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -8)]
+            : perfHost.topAnchor.constraint(equalTo: g.topAnchor, constant: placed ? 0 : 8)
+        overlayConstraints = [perfHost.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: placed ? 0 : 12), perfHost.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: placed ? 0 : -12),
+                              top, perfHost.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: placed ? 0 : -8)]
         NSLayoutConstraint.activate(overlayConstraints)
     }
 
@@ -968,9 +881,45 @@ final class GameHUDView: UIView {
     private func applyOverlaySettings() {
         let settings = PerfOverlaySettings.shared
         placeOverlay()
-        perfHost.isHidden = !(settings.enabled && lastState == .running)
+        perfHost.isHidden = bandOverlayActive || !(settings.enabled && lastState == .running)
         Telemetry.detailWanted = settings.wantsDetail && lastState == .running
-        if !perfHost.isHidden { showTelemetry(Telemetry.shared.latest) }
+        InputLagMeter.shared.active = settings.wantsInputLag && lastState == .running
+        if settings.wantsPresentTiming && lastState == .running { PresentTimer.shared.start() } else if PresentTimer.shared.isRunning { PresentTimer.shared.stop() }
+        if settings.enabled && lastState == .running { showTelemetry(Telemetry.shared.latest) }
+        applyDiscordOverlay()
+    }
+
+    /// Where the game's picture is on the screen (window points, set by the session view): the Discord overlay sits inside it, like Discord's own overlay over a game, instead of in a
+    /// corner of the whole screen (in portrait the picture is a band in the middle, with black above and below).
+    var gameArea: CGRect = .zero { didSet { if oldValue != gameArea { updateDiscordFrame() } } }
+
+    /// The Discord overlay shows while a game runs, the overlay is on and a call has people in it.
+    private func applyDiscordOverlay() {
+        let settings = DiscordOverlaySettings.shared
+        if discordConstraints.isEmpty {
+            discordConstraints = [discordHost.leadingAnchor.constraint(equalTo: leadingAnchor), discordHost.trailingAnchor.constraint(equalTo: trailingAnchor),
+                                  discordHost.topAnchor.constraint(equalTo: topAnchor), discordHost.bottomAnchor.constraint(equalTo: bottomAnchor)]
+            NSLayoutConstraint.activate(discordConstraints)
+        }
+        updateDiscordFrame()
+        discordHost.isHidden = bandOverlayActive || !(settings.enabled && lastState == .running && !DiscordSession.shared.callMembers.isEmpty)
+        refreshBandOverlay()
+    }
+
+    /// Fits the overlay's room to the game's picture (inside the safe area, below the top-left buttons when they are in the way).
+    private func updateDiscordFrame() {
+        guard discordConstraints.count == 4, bounds.width > 0 else { return }
+        var rect = (gameArea.isEmpty ? bounds : gameArea.intersection(bounds)).insetBy(dx: 12, dy: 8).intersection(bounds.inset(by: safeAreaInsets))
+        if DiscordOverlaySettings.shared.placement != nil { rect = bounds.inset(by: safeAreaInsets) }          // a spot the layout chose: a point of the room the controls use
+        else if DiscordOverlaySettings.shared.corner == .topLeading, let column = topColumn {
+            let below = column.frame.maxY + 6
+            if column.frame.minY < rect.maxY, below > rect.minY, below < rect.maxY { rect = CGRect(x: rect.minX, y: below, width: rect.width, height: rect.maxY - below) }
+        }
+        guard !rect.isNull, rect.width > 20, rect.height > 20 else { return }
+        discordConstraints[0].constant = rect.minX
+        discordConstraints[1].constant = rect.maxX - bounds.width
+        discordConstraints[2].constant = rect.minY
+        discordConstraints[3].constant = rect.maxY - bounds.height
     }
 
     private func showTelemetry(_ s: TelemetrySample) {
@@ -1021,10 +970,9 @@ final class GameHUDView: UIView {
             touchKeyboard.hide()
             suggestionCard?.removeFromSuperview(); suggestionCard = nil
             Telemetry.shared.stop()
-            stick.release(); fpStick.release(); fpHolds.forEach { $0.release() }; latches.forEach { $0.release() }
         }
         bar.isHidden = !running
-        if !running { menuOpen = false; moreOpen = false; perfModel.reset() }
+        if !running { menuOpen = false; perfModel.reset() }
         refreshControlVisibility()
         applyOverlaySettings()
         refreshHandle(pulse: true)

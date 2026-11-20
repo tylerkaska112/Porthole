@@ -325,5 +325,31 @@ do {
     check(everyRule.allSatisfy { !AutoFix.proposal(for: $0.change).isEmpty }, "ask first: every built-in rule that changes a setting can say what it will do")
 }
 
+do {   // a game that runs directly and needs Steam's client (compat reports #275 Green Hell and #277 Ultimate Marvel vs. Capcom 3, both 1.3.0, both "Run directly", exit code 53)
+    let steamLine = "0024:err:seh:ios_exc_dump_str [exc] ml812   OutputDebugStringA: \"[S_API] SteamAPI_Init(): SteamAPI_IsSteamRunning() did not locate a running instance of Steam..\""
+    let exit53 = "[12:17:08.120] [INFO] [session] the program ended with exit code 53 (0x35)"
+    let both = AutoFix.scan(lines: [steamLine, exit53])
+    var ctx = AutoFix.Context(ending: .init(endedEarly: true), runsDirectly: true)
+    check(AutoFix.decide(both, context: ctx, tried: [])?.id == "needs-steam-client", "steam: both lines, a game set to Run directly that ended early: the rule fits")
+    check(AutoFix.decide(both, context: ctx, tried: [])?.change == .throughSteam, "steam: the change is Through Steam")
+    check(AutoFix.proposal(for: .throughSteam).contains("Steam"), "steam: the proposal says what will be changed")
+    ctx.runsDirectly = false
+    check(AutoFix.matches(both, context: ctx).isEmpty, "steam: a game that already starts through Steam (Crash Bandicoot, #330): no rule")
+    ctx.runsDirectly = true
+    check(AutoFix.matches(AutoFix.scan(lines: [steamLine]), context: ctx).isEmpty, "steam: the Steamworks line alone (15 logs, most of games that play): no rule")
+    check(AutoFix.matches(AutoFix.scan(lines: [exit53]), context: ctx).isEmpty, "steam: the exit code alone: no rule")
+    check(AutoFix.matches(both, context: AutoFix.Context(ending: .init(), runsDirectly: true)).isEmpty, "steam: a run that ended on its own after a long time: no rule")
+    check(AutoFix.decide(both, context: ctx, tried: ["needs-steam-client"]) == nil, "steam: offered once")
+}
+
+do {   // Epic's servers refused the game's own login (compat report #301)
+    let line = "[guest-log] #10 tid=0024 11/13/2026 23:46:14 LogEOS(Warning): Error response received from backend. ServiceName=[OAuth], OperationName=[TokenGrantv2], Url=[<Redacted>], HttpStatus=[400], ErrorCode=[errors.com.epicgames.oauth.corrective_action_required], NumericErrorCode=[18206]"
+    let ev = AutoFix.scan(lines: [line])
+    check(AutoFix.decide(ev, context: AutoFix.Context(ending: .init(stoppedByPerson: true)), tried: [])?.id == "epic-account-action", "epic: the refused login, a game the person stopped: the rule fits")
+    check(AutoFix.decide(ev, context: AutoFix.Context(ending: .init(stoppedByPerson: true)), tried: [])?.change == .advice, "epic: it only explains, nothing is changed")
+    check(AutoFix.matches(ev, context: AutoFix.Context(ending: .init())).isEmpty, "epic: a run that ended normally: no rule")
+    check(AutoFix.matches(AutoFix.scan(lines: ["[guest-log] #5 LogEOS(Warning): Error response received from backend. ServiceName=[EOSAuth], HttpStatus=[404], ErrorCode=[errors.com.epicgames.eos.auth.user_not_found]"]), context: AutoFix.Context(ending: .init(endedEarly: true))).isEmpty, "epic: Horizon Chase's user_not_found (#308, a game that plays) is not this")
+}
+
 print(failed == 0 ? "\nALL PASSED" : "\n\(failed) FAILED")
 exit(failed == 0 ? 0 : 1)

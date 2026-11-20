@@ -21,7 +21,7 @@ struct SettingsScreen: View {
         ("Connection", [.jit]),
         ("App", [.appearance, .updates, .signing, .advanced]),
         ("Reports and fixes", [.reports, .fixing]),
-        ("Help", [.guides, .about, .report]),
+        ("Help", [.guides, .community, .about, .report]),
     ]
     static let pages: [SettingsPage] = sections.flatMap(\.pages)
 
@@ -136,7 +136,8 @@ struct SettingsScreen: View {
 
     private func detail(wide: Bool, page: SettingsPage? = nil) -> some View {
         let shown = page ?? selection
-        return FocusScroll {
+        // The page and the pages opened inside it share this scroll view; each level keeps its own position (a page opened inside another starts at its top, going back restores the one you left).
+        return FocusScroll(scrollScope: shown?.rawValue, scrollLevel: "\(shown?.rawValue ?? "")|\(sub.map { "\($0)" } ?? "")") {
             Group {
                 if let shown { SettingsPageView(page: shown).id(shown) }
                 else { Text("Choose a page").foregroundStyle(Theme.textDim).frame(maxWidth: .infinity).padding(.top, 80) }
@@ -173,7 +174,8 @@ extension SettingsPage {
         case .advanced: "Advanced"
         case .reports: "Compatibility reports"
         case .fixing: "Fixing problems"
-        case .guides: "Setup guide and tips"
+        case .guides: "Setup, tutorials and tips"
+        case .community: "Community and links"
         case .about: "About and credits"
         case .report: "Report a problem"
         }
@@ -195,6 +197,7 @@ extension SettingsPage {
         case .reports: "checkmark.seal.fill"
         case .fixing: "wand.and.stars"
         case .guides: "lightbulb.fill"
+        case .community: "person.3.fill"
         case .about: "info.circle.fill"
         case .report: "exclamationmark.bubble.fill"
         }
@@ -216,6 +219,7 @@ extension SettingsPage {
         case .reports: .purple
         case .fixing: .yellow
         case .guides: .cyan
+        case .community: .pink
         case .about: .gray
         case .report: .red
         }
@@ -242,7 +246,8 @@ struct SettingsPageView: View {
         case .advanced: AdvancedPage()
         case .reports: ReportsSettingsPage(mode: .reports)
         case .fixing: ReportsSettingsPage(mode: .fixing)
-        case .guides: CombinedPage(title: "Setup guide and tips", symbol: "lightbulb.fill") { SetupPage(); GuidesPage() }
+        case .guides: CombinedPage(title: "Setup, tutorials and tips", symbol: "lightbulb.fill") { SetupPage(); GuidesPage() }
+        case .community: CommunityPage()
         case .about: AboutPage()
         case .report: ReportProblemPage()
         }

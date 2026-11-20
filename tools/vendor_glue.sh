@@ -21,7 +21,7 @@ done
 ( cd "$DST" && shasum -a 256 $FILES > SHA256SUMS )
 # Our own numbered patches to the vendored files (SHA256SUMS above are the pristine upstream hashes). Applied from the repo root.
 # 0003 (pool hole) is upstream since #147, so it is no longer applied; 0016 (give back the executable window) is ported to the newer StikJITHelper.
-for patch_file in "$HERE"/patches/0011-*.patch "$HERE"/patches/0016-*.patch "$HERE"/patches/0019-*.patch "$HERE"/patches/0085-*.patch "$HERE"/patches/0099-*.patch "$HERE"/patches/0100-*.patch "$HERE"/patches/0101-*.patch "$HERE"/patches/0107-*.patch "$HERE"/patches/0150-*.patch "$HERE"/patches/0171-*.patch; do
+for patch_file in "$HERE"/patches/0011-*.patch "$HERE"/patches/0016-*.patch "$HERE"/patches/0019-*.patch "$HERE"/patches/0085-*.patch "$HERE"/patches/0099-*.patch "$HERE"/patches/0100-*.patch "$HERE"/patches/0101-*.patch "$HERE"/patches/0103-*.patch "$HERE"/patches/0107-*.patch "$HERE"/patches/0150-*.patch "$HERE"/patches/0171-*.patch; do
   [ -f "$patch_file" ] && ( cd "$HERE" && patch -p1 -s < "$patch_file" ) && echo "applied $(basename "$patch_file")"
 done
 # Porthole's Telemetry reads LogStore.shared.logFileURL; upstream made it private (the 0.50.233 re-vendor found out).

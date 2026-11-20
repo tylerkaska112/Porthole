@@ -8,16 +8,19 @@ enum GuideAction: Hashable {
     case addGame
     case openStore(GameStore)
     case openSettings(SettingsPage)
+    /// An interactive tutorial (see TutorialLibrary), by its id.
+    case tutorial(String)
 
     var title: String {
         switch self {
         case .addGame: "Add a game now"
         case .openStore(let store): "Open \(store.title)"
         case .openSettings: "Open these settings"
+        case .tutorial: "Walk me through it"
         }
     }
     var symbol: String {
-        switch self { case .addGame: "plus.circle.fill"; case .openStore: "arrow.up.forward.app.fill"; case .openSettings: "gearshape.fill" }
+        switch self { case .addGame: "plus.circle.fill"; case .openStore: "arrow.up.forward.app.fill"; case .openSettings: "gearshape.fill"; case .tutorial: "hand.point.up.left.fill" }
     }
 }
 
@@ -46,7 +49,7 @@ struct Guide: Identifiable, Hashable {
 enum GuideCatalog {
     static let home = Guide(id: "home", title: "Home", symbol: "house.fill", steps: [
         GuideStep(symbol: "gamecontroller.fill", title: "Your games",
-                  text: "Everything you can play is on Home. The big card is the game you played last; press Play to start it. Tap any other card to open that game's page.", art: .home),
+                  text: "Everything you can play is on Home. The game in the first slot of the row is the chosen one: scroll the row and the picture and title follow. Press Play to start it. Tap another card to bring it to the first slot; tap the chosen card, or Details, to open that game's page.", art: .home),
         GuideStep(symbol: "plus.circle.fill", title: "Add a game",
                   text: "Add a game brings one in from a store you are signed in to (Steam, Epic Games, GOG or itch.io), or from a Windows program or installer in the Files app.",
                   art: .addGame, action: .addGame),
@@ -125,7 +128,14 @@ enum GuideCatalog {
                   text: "Tap to click. Drag to hold the left button. Press and hold, or tap with two fingers, for the right button. Pinch to scroll."),
     ])
 
-    static let all: [Guide] = [home, stores, reports, settings, gamePage, addGame, gameMenu, inGame]
+    static let social = Guide(id: "social", title: "Social", symbol: "bubble.left.and.bubble.right.fill", steps: [
+        GuideStep(symbol: "bubble.left.and.bubble.right.fill", title: "Discord",
+                  text: "Discord is experimental and off until you turn it on. Sign in once and the tab becomes Discord itself: your servers, voice channels, friends and messages. The gear in the corner opens its settings. In a game, the menu's Discord tab and banners over the game keep you in touch."),
+        GuideStep(symbol: "person.2.fill", title: "Steam friends",
+                  text: "The Steam switch at the top shows who is online and what they are playing. Steam messages and groups are meant to come here later."),
+    ])
+
+    static let all: [Guide] = [home, stores, reports, social, settings, gamePage, addGame, gameMenu, inGame]
     static func guide(_ id: String) -> Guide? { all.first { $0.id == id } }
 }
 
@@ -185,7 +195,7 @@ final class GuideCenter {
         guard enabled, !seen.contains(id), GuideCatalog.guide(id) != nil, id != GuideCatalog.inGame.id, id != GuideCatalog.gameMenu.id else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(900))
-            guard enabled, !seen.contains(id), !blocked, current == nil, let guide = GuideCatalog.guide(id) else { return }
+            guard enabled, !seen.contains(id), !blocked, current == nil, !Coach.shared.isActive, let guide = GuideCatalog.guide(id) else { return }
             present(guide)
         }
     }

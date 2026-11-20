@@ -6,6 +6,7 @@ struct SessionView: View {
     @EnvironmentObject var session: SessionController
     @State private var reporting: Game?
     @State private var editingBinds = false
+    @State private var pickingStarter = false
     @EnvironmentObject var model: AppModel
 
     /// Installers have nothing to report on, so they get no menu entry.
@@ -17,16 +18,20 @@ struct SessionView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            GameSurface(state: session.state, dockStatus: session.padNotice, layout: session.activeLayout, customLayout: session.activeTouchLayout, lookSensitivity: session.lookSensitivity, onAdjustLook: { session.adjustLook(by: $0) }, onSwitchLayout: { session.switchLayout(to: $0) },
+            GameSurface(state: session.state, dockStatus: session.padNotice, customLayout: session.activeTouchLayout, lookSensitivity: session.lookSensitivity, onAdjustLook: { session.adjustLook(by: $0) },
                         onClose: { session.requestClose() },
                         onBack: { session.dismiss() },
                         onReport: reportAction, onEditBinds: { editingBinds = true },
+                        layoutChoices: session.layoutChoices, onChooseLayout: { session.chooseLayout(set: $0) }, onPickStarter: { pickingStarter = true },
                         onCreateLayout: { session.createLiveLayout(from: $0) }, onLayoutChanged: { session.saveLiveTouchLayout($0) }, gameName: session.game?.name, steamAppID: session.game.flatMap { $0.steamAppID ?? $0.dockAppID })
                 .ignoresSafeArea()
         }
         .statusBarHidden(true)
         // A bind set changed in the game (the editor or the set picker): the controls and the controller binds follow at once.
         .onChange(of: model.games) { _, _ in session.bindSetsChanged() }
+        .sheet(isPresented: $pickingStarter) {
+            StarterLayoutPicker(title: "Add a layout") { layout, title in session.addLayoutSet(layout, named: title) }.preferredColorScheme(Theme.scheme)
+        }
         .sheet(isPresented: $editingBinds) {
             if let g = session.game { InGameBindsSheet(gameID: g.id).environmentObject(model).environmentObject(session).preferredColorScheme(Theme.scheme) }
         }
@@ -43,15 +48,16 @@ struct SessionView: View {
 struct GameSurface: UIViewRepresentable {
     let state: SessionController.State
     var dockStatus: String? = nil
-    var layout: ControlLayout = .standard
     var customLayout: TouchLayout? = nil
     var lookSensitivity: Double = 2.4
     var onAdjustLook: (Double) -> Void = { _ in }
-    var onSwitchLayout: (ControlLayout) -> Void = { _ in }
     let onClose: () -> Void
     let onBack: () -> Void
     var onReport: (() -> Void)? = nil
     var onEditBinds: (() -> Void)? = nil
+    var layoutChoices: [LayoutChoice] = []
+    var onChooseLayout: ((UUID?) -> Void)? = nil
+    var onPickStarter: (() -> Void)? = nil
     var onCreateLayout: ((TouchLayout) -> Void)? = nil
     var onLayoutChanged: ((TouchLayout) -> Void)? = nil
     /// Shown in the in-game menu's header.
@@ -63,21 +69,21 @@ struct GameSurface: UIViewRepresentable {
         v.hud.onClose = onClose
         v.hud.onBack = onBack
         v.hud.onReport = onReport
-        v.hud.onSwitchLayout = onSwitchLayout
         v.hud.onKeyboard = { [weak v] in v?.toggleKeyboard() }
         v.hud.padPointer.viewPoint = { [weak v] x, y in v?.hudPoint(forDesktop: x, y) }
         v.hud.padPointer.desktopSize = { [weak v] in v?.desktopSize() ?? (1280, 720) }
         v.hud.onEditBinds = onEditBinds; v.hud.onCreateLayout = onCreateLayout; v.hud.onLayoutChanged = onLayoutChanged
+        v.hud.onChooseLayout = onChooseLayout; v.hud.onPickStarter = onPickStarter
         return v
     }
     func updateUIView(_ view: GameSurfaceView, context: Context) {
         view.hud.onClose = onClose
         view.hud.onBack = onBack
         view.hud.onReport = onReport
-        view.hud.onSwitchLayout = onSwitchLayout
         view.hud.onEditBinds = onEditBinds; view.hud.onCreateLayout = onCreateLayout; view.hud.onLayoutChanged = onLayoutChanged
+        view.hud.onChooseLayout = onChooseLayout; view.hud.onPickStarter = onPickStarter
+        view.hud.setLayoutChoices(layoutChoices)
         view.hud.update(state: state)
-        view.hud.setLayout(layout)
         view.hud.setCustomLayout(customLayout)
         view.hud.lookSensitivity = CGFloat(lookSensitivity)
         view.hud.onAdjustLook = onAdjustLook
@@ -134,6 +140,18 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     private var touchIDs: [ObjectIdentifier: Int] = [:]
     private var nextTouchID = 1
     private var tickTimer: Timer?
+    private var usedExternal = false
+    private var reportedDisplays = false
+    /// Shown on the phone while the picture is on another screen (the rest of this view is the touch surface).
+    private let externalLabel: UILabel = {
+        let l = UILabel()
+        l.text = "Playing on your other display\nThe controls stay here"
+        l.numberOfLines = 0; l.textAlignment = .center
+        l.font = .systemFont(ofSize: 20, weight: .semibold)
+        l.textColor = UIColor(white: 1, alpha: 0.35)
+        l.isHidden = true; l.isUserInteractionEnabled = false
+        return l
+    }()
 
     /// The game's view (HardwareInput asks where keys and the pointer belong), and the desktop cursor a hardware mouse moves in a desktop session.
     private let pressSink = PressSink()
@@ -158,6 +176,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         isMultipleTouchEnabled = true       // two-finger tap and pinch
         backgroundColor = .clear
         engine.sink = self
+        addSubview(externalLabel)
         trackpad.sink = self
         pressSink.isUserInteractionEnabled = false; pressSink.frame = .zero; addSubview(pressSink)
         PointerFallback.install(on: self)   // hides the system pointer over the game and reports where it is (a mouse or trackpad on iPad)
@@ -176,9 +195,16 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     /// The Wine desktop is aspect-fitted into our bounds.
     private func fitRect() -> CGRect {
         let (dw, dh) = guestSize()
-        let s = min(bounds.width / dw, bounds.height / dh)
-        let size = CGSize(width: dw * s, height: dh * s)
-        return CGRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
+        // Where the picture is (PictureBand): where the layout in use asks for it, else moved up by itself on an iPad. Everything that maps a touch to the game goes through here, so the pointer follows.
+        return PictureBand.rect(screen: bounds.size, guest: CGSize(width: dw, height: dh), placement: hud.layoutPicture, isPad: UIDevice.current.userInterfaceIdiom == .pad,
+                                controlsOn: hud.bandControlsOn, enabled: PictureBand.enabled)
+    }
+
+    /// Whether the picture was moved to the top edge by itself (an iPad, the on-screen controller, room under the picture), which is when the overlays go into the middle of the controller.
+    private var pictureUp: Bool {
+        let (dw, dh) = guestSize()
+        return hud.layoutPicture == nil && PictureBand.applies(screen: bounds.size, guest: CGSize(width: dw, height: dh), isPad: UIDevice.current.userInterfaceIdiom == .pad,
+                                                               controlsOn: hud.bandControlsOn, enabled: PictureBand.enabled)
     }
 
     // MARK: iOS keyboard (typed text goes to the game as key presses)
@@ -198,12 +224,19 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
 
     func detach() {
         if Self.current === self { Self.current = nil }
+        hud.onBandControlsChange = nil; hud.pictureUp = false
         raiseTimer?.invalidate(); raiseTimer = nil
         MetalHostView.shared.removeFromSuperview()
         hud.removeFromSuperview()
+        ExternalDisplay.shared.setGameShowing(false)     // the other screen goes back to its waiting screen
     }
 
-    override func didMoveToWindow() { super.didMoveToWindow(); Self.current = self; attach(reason: "attach"); observeDisplay(); keepHUDOnTop() }
+    override func didMoveToWindow() {
+        super.didMoveToWindow(); Self.current = self
+        // The controls coming or going (a custom layout, the on-screen controller, a real controller connecting) moves the picture.
+        hud.onBandControlsChange = { [weak self] in self?.attach(reason: "controls"); self?.settleSoon("controls") }
+        attach(reason: "attach"); observeDisplay(); keepHUDOnTop()
+    }
 
     private var raiseTimer: Timer?
     private var raises = 0
@@ -222,6 +255,7 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
+        externalLabel.frame = bounds.insetBy(dx: 24, dy: 0)
         attach(reason: "layout")
         settleSoon("layout")
     }
@@ -242,6 +276,9 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
             self?.attach(reason: "orientation"); self?.settleSoon("orientation")
         }
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        NotificationCenter.default.addObserver(forName: ExternalDisplay.changed, object: nil, queue: .main) { [weak self] _ in
+            self?.attach(reason: "external-display"); self?.settleSoon("external-display")
+        }
     }
 
     private func settleSoon(_ reason: String) {
@@ -254,14 +291,27 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
     private func attach(reason: String = "attach") {
         guard let window else { return }
         let host = MetalHostView.shared
-        // Window level, on top of SwiftUI (see GameSurface); the HUD goes above the Metal view. Only touch the order when it is actually wrong:
-        // re-ordering on every layout pass made the HUD flicker.
-        if host.superview !== window { host.removeFromSuperview(); window.addSubview(host); GameHUDView.attaches += 1 }
-        if hud.superview !== window { hud.removeFromSuperview(); hud.frame = window.bounds; window.addSubview(hud); GameHUDView.attaches += 1 }
+        let ext = ExternalDisplay.shared
+        if !reportedDisplays { reportedDisplays = true; ext.report("when the game screen opened") }
         // A DESKTOP session (Steam games through Dock, MADEIRA_DESKTOP=1): Wine's compositor view holds the game's own Metal layer, so OUR black
         // Metal host must stay out of the way. Pulling it in front of the compositor on every layout pass buried the game on rotation.
         // Only the HUD is kept on top there.
         let desktopSession = getenv("MADEIRA_DESKTOP").map { String(cString: $0) == "1" } ?? false
+        if ext.isHosting, let container = ext.container {
+            attachExternal(window: window, host: host, container: container, ext: ext, desktopSession: desktopSession, reason: reason)
+            return
+        }
+        if usedExternal {
+            // The display went away (or the setting was turned off): the compositor comes home with the picture.
+            usedExternal = false
+            winios_set_compositor_container(nil)
+            externalLabel.isHidden = true
+            LogStore.shared.log("[display] the game is back on this screen")
+        }
+        // Window level, on top of SwiftUI (see GameSurface); the HUD goes above the Metal view. Only touch the order when it is actually wrong:
+        // re-ordering on every layout pass made the HUD flicker.
+        if host.superview !== window { host.removeFromSuperview(); window.addSubview(host); GameHUDView.attaches += 1 }
+        if hud.superview !== window { hud.removeFromSuperview(); hud.frame = window.bounds; window.addSubview(hud); GameHUDView.attaches += 1 }
         host.isHidden = desktopSession
         let order = window.subviews
         if desktopSession {
@@ -271,6 +321,9 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         }
         let fit = fitRect()
         host.frame = convert(fit, to: window)
+        hud.pictureBottom = host.frame.maxY
+        hud.pictureUp = pictureUp
+        hud.gameArea = host.frame        // the Discord overlay sits inside the game's picture
         let full = convert(bounds, to: window)
         winios_set_compositor_frame(full.minX, full.minY, full.width, full.height)
         // A desktop session (Steam games through Dock): tell the compositor where the desktop goes, in the compositor view's own points.
@@ -278,10 +331,41 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
         let (gw, gh) = guestSize()
         let line = String(format: "guest=%.0fx%.0f bounds=%.0fx%.0f -> rect=(%.0f,%.0f %.0fx%.0f)", gw, gh, bounds.width, bounds.height, fit.minX, fit.minY, fit.width, fit.height)
         if line != Self.lastApplied { Self.lastApplied = line; LogStore.shared.log("[display] apply reason=\(reason) \(line)") }
+        registerLayerOnce(host)
+    }
+
+    private func registerLayerOnce(_ host: MetalHostView) {
         if !Self.layerRegistered {
             Self.layerRegistered = true
             madeira_display_set_layer(host.metalLayer)   // must precede the first D3D11 swapchain
         }
+    }
+
+    /// The game's picture on the other screen; this view, the controls and the pointer stay on the phone.
+    private func attachExternal(window: UIWindow, host: MetalHostView, container: UIView, ext: ExternalDisplay, desktopSession: Bool, reason: String) {
+        if !usedExternal {
+            usedExternal = true
+            LogStore.shared.log("[display] the game goes to the connected display; the controls stay here")
+        }
+        // The controls and the menu stay on the phone, above everything else in its window.
+        if hud.superview !== window { hud.removeFromSuperview(); hud.frame = window.bounds; window.addSubview(hud); GameHUDView.attaches += 1 }
+        if window.subviews.last !== hud { window.bringSubviewToFront(hud) }
+        if host.superview !== container { host.removeFromSuperview(); container.addSubview(host); GameHUDView.attaches += 1 }
+        host.isHidden = desktopSession
+        container.layoutIfNeeded()
+        let (gw, gh) = guestSize()
+        let fit = ext.fitRect(guestWidth: gw, guestHeight: gh)
+        host.frame = fit
+        // A Steam (desktop) session draws into the compositor: it follows to the other screen and gets the same rectangle.
+        winios_set_compositor_container(Unmanaged.passUnretained(container).toOpaque())
+        let b = container.bounds
+        winios_set_compositor_frame(b.minX, b.minY, b.width, b.height)
+        winios_set_desktop_rect(fit.minX, fit.minY, fit.width, fit.height, 1)
+        ext.setGameShowing(true)
+        externalLabel.isHidden = false
+        let line = String(format: "external guest=%.0fx%.0f container=%.0fx%.0f -> rect=(%.0f,%.0f %.0fx%.0f)", gw, gh, b.width, b.height, fit.minX, fit.minY, fit.width, fit.height)
+        if line != Self.lastApplied { Self.lastApplied = line; LogStore.shared.log("[display] apply reason=\(reason) \(line)") }
+        registerLayerOnce(host)
     }
 
     /// View point -> Wine desktop pixels (the desktop is aspect-fitted into the view).
@@ -356,13 +440,13 @@ final class GameSurfaceView: UIView, UIKeyInput, PointerSink {
             if lookTouch == nil, let t = touches.first { lookTouch = t; lookLast = t.location(in: self); lookRemainder = .zero }
             return
         }
-        engine.primary = hud.rightMode ? .right : .left
+        engine.primary = .left
         if !engine.isTouching && !trackpad.isTouching {
             usingTrackpad = PointerMode.current == .trackpad && !hud.isBlender
             if usingTrackpad { startTrackpad() }
         }
         if usingTrackpad {
-            trackpad.primary = hud.rightMode ? .right : .left
+            trackpad.primary = .left
             for t in touches { Self.touchCount += 1; trackpad.began(id(for: t), at: t.location(in: self), time: t.timestamp) }
             return
         }

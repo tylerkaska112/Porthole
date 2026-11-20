@@ -1,0 +1,26 @@
+# Runs the host tests on every pull request and every push to main. No secrets, no signing, no engine: it only compiles and runs the test programs.
+# Pull requests from forks get a read-only token and no secrets, which is all this needs.
+name: Checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: xcode-27            # GitHub's Apple-silicon image with Xcode 27 (free for public repositories)
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache the Swift package build
+        uses: actions/cache@v4
+        with:
+          path: Packages/LauncherCore/.build
+          key: launcher-core-${{ runner.os }}-${{ hashFiles('Packages/LauncherCore/Package.swift', 'Packages/LauncherCore/Sources/**', 'Packages/LauncherCore/Tests/**') }}
+          restore-keys: launcher-core-${{ runner.os }}-
+      - name: Host tests
+        run: tools/run_tests.sh

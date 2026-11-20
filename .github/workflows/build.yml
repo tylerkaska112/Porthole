@@ -1,0 +1,90 @@
+# Builds an unsigned Porthole IPA from a pull request (or main) and attaches it to the run. It never signs, publishes or uses a secret.
+#
+# The engine (Wine, FEX, DXMT, the Discord libraries) is not built here: it is one prebuilt file, the "engine pack", published once on a release of the
+# upstream repository and pinned by its SHA-256 in docs/ENGINE_PACK.sha256 (see docs/ENGINE_PACK.md). It is downloaded once and cached, so a build only compiles
+# the app itself. If a pull request changes the engine (app/Config/Engine.xcconfig), this workflow stops with a clear message: the maintainer makes a new pack.
+name: Build
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # The repository whose releases hold the engine pack. Forks use the upstream's pack too. (A repository variable ENGINE_PACK_REPO overrides it, for private test runs.)
+  ENGINE_PACK_REPO: ${{ vars.ENGINE_PACK_REPO || 'tylerkaska112/PortHole' }}
+jobs:
+  ipa:
+    runs-on: xcode-27            # GitHub's Apple-silicon image with Xcode 27 (free for public repositories)
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which engine pack
+        id: pack
+        run: |
+          id="$(sed -n 's/^PORTHOLE_ENGINE_ID *= *//p' app/Config/Engine.xcconfig | tr -d '[:space:]')"
+          read -r sha name < docs/ENGINE_PACK.sha256
+          [ "$name" = "engine-pack-$id.tar.gz" ] || { echo "::error::docs/ENGINE_PACK.sha256 is for '$name' but this source's engine is $id. A new engine needs a new pack: ask the maintainer (docs/ENGINE_PACK.md)."; exit 1; }
+          echo "id=$id" >> "$GITHUB_OUTPUT"; echo "sha=$sha" >> "$GITHUB_OUTPUT"; echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$(sed -n 's/^ *MARKETING_VERSION: *\([0-9.]*\).*/\1/p' app/project.yml)-$(sed -n 's/^ *CURRENT_PROJECT_VERSION: *\([0-9]*\).*/\1/p' app/project.yml)" >> "$GITHUB_OUTPUT"
+
+      - name: Engine pack (cached)
+        id: packcache
+        uses: actions/cache@v4
+        with:
+          path: engine-pack
+          key: engine-pack-${{ steps.pack.outputs.sha }}
+
+      - name: Download the engine pack
+        if: steps.packcache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p engine-pack
+          gh release download "engine-${{ steps.pack.outputs.id }}" --repo "$ENGINE_PACK_REPO" --pattern "${{ steps.pack.outputs.name }}" --dir engine-pack
+
+      - name: Check and unpack the engine pack
+        run: |
+          echo "${{ steps.pack.outputs.sha }}  engine-pack/${{ steps.pack.outputs.name }}" | shasum -a 256 -c -
+          tar -xzf "engine-pack/${{ steps.pack.outputs.name }}" -C app RuntimeStage DaveStage
+          mkdir -p vendor/Madeira
+          tmp="$(mktemp -d)"; tar -xzf "engine-pack/${{ steps.pack.outputs.name }}" -C "$tmp" engine-headers
+          cp -R "$tmp/engine-headers/." vendor/Madeira/
+
+      - name: StikJIT (cached; the script checks its digest)
+        uses: actions/cache@v4
+        with:
+          path: app/Vendor
+          key: stikjit-${{ hashFiles('tools/prepare_stikjit.py') }}
+      - name: Prepare StikJIT
+        run: '[ -d app/Vendor/StikJIT.xcframework ] || python3 tools/prepare_stikjit.py'
+
+      - name: Generate the Xcode project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          cd app && xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build -project app/Porthole.xcodeproj -scheme Porthole -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/DD CODE_SIGNING_ALLOWED=NO | tail -n 30
+
+      - name: Package and audit
+        run: |
+          mkdir -p out
+          tools/package_app.sh build/DD/Build/Products/Release-iphoneos/Porthole.app "out/Porthole-${{ steps.pack.outputs.version }}-unsigned.ipa"
+          tools/audit_ipa.sh "out/Porthole-${{ steps.pack.outputs.version }}-unsigned.ipa"
+
+      - name: Keep the IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Porthole-${{ steps.pack.outputs.version }}-unsigned
+          path: out/*.ipa
+          retention-days: 14
+          if-no-files-found: error

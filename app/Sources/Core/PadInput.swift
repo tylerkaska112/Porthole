@@ -20,6 +20,8 @@ final class PadInput: @unchecked Sendable {
     private let queue = DispatchQueue(label: "porthole.gamepad", qos: .userInteractive)
     private var controllers = [GCController?](repeating: nil, count: 4)
     private var profiles = [GCExtendedGamepad?](repeating: nil, count: 4)
+    /// What each player's controller is called for its stick deadzone (Settings > Controls > Test controller).
+    private var zoneKeys = [String](repeating: "controller", count: 4)
     private var timer: DispatchSourceTimer?
     private var active = false
     private var keyboardMouse: [String: String]?           // the binds, while keyboard-and-mouse mode is on
@@ -118,7 +120,7 @@ final class PadInput: @unchecked Sendable {
         observe()
         refreshControllers()
         // Automatic mode: the game's controller mode is not set, nothing else decides, and keyboard and mouse is available.
-        let isAuto = Self.keyboardMouseAvailable && binds == nil && (!hid || identityHID) && game?.engine?.controllerMode == nil && game?.virtualPad != true
+        let isAuto = Self.keyboardMouseAvailable && binds == nil && (!hid || identityHID) && game?.engine?.controllerMode == nil && game?.effectiveVirtualPad != true
         var automatic: PadAuto?
         var startBinds = binds
         if isAuto {
@@ -373,6 +375,7 @@ final class PadInput: @unchecked Sendable {
             for (controller, profile) in live where !controllers.contains(where: { $0 === controller }) {
                 guard let i = controllers.firstIndex(where: { $0 == nil }) else { continue }
                 controllers[i] = controller; profiles[i] = profile
+                zoneKeys[i] = StickDeadzone.key(vendor: controller.vendorName, category: controller.productCategory)
                 LogStore.shared.log("[pad] player \(i + 1) connected: \(controller.vendorName ?? "controller") (\(controller.productCategory))")
             }
             slotLock.lock(); slotSnapshot = controllers; slotLock.unlock()
@@ -554,8 +557,11 @@ final class PadInput: @unchecked Sendable {
             ]
             for (button, mask) in buttons where button?.isPressed == true { state.buttons |= mask }
             state.left_trigger = Self.trigger(pad.leftTrigger.value); state.right_trigger = Self.trigger(pad.rightTrigger.value)
-            state.lx = Self.axis(pad.leftThumbstick.xAxis.value); state.ly = Self.axis(pad.leftThumbstick.yAxis.value)
-            state.rx = Self.axis(pad.rightThumbstick.xAxis.value); state.ry = Self.axis(pad.rightThumbstick.yAxis.value)
+            // A stick that rests off its centre is held at the centre by the deadzone the person set for this controller (zero unless they set one).
+            let leftStick = StickDeadzone.Store.shared.apply(key: zoneKeys[i], right: false, x: pad.leftThumbstick.xAxis.value, y: pad.leftThumbstick.yAxis.value)
+            let rightStick = StickDeadzone.Store.shared.apply(key: zoneKeys[i], right: true, x: pad.rightThumbstick.xAxis.value, y: pad.rightThumbstick.yAxis.value)
+            state.lx = Self.axis(leftStick.x); state.ly = Self.axis(leftStick.y)
+            state.rx = Self.axis(rightStick.x); state.ry = Self.axis(rightStick.y)
             if state.buttons != 0 || state.left_trigger > 80 || state.right_trigger > 80
                 || abs(Int(state.lx)) > 10_000 || abs(Int(state.ly)) > 10_000 || abs(Int(state.rx)) > 10_000 || abs(Int(state.ry)) > 10_000 {
                 activityLock.lock(); activityAt = ProcessInfo.processInfo.systemUptime; activityLock.unlock()
@@ -604,7 +610,7 @@ final class PadInput: @unchecked Sendable {
                 if !hidKeepsXInput { clearPad(0); continue }
             }
             publishBattery(i, pad: pad)
-            winios_gamepad_set_state(Int32(i), &state); published[i] = true
+            publishState(i, &state)
         }
     }
 
@@ -629,7 +635,13 @@ final class PadInput: @unchecked Sendable {
             state.buttons = v.buttons; state.left_trigger = v.leftTrigger; state.right_trigger = v.rightTrigger
             state.lx = v.lx; state.ly = v.ly; state.rx = v.rx; state.ry = v.ry
         }
-        winios_gamepad_set_state(0, &state); published[0] = true
+        publishState(0, &state)
+    }
+
+    /// Hands a player's state to the runtime. Player 1's goes to the input-lag meter as well, which times a press from here to the game reading it.
+    private func publishState(_ i: Int, _ state: inout winios_gamepad) {
+        winios_gamepad_set_state(Int32(i), &state); published[i] = true
+        if i == 0 { InputLagMeter.shared.note(PadSnapshot(buttons: state.buttons, leftTrigger: state.left_trigger, rightTrigger: state.right_trigger, lx: state.lx, ly: state.ly, rx: state.rx, ry: state.ry)) }
     }
 
     /// Player 1 as the HID controller: the Xbox sample plus what only a HID report carries (the digital trigger bits, the touchpad click, the battery).

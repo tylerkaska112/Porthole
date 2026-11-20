@@ -300,20 +300,30 @@ struct HeroInfo: View {
 struct HomeBackdrop: View {
     let game: GameCardData?
     var height: CGFloat
+    /// How far down the top bar reaches: the soft shade at the top covers it so the section names stay readable over the picture.
+    var shade: CGFloat = 0
+    /// A game's page lays a little darkness over the whole picture so its words read on a light one too.
+    var dim: Double = 0
 
     var body: some View {
         ZStack(alignment: .top) {
             if let game {
-                Color.clear.overlay { SlowZoom { GameArtView(id: game.id, name: game.name, kind: .hero, plain: true).opacity(0.9) } }
+                // Soft, so the picture sets a mood and never competes with the page.
+                Color.clear.overlay { SlowZoom { GameArtView(id: game.id, name: game.name, kind: .hero, plain: true).blur(radius: 2.5).scaleEffect(1.03).opacity(0.9) } }
                     .clipped()
                     .id(game.id)
                     .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity).frame(height: height)
+        .overlay { Color.black.opacity(dim) }
         .overlay { LinearGradient(colors: [Theme.backgroundBottom.opacity(0.88), Theme.backgroundBottom.opacity(0.4), .clear], startPoint: .leading, endPoint: .trailing) }
         .overlay { LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: Theme.backgroundBottom.opacity(0.7), location: 1)], startPoint: .top, endPoint: .bottom) }
         .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.45), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+        // A soft shade at the very top keeps the section names readable over a busy picture; it fades out just below the bar.
+        .overlay(alignment: .top) {
+            LinearGradient(colors: [Theme.backgroundBottom.opacity(0.55), .clear], startPoint: .top, endPoint: .bottom).frame(height: shade + 18).allowsHitTesting(false)
+        }
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.5), value: game?.id)
         .ignoresSafeArea()
@@ -368,8 +378,9 @@ struct NoticeStrip: View {
                             .accessibilityLabel("Hide this")
                         }
                     }
-                    .background(Theme.panel, in: Capsule())
-                    .overlay(Capsule().strokeBorder(n.tint.opacity(0.35), lineWidth: 1))
+                    // Dark behind each alert, like the layout picker, so it reads on a light picture too.
+                    .background(.black.opacity(0.55), in: Capsule())
+                    .overlay(Capsule().strokeBorder(n.tint.opacity(0.55), lineWidth: 1))
                 }
             }
             .padding(.vertical, compact ? 2 : 6).padding(.horizontal, 2)
@@ -420,7 +431,7 @@ struct HomeLayoutPicker: View {
             ForEach(HomeLayout.allCases) { layout in
                 let on = raw == layout.rawValue
                 Button { withAnimation(.easeOut(duration: 0.2)) { raw = layout.rawValue } } label: {
-                    Image(systemName: layout.symbol).font(.system(size: 14, weight: .bold)).foregroundStyle(on ? Theme.onAccent : Theme.textDim)
+                    Image(systemName: layout.symbol).font(.system(size: 14, weight: .bold)).foregroundStyle(on ? Theme.onAccent : Theme.text.opacity(0.8))
                         .frame(width: 40, height: 36).background(on ? Theme.accent : Color.clear, in: Capsule()).contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -429,7 +440,8 @@ struct HomeLayoutPicker: View {
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
-        .padding(2).background(Theme.panel, in: Capsule()).overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 1))
+        // Dark behind it, whatever picture is under it: on a light picture the usual panel colour all but disappeared.
+        .padding(2).background(.black.opacity(0.55), in: Capsule()).overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 1))
         .fixedSize()
     }
 }
@@ -514,6 +526,10 @@ struct HomeView: View {
     @AppStorage(HomeLayout.key) private var layoutRaw = HomeLayout.shelf.rawValue
     private var layout: HomeLayout { HomeLayout(rawValue: layoutRaw) ?? .shelf }
     @State private var shownID: UUID?
+    /// With touch the shelf snaps: the game in the first slot is the chosen one. This is the game the scroll view is lined up on.
+    @State private var scrollID: UUID?
+    /// While the shelf is scrolling to a game that was tapped, the games it passes on the way are not chosen one after another.
+    @State private var settleUntil = Date.distantPast
     /// False until the page has appeared: the tiles then come in one after another.
     @State private var arrived = false
     @Environment(\.focusScope) private var scope
@@ -532,7 +548,9 @@ struct HomeView: View {
             let sideways = vSize == .compact   // a phone held sideways: everything has to fit in about 350 points of height
             let tileWidth: CGFloat = sideways ? min(190, geo.size.width / 4.4) : geo.size.width > 900 ? 270 : hSize == .regular ? 230 : min(max(180, geo.size.width * 0.56), 250)
             ZStack {
-                HomeBackdrop(game: layout == .shelf ? shown : games.first, height: geo.size.height * (geo.size.height > geo.size.width ? 0.72 : 0.8))
+                // The picture itself is drawn by the app's frame (AppShell), behind the top bar as well as the page, so the bar and the page read as one screen.
+                // (Drawn here it would stop at the page's top edge, and the page sits inside a navigation stack that clips it.)
+                BackdropPublisher(game: layout == .shelf ? shown : games.first, fraction: geo.size.height > geo.size.width ? 0.72 : 0.8)
                 // The bats (or falling leaves) go above the game's picture and still behind the text (the backdrop's own would be hidden by that picture).
                 FestiveSky()
                 // Not a scroll view: the page is sized to the screen and never moves up or down. Only the row of games scrolls, sideways.
@@ -546,7 +564,7 @@ struct HomeView: View {
                         HeroInfo(game: shown, mostRecent: shown.id == games.first?.id, play: { play(shown) }, open: { open(shown) }, playing: featuredPlaying && shown.id == games.first?.id)
                             .padding(.horizontal, side)
                         if !sideways { shelfTitle.padding(.horizontal, side).padding(.bottom, -10) }
-                        shelf(tileWidth: tileWidth, side: side, sideways: sideways)
+                        shelf(tileWidth: tileWidth, side: side, sideways: sideways, width: geo.size.width)
                     } else {
                         EmptyHome(add: add).padding(.horizontal, side)
                     }
@@ -631,8 +649,67 @@ struct HomeView: View {
     }
 
     /// With a controller the chosen game is wide and the others step back, like Steam's Big Picture shelf; with touch every tile is the same size.
-    private func shelf(tileWidth: CGFloat, side: CGFloat, sideways: Bool) -> some View {
-        let pad = forceControllerLayout || ControllerInput.shared.connected
+    @ViewBuilder private func shelf(tileWidth: CGFloat, side: CGFloat, sideways: Bool, width: CGFloat) -> some View {
+        if forceControllerLayout || ControllerInput.shared.connected { padShelf(tileWidth: tileWidth, side: side, sideways: sideways) }
+        else { snapShelf(tileWidth: tileWidth, side: side, sideways: sideways, width: width) }
+    }
+
+    /// Chooses a game (the page above it shows it, with Play) and, with touch, brings it to the first slot of the shelf.
+    private func select(_ id: UUID) {
+        // The ring (the focus highlight) always sits on the chosen game, so it is plain which one Play will start.
+        if scope?.focused != AnyHashable(id) { scope?.focused = AnyHashable(id) }
+        if shownID != id { shownID = id; UISelectionFeedbackGenerator().selectionChanged() }
+        if scrollID != id { settleUntil = Date().addingTimeInterval(0.6); withAnimation(.snappy(duration: 0.35)) { scrollID = id } }
+    }
+
+    /// Touch: the shelf snaps, so a game always rests in the first slot and that game is the chosen one: the picture behind the page and the title follow the scrolling.
+    /// A tap on another game scrolls it into the first slot and chooses it (Play is right above); a tap on the chosen game opens its page.
+    private func snapShelf(tileWidth: CGFloat, side: CGFloat, sideways: Bool, width: CGFloat) -> some View {
+        // Every tile is laid out at the chosen size, and the ones that are not chosen are drawn smaller: nothing moves while the row is scrolled (a tile that
+        // really grew and shrank would shift the whole row under the finger), and the chosen game still stands out as the biggest.
+        let slot = tileWidth * 1.2, gap: CGFloat = 6
+        let smaller: CGFloat = 0.84
+        // Room after the last tiles, so even the last game can be scrolled into the first slot.
+        let tail = max(0, width - side * 2 - slot * 2 - gap * 2)
+        let chosenID = shown?.id
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: gap) {
+                ForEach(Array(games.enumerated()), id: \.element.id) { index, game in
+                    let isChosen = game.id == chosenID
+                    GameTile(game: game, width: slot, focusScale: 1.04, small: !isChosen, chosen: isChosen,
+                             play: { play(game) }, onFocus: { select(game.id) }) { if isChosen { open(game) } else { select(game.id) } }
+                        .scaleEffect(isChosen ? 1 : smaller)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: isChosen)
+                        .contextMenu { if let menu { menu(game) } }
+                        .id(game.id)
+                        .opacity(arrived ? 1 : 0).offset(y: arrived ? 0 : 16)
+                        .animation(.spring(response: 0.55, dampingFraction: 0.86).delay(Double(min(index, 8)) * 0.05), value: arrived)
+                }
+                AddGameTile(width: slot * smaller, action: add)
+                FestivePatch(height: slot * smaller * 215.0 / 460.0)
+                Color.clear.frame(width: tail, height: 1)
+            }
+            .scrollTargetLayout()
+            .animation(.easeOut(duration: 0.25), value: shownID)
+            .padding(.vertical, sideways ? 14 : 26)
+        }
+        .contentMargins(.horizontal, side, for: .scrollContent)
+        .scrollTargetBehavior(.viewAligned)
+        .scrollPosition(id: $scrollID, anchor: .leading)
+        .onChange(of: scrollID) { _, id in
+            // Scrolling chooses: whichever game rests in (or passes through) the first slot.
+            guard let id, id != shownID, Date() > settleUntil, games.contains(where: { $0.id == id }) else { return }
+            shownID = id
+            if scope?.focused != AnyHashable(id) { scope?.focused = AnyHashable(id) }
+            UISelectionFeedbackGenerator().selectionChanged()
+        }
+        .scrollClipDisabled()
+        .mask { HStack(spacing: 0) { Rectangle(); LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 36) }.padding(.vertical, -80) }
+    }
+
+    /// With a controller the chosen game is wide and the others step back, like Steam's Big Picture shelf.
+    private func padShelf(tileWidth: CGFloat, side: CGFloat, sideways: Bool) -> some View {
+        let pad = true
         let chosen = shown?.id
         @ViewBuilder func tiles() -> some View {
             ForEach(Array(games.enumerated()), id: \.element.id) { index, game in
@@ -670,4 +747,63 @@ struct EmptyHome: View {
         .frame(maxWidth: .infinity).padding(.vertical, 40)
         .panel(radius: 24)
     }
+}
+
+
+/// What the app's frame draws behind the top bar and the page on Home: the chosen game's picture, and how far down the screen it reaches.
+@MainActor @Observable
+final class ShellBackdrop {
+    static let shared = ShellBackdrop()
+    var game: GameCardData?
+    var fraction: CGFloat = 0.8
+    var dim: Double = 0
+    /// A page's own picture (a game's page): drawn over Home's, behind the bar and the page.
+    var art: AnyView?
+    /// Who set the picture ("home" or "page"): the screen that goes away only takes the picture down if nobody has taken it over, so going from Home to a game's page keeps the very same picture on screen.
+    private(set) var owner = ""
+
+    func show(_ game: GameCardData?, fraction: CGFloat, owner: String, dim: Double = 0) {
+        self.game = game
+        self.fraction = fraction
+        self.dim = dim
+        self.owner = owner
+    }
+
+    /// Taken down a moment later, so the screen that opens next can take the picture over first (no fade out and in between).
+    func release(owner: String) {
+        Task { @MainActor in
+            if self.owner == owner { self.game = nil }
+        }
+    }
+}
+
+/// Hands a page's picture to the app's frame, which draws it behind the top bar as well as the page (drawn in the page, it would stop at the bar's lower edge).
+/// `key` names everything the picture depends on: when it changes the picture is handed over again.
+struct ShellArt: View {
+    let key: AnyHashable
+    let art: AnyView
+
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .onAppear { ShellBackdrop.shared.art = art }
+            .onChange(of: key) { _, _ in ShellBackdrop.shared.art = art }
+            .onDisappear { ShellBackdrop.shared.art = nil }
+    }
+}
+
+/// Tells the frame which picture to draw while the home screen is showing, and takes it away when the home screen goes (another section, or a game's page).
+struct BackdropPublisher: View {
+    let game: GameCardData?
+    let fraction: CGFloat
+    var owner = "home"
+    var dim: Double = 0
+
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .onAppear { publish() }
+            .onChange(of: game?.id) { _, _ in publish() }
+            .onChange(of: fraction) { _, _ in publish() }
+            .onDisappear { ShellBackdrop.shared.release(owner: owner) }
+    }
+    private func publish() { ShellBackdrop.shared.show(game, fraction: fraction, owner: owner, dim: dim) }
 }

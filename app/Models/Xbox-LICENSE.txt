@@ -1,0 +1,14 @@
+3D model of the Xbox controller
+====================================
+
+The 3D controller shown in Settings > Controls > Test controller is based on the model
+
+    "Xbox Controller" by umkhero
+    https://skfb.ly/6VtqJ
+
+licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):
+http://creativecommons.org/licenses/by/4.0/   (legal code: https://creativecommons.org/licenses/by/4.0/legalcode)
+
+Changes made by Porthole: the model was turned to Porthole's axes, tipped forward so the face of the pad is level, and centred, split into the parts that move in the app (the sticks, the face buttons, the D-pad, the bumpers, the triggers and the Guide, View and Menu buttons), each part was given a pivot, the parts that do not move were joined, and the model was converted to USD with its texture kept as a separate file. The textures are the model's own. The conversion script is tools/dualsense/prepare_xbox.py in Porthole's source.
+
+Xbox is a trademark of Microsoft Corporation. Porthole is not affiliated with or endorsed by Microsoft or by the author of the model. The model is shown only to picture a controller that is being tested.

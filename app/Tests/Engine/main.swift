@@ -152,9 +152,9 @@ func run() {
 
 
     // MARK: bind sets
-    let tpl = [TouchLayout.mouseAndKeys, TouchLayout.firstPerson]
+    let tpl = [ShippedLayouts.universal.layout, ShippedLayouts.action.layout]
     check(tpl.allSatisfy { $0.sanitized() == $0 && !$0.controls.isEmpty }, "the two starting layouts are valid as they are")
-    check(TouchLayout.firstPerson.look && !TouchLayout.mouseAndKeys.look, "first person looks by dragging, mouse and keys does not")
+    check(ShippedLayouts.action.layout.look && !ShippedLayouts.universal.layout.look, "the Action layout looks by dragging, Universal does not")
     var wild = TouchLayout(controls: [
         TouchControlSpec(label: "A very long label indeed", action: "key-E", mode: "weird", x: 7, y: -3, size: 9999),
         TouchControlSpec(label: "x", action: "rm -rf", x: 0.5, y: 0.5),
@@ -170,7 +170,7 @@ func run() {
     let padPart = PadPart(binds: ["A": "key-F", "ZZ": "space", "B": "not-an-action", "LS": "arrows", "RS": "key-E"], mouseVertical: 50).sanitized()
     check(padPart.binds == ["A": "key-F", "LS": "arrows"] && padPart.mouseVertical == 2.0, "controller binds from outside: unknown inputs and actions dropped, a stick takes only a stick mode, speed clamped")
 
-    var set = BindSet(name: "Shooter", notes: "FPS layout", pad: PadPart(binds: ["A": "key-F"], mouseVertical: 1.5), touch: .firstPerson)
+    var set = BindSet(name: "Shooter", notes: "FPS layout", pad: PadPart(binds: ["A": "key-F"], mouseVertical: 1.5), touch: ShippedLayouts.action.layout)
     check(set.summary == "Controller and Touch layout" && BindSet(name: "x").summary == "Empty", "a set says what it carries")
     do {
         let data = try BindSetFile.encode(set, gameName: "Some Game")
@@ -194,7 +194,7 @@ func run() {
     // Per game: one set in use at a time, none by default.
     var bg = Game(exe: "C:\\a.exe")
     check(bg.activeBindSet == nil, "a game with no sets has none in use")
-    let s1 = BindSet(name: "One", pad: PadPart()), s2 = BindSet(name: "Two", touch: .mouseAndKeys)
+    let s1 = BindSet(name: "One", pad: PadPart()), s2 = BindSet(name: "Two", touch: ShippedLayouts.universal.layout)
     bg.bindSets = [s1, s2]
     check(bg.activeBindSet == nil, "having sets does not use one")
     bg.activeBindSetID = s2.id
@@ -222,7 +222,7 @@ func run() {
     check(BindsShare.localSet(from: nothing, existingNames: []) == nil, "a set with nothing in it is not downloaded")
     var hostile = full; hostile.name = "  line1\nline2\u{7}  "
     check(BindsShare.localSet(from: hostile, existingNames: [])?.name == "line1 line2", "a name from the Hub is cleaned")
-    var toShare = BindSet(name: "Mine", notes: "n", pad: PadPart(binds: ["A": "key-F", "bad": "x"], mouseVertical: 1.5), touch: TouchLayout.mouseAndKeys)
+    var toShare = BindSet(name: "Mine", notes: "n", pad: PadPart(binds: ["A": "key-F", "bad": "x"], mouseVertical: 1.5), touch: ShippedLayouts.universal.layout)
     let payload = BindPublishPayload(set: toShare, game: BindGameRef(kind: "steam", steamAppID: 5, fingerprint: nil, title: "Game"))
     let sent = String(data: try! JSONEncoder().encode(payload), encoding: .utf8)!
     check(payload.clientId == toShare.id.uuidString.lowercased() && payload.pad?.binds == ["A": "key-F"], "what is published is the set, checked, filed under this set's own id")
@@ -240,10 +240,10 @@ func run() {
     // MARK: the contract with the Hub (fixtures shared with hub/test/contract.test.js)
     let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("fixtures")
     let ref = BindGameRef(kind: "steam", steamAppID: 427520, title: "Factorio")
-    var a = BindSet(name: "Shooter layout", notes: "FPS", pad: PadPart(binds: ["A": "key-F", "LS": "arrows", "RT": "lmb"], mouseVertical: 1.5), touch: .firstPerson)
+    var a = BindSet(name: "Shooter layout", notes: "FPS", pad: PadPart(binds: ["A": "key-F", "LS": "arrows", "RT": "lmb"], mouseVertical: 1.5), touch: ShippedLayouts.action.layout)
     a.id = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     var b = BindSet(name: "", pad: PadPart()); b.id = UUID(uuidString: "22222222-2222-3333-4444-555555555555")!
-    var c = BindSet(name: "Touch only", touch: .mouseAndKeys); c.id = UUID(uuidString: "33333333-2222-3333-4444-555555555555")!
+    var c = BindSet(name: "Touch only", touch: ShippedLayouts.universal.layout); c.id = UUID(uuidString: "33333333-2222-3333-4444-555555555555")!
     let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
     // The ids of the controls are random; fix them so the fixture is stable.
     func fixed(_ set: BindSet) -> BindSet { var s = set; if var t = s.touch { t.controls = t.controls.enumerated().map { var k = $1; k.id = UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", $0))!; return k }; s.touch = t }; return s }

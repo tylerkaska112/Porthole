@@ -28,20 +28,22 @@ rebuild and replace the parts that the licences let you replace. This file says 
 Those are the commits Madeira records at its commit `5fda6a0` (Madeira pins the other four itself, in `vendor/Madeira/.gitmodules`; this repository's gitlink for
 `vendor/Madeira` is that Madeira commit).
 
-**The engine Porthole 1.2.0 ships (engine id `3af3467-r1`) is those five commits plus our changes**, which are these files in `patches/`:
+**The engine Porthole 1.4.0 ships (engine id `f8ceca8-r0`) is those five commits plus our changes**, which are these files in `patches/` (made by `tools/make_engine_patches.sh`):
 
 | Patch | Applies in | What it is |
 |---|---|---|
-| `0172-engine-r28-madeira.patch` | the Madeira checkout (`vendor/Madeira`) | our changes to Madeira's own sources (`build/ntdll-unix`, `build/win32u-unix`, `build/wineserver`, `build/wine-pe`, `build/dock-patches`) |
-| `0173-engine-r28-fex.patch` | `vendor/Madeira/FEX` | our changes to FEX |
-| `0174-engine-r28-wine.patch` | `vendor/Madeira/wine` | our changes to Wine |
-| `0175-engine-r28-dxmt.patch` | `vendor/Madeira/dxmt` | our changes to DXMT |
-| `0176-engine-r28-madeira-dock.patch` | `vendor/Madeira/madeira-dock` | our changes to Madeira Dock |
-| `0172-engine-r28-binaries.sha256` | | the SHA-256 of the 75 binary files that differ from Madeira's snapshot. They are built from the sources above (see Rebuilding and `docs/REBUILD.md`), not patched; a rebuild is normally not byte-identical. |
+| `0204-engine-1.4.0-madeira.patch` | the Madeira checkout (`vendor/Madeira`) | our changes to Madeira's own sources (`build/ntdll-unix`, `build/win32u-unix`, `build/wineserver`, `build/wine-pe`, the patch stacks in `build/*-patches`, `app/Madeira`), including the Madeira Nightly 0.2.29 work |
+| `0204-engine-1.4.0-fex.patch` | `vendor/Madeira/FEX` | our changes to FEX |
+| `0204-engine-1.4.0-wine.patch` | `vendor/Madeira/wine` | our changes to Wine |
+| `0204-engine-1.4.0-dxmt.patch` | `vendor/Madeira/dxmt` | our changes to DXMT |
+| `0204-engine-1.4.0-madeira-dock.patch` | `vendor/Madeira/madeira-dock` | our changes to Madeira Dock |
+| `0204-engine-1.4.0-binaries.sha256` | | the SHA-256 of the binary files that differ from Madeira's snapshot (prebuilt DLLs, static libraries, data files). They are built from the sources above (see Rebuilding and `docs/REBUILD.md`), not patched; a rebuild is normally not byte-identical. |
 
-Each patch applied to its pinned commit gives exactly the tree the shipped engine was built from (checked file by file when the patches were made). `3af3467` is the name of
-the local merge commit of that same tree, which is why the engine id is not one of Madeira's commits. The older numbered patches (`0001` to `0171`) are the history of our changes to
-earlier snapshots: the changes they made to Madeira, FEX, Wine and DXMT are part of the five patches above, so do not apply them again to those trees. The patches that touch the glue
+Each patch applied to its pinned commit gives exactly the tree the shipped engine was built from: `tools/make_engine_patches.sh` applies every patch to the pinned commit and compares every text file with the
+shipped tree before it writes anything. Submodule links, build-folder links and the engine repository's own host tests (`tests/`, which build nothing) are left out. The Madeira Nightly 0.2.29 work in these patches comes from open pull requests to Madeira (https://github.com/willfaust/Madeira) that a community test build gathered into one tree; the contributors keep their copyright, and every file keeps its own licence header.
+
+`f8ceca8` is the name of the local commit of that same tree, which is why the engine id is not one of Madeira's commits. The older numbered patches (`0001` to `0203`) are the history of our changes: the changes they made to
+Madeira, FEX, Wine and DXMT are part of the five patches above, so do not apply them again to those trees. (`0172` to `0176` are the same five patches as they were for Porthole 1.2.0.) The patches that touch the glue
 under `app/Runtime` are still applied by `tools/vendor_glue.sh`. Where the old and new patches disagree, the five above match what ships.
 
 ## Rebuilding
@@ -51,11 +53,11 @@ Needs a Mac with Xcode (27) and its Metal toolchain, `xcodegen`, and the build t
 ```bash
 git clone --recurse-submodules <this repository> && cd <it>
 # 0. Our changes to the engine trees (Madeira 5fda6a0 and the four repos it pins, see "Pinned upstream commits"):
-git -C vendor/Madeira apply --whitespace=nowarn ../../patches/0172-engine-r28-madeira.patch
-git -C vendor/Madeira/FEX apply --whitespace=nowarn ../../../patches/0173-engine-r28-fex.patch
-git -C vendor/Madeira/wine apply --whitespace=nowarn ../../../patches/0174-engine-r28-wine.patch
-git -C vendor/Madeira/dxmt apply --whitespace=nowarn ../../../patches/0175-engine-r28-dxmt.patch
-git -C vendor/Madeira/madeira-dock apply --whitespace=nowarn ../../../patches/0176-engine-r28-madeira-dock.patch
+git -C vendor/Madeira apply --whitespace=nowarn ../../patches/0204-engine-1.4.0-madeira.patch
+git -C vendor/Madeira/FEX apply --whitespace=nowarn ../../../patches/0204-engine-1.4.0-fex.patch
+git -C vendor/Madeira/wine apply --whitespace=nowarn ../../../patches/0204-engine-1.4.0-wine.patch
+git -C vendor/Madeira/dxmt apply --whitespace=nowarn ../../../patches/0204-engine-1.4.0-dxmt.patch
+git -C vendor/Madeira/madeira-dock apply --whitespace=nowarn ../../../patches/0204-engine-1.4.0-madeira-dock.patch
 # 1. The native libraries (Wine's unix side, wineserver, DXMT, FEX, FFmpeg, FreeType, GnuTLS), with our patches:
 tools/build_wineserver_base.sh                      # the base archive Madeira's wineserver script starts from
 tools/build_dxmt_shader_headers.sh && tools/apply_dxmt_patch.sh

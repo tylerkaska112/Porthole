@@ -1641,9 +1641,18 @@ static void *wine_process_thread(void *arg) {
             /* Porthole: with the setting on (SessionController sets "f4.mixAudio.now" at every start), other apps' sound (music, a video on a
              * second screen) keeps playing next to the game's instead of being stopped. */
             BOOL mix = [[NSUserDefaults standardUserDefaults] boolForKey:@"f4.mixAudio.now"];
-            [session setCategory:AVAudioSessionCategoryPlayback
-                     withOptions:mix ? AVAudioSessionCategoryOptionMixWithOthers : 0
-                           error:&aerr];
+            /* Porthole (Discord branch): while Discord voice is on the microphone needs a play-and-record session, and the game must not take it back to playback only. */
+            BOOL voice = [[NSUserDefaults standardUserDefaults] boolForKey:@"f4.discordVoice.now"];
+            if (voice) {
+                [session setCategory:AVAudioSessionCategoryPlayAndRecord
+                         withOptions:(mix ? AVAudioSessionCategoryOptionMixWithOthers : 0)
+                                     | AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetoothA2DP
+                               error:&aerr];
+            } else {
+                [session setCategory:AVAudioSessionCategoryPlayback
+                         withOptions:mix ? AVAudioSessionCategoryOptionMixWithOthers : 0
+                               error:&aerr];
+            }
             if (aerr) LOG("AVAudioSession setCategory failed: %{public}s",
                           aerr.localizedDescription.UTF8String);
             aerr = nil;

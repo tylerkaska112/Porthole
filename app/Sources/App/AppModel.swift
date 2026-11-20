@@ -20,8 +20,10 @@ struct Game: Codable, Identifiable, Equatable {
     var playSeconds: Double?
     /// Per-game overrides of the global settings (nil field = use the global one).
     var settings: GameSettings?
-    /// On-screen controls for this game; nil = standard (keyboard and mouse helpers).
-    var controls: ControlLayout?
+    /// true = the person chose this game's controls themselves (a bind set, or the on-screen game controller on or off), so the default controls (Settings > Controls) do not apply to it.
+    /// nil or false = it follows the default unless it has a bind set or the on-screen game controller of its own. See DefaultControls.swift. (An older build also kept a built-in "Mouse and keys" or
+    /// "First person" choice here; both are gone, Universal replaces them, and a game that had one follows the default.)
+    var ownControls: Bool?
     /// true = run on Wine's desktop display, so ordinary Windows windows (installers, launchers, tools) are drawn.
     var inDesktop: Bool?
     /// A one-off installer run (never stored in the library).
@@ -30,7 +32,7 @@ struct Game: Codable, Identifiable, Equatable {
     var engine: GameEngine?
     /// The on-screen game controller (VirtualPadView) is on for this game: an Xbox pad drawn on the screen, for a game that wants a pad on a device without one. nil = off.
     var virtualPad: Bool?
-    /// Which arrangement the on-screen controller has for this game (VirtualPadLayout.Preset's name); nil = the one chosen last, else the standard.
+    /// No longer used: the on-screen controller has one arrangement now. Kept so a library saved by an earlier build still reads.
     var virtualPadLayout: String?
     /// How the on-screen controller looks for this game (VirtualPadStyle's name: xbox, playstation, nintendo, classic); nil = the one chosen last, else Xbox.
     var virtualPadStyle: String?
@@ -77,15 +79,27 @@ struct GameSettings: Codable, Equatable {
     var dockDesktop: Bool?
     var lookSensitivity: Double?    // first-person look speed (screen points -> mouse counts)
     var steamSignIn: Int?           // 0 = start from Steam's saved sign-in when it is ready, 1 = sign in online every time; nil follows Settings > Steam
+    var autoLandscape: Int?         // 1 = turn to landscape when the game starts and hold it, 0 = any orientation; nil follows Settings > Display
     var resolution: String?         // DisplayResolution id ("1280x720", "screen720"); nil follows the app-wide setting
     var isEmpty: Bool { self == GameSettings() }
 }
 
 /// Which on-screen controls a game gets.
-enum ControlLayout: String, Codable, CaseIterable, Identifiable {
-    case standard, firstPerson
-    var id: String { rawValue }
-    var title: String { self == .standard ? "Standard (mouse and keys)" : "First person (look pad + sticks)" }
+extension Game {
+    /// Does this game start with the person's default controls (Settings > Controls)?
+    var followsDefaultControls: Bool {
+        DefaultControls.follows(own: ownControls, hasBindSet: activeBindSetID != nil, virtualPad: virtualPad)
+    }
+    /// Is the on-screen game controller on for this game: its own choice, or (when it follows the default) the default being the on-screen controller.
+    var effectiveVirtualPad: Bool {
+        virtualPad == true || (followsDefaultControls && DefaultControls.current.usesOnScreenPad)
+    }
+    /// The layout drawn on the screen for this game: its bind set's, else the default's (Universal, a gamepad or the person's own), else Universal. Nil only while the on-screen game controller is on, which
+    /// draws itself.
+    var effectiveTouchLayout: TouchLayout? {
+        if let touch = activeBindSet?.touch { return touch }
+        return effectiveVirtualPad ? nil : (DefaultControls.current.touchLayout ?? DefaultControls.universalLayout)
+    }
 }
 
 @MainActor

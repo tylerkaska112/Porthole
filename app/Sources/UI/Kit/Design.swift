@@ -37,7 +37,7 @@ struct ActionCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(prominent ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.panel), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(prominent ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(GlassFill.panel), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
@@ -57,7 +57,7 @@ struct PageSection<Content: View>: View {
             if let title { Text(title).font(.footnote.weight(.semibold)).foregroundStyle(Theme.textDim).textCase(.uppercase).padding(.horizontal, 4) }
             VStack(alignment: .leading, spacing: 14) { content }
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             if let footer { Text(footer).font(.footnote).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4) }
         }
     }

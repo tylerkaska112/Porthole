@@ -1,0 +1,278 @@
+diff --git a/madeira-d3d12/src/pe/madeira_d3d12.c b/madeira-d3d12/src/pe/madeira_d3d12.c
+index de0be6e..d1c4d6b 100644
+--- a/madeira-d3d12/src/pe/madeira_d3d12.c
++++ b/madeira-d3d12/src/pe/madeira_d3d12.c
+@@ -985,6 +985,34 @@ static void mad_es_label(obj_handle_t e, obj_handle_t s) {
+     (MTLCommandEncoder_setLabel)(e, s);
+ }
+ static long long mad_cfg_int_pe(const char *key, long long dflt);
++
++/* Porthole gpu-attr (madeira.cfg gpu-attr = 1; default 0, a diagnostic): where Metal's currentAllocatedSize grows. The ml1150 / metal-gap lines say how much of Metal's total
++ * the resource categories explain and leave "the rest" (649-750 MB in a Grand Theft Auto V Enhanced run, 2026-11-13) unexplained. With the switch on, every Metal allocation
++ * the layer makes at the sites below is bracketed with currentAllocatedSize before and after, and the growth is added to its site. Other threads allocate at the same time, so
++ * a figure can include their growth: read the sums over thousands of calls, not one call. Costs two calls into winemetal per allocation, which is why it is off. */
++enum { MAD_GA_PSO_LAZY, MAD_GA_CPS_LAZY, MAD_GA_PSO_VDVAR, MAD_GA_PSO_EAGER, MAD_GA_CPS_EAGER, MAD_GA_LIB, MAD_GA_LIB_RESTORE, MAD_GA_TEX, MAD_GA_BUF,
++       MAD_GA_DHEAP, MAD_GA_RING, MAD_GA_SCRATCH, MAD_GA_HEAP, MAD_GA_N };
++static const char *const g_ga_name[MAD_GA_N] = { "pipeline-first-draw", "compute-first-use", "pipeline-vertex-variant", "pipeline-at-creation", "compute-at-creation", "library-create",
++    "library-read-back", "texture", "buffer", "descriptor-heap", "arg-ring-chunk", "scratch-buffers", "placement-heap" };
++static volatile LONG64 g_ga_bytes[MAD_GA_N]; static volatile LONG g_ga_calls[MAD_GA_N], g_ga_grew[MAD_GA_N];
++static int g_ga_on = -1;
++static int mad_ga_enabled(void) {
++    if (g_ga_on < 0) {
++        g_ga_on = mad_cfg_int_pe("gpu-attr", 0) > 0;
++        if (g_ga_on) d3d12_log("[madeira-d3d12] gpu-attr = 1: Metal's growth is attributed to the allocation sites (a diagnostic)\n");
++    }
++    return g_ga_on;
++}
++static LONG64 mad_ga_begin(obj_handle_t dev) { return mad_ga_enabled() && dev ? (LONG64)MTLDevice_currentAllocatedSize(dev) : -1; }
++static void mad_ga_end(unsigned site, obj_handle_t dev, LONG64 before) {
++    LONG64 after, grew;
++    if (before < 0 || site >= MAD_GA_N) return;
++    after = (LONG64)MTLDevice_currentAllocatedSize(dev);
++    grew = after - before;
++    InterlockedIncrement(&g_ga_calls[site]);
++    if (grew > 0) { InterlockedExchangeAdd64(&g_ga_bytes[site], grew); InterlockedIncrement(&g_ga_grew[site]); }
++}
++#define MAD_GA(site, dev, expr) ({ LONG64 ga_b = mad_ga_begin(dev); __typeof__(expr) ga_r = (expr); mad_ga_end((site), (dev), ga_b); ga_r; })
+ /* A replay starts on this thread (mad_ecl_run): encode-batch and draw-dedup
+  * apply until mad_es_finish. NULL when both are off. */
+ static struct mad_eb *mad_es_begin(void) {
+@@ -2671,7 +2699,7 @@ static obj_handle_t mad_capbuf_alloc(struct mad_device *d, UINT64 len, void **cp
+     *cpu = NULL;
+     if (!mem) return 0;
+     memset(&bi, 0, sizeof bi); bi.length = alen; bi.options = WMTResourceStorageModeShared; bi.memory.ptr = mem;
+-    buf = MTLDevice_newBuffer(d->mtl_device, &bi);
++    buf = MAD_GA(MAD_GA_SCRATCH, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &bi));
+     if (!buf) { VirtualFree(mem, 0, MEM_RELEASE); return 0; }
+     *cpu = mem;
+     return buf;
+@@ -3383,6 +3411,20 @@ static int mad_pso_lazy_on(void) {   /* madeira-bcd: madeira.cfg pso-lazy (defau
+                   d3d12_log("[madeira-d3d12] pipelines are built %s (madeira.cfg pso-lazy)\n", on ? "at their first draw/dispatch" : "at creation"); }
+     return on;
+ }
++/* Porthole upload-swap-min-kb (madeira.cfg; default 8192 = the 8 MB of before): the size from which a CPU-visible buffer gets storage of our own on the file tier (ml1154).
++ * Grand Theft Auto V Enhanced keeps ~6,900 UPLOAD buffers live, 70 KB on average and ~490 MB together, all under 8 MB, so none of them left the footprint (2026-11-13, "2, 130 MB"
++ * on file-backed storage). A smaller limit moves more of them; each takes whole 64 KB steps of address space, and only touched pages cost memory. */
++static UINT64 mad_upload_swap_min(void) {
++    static UINT64 v;
++    if (!v) {
++        long long kb = mad_cfg_int_pe("upload-swap-min-kb", 8192);
++        if (kb < 4) kb = 4;
++        if (kb > 1048576) kb = 1048576;
++        v = (UINT64)kb << 10;
++        if (kb != 8192) d3d12_log("[madeira-d3d12] upload-swap-min-kb = %lld: CPU-visible buffers of %lld KB or more live on file-backed storage\n", kb, kb);
++    }
++    return v;
++}
+ static int mad_upload_swap_on(void) {   /* ml1154: madeira.cfg upload-swap (default 1) */
+     static int on = -1;
+     if (on < 0) { on = mad_cfg_int_pe("upload-swap", 1) ? 1 : 0;
+@@ -4781,7 +4823,7 @@ static int mad_ring_chunk_get(struct mad_device *d, struct mad_ringchunk *out) {
+     memset(&bi, 0, sizeof bi);
+     bi.length = MAD_ARG_RING_BYTES;
+     bi.options = WMTResourceStorageModeShared;
+-    out->buf = MTLDevice_newBuffer(d->mtl_device, &bi);
++    out->buf = MAD_GA(MAD_GA_RING, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &bi));
+     if (!out->buf || !bi.memory.ptr) return 0;
+     InterlockedIncrement(&g_ring_chunks);   /* madeira-bcd metal-gap */
+     out->cpu = bi.memory.ptr; out->gpu = bi.gpu_address; out->serial = 0;
+@@ -5335,7 +5377,7 @@ static void mad_ug_gpu_copy(struct mad_queue *q) {
+     if (!n) { ReleaseSRWLockExclusive(&g_ug_lock); return; }
+     gv = calloc(1, sizeof *gv); cp = calloc(n, sizeof *cp);
+     memset(&bi, 0, sizeof bi); bi.length = total; bi.options = WMTResourceStorageModeShared;
+-    if (gv && cp) { gv->buf = MTLDevice_newBuffer(d->mtl_device, &bi); gv->cpu = (const unsigned char *)bi.memory.ptr; }
++    if (gv && cp) { gv->buf = MAD_GA(MAD_GA_SCRATCH, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &bi)); gv->cpu = (const unsigned char *)bi.memory.ptr; }
+     enc = (gv && gv->buf && gv->cpu) ? MTLCommandBuffer_blitCommandEncoder(q->open_cb) : 0;
+     if (!enc) {
+         if (gv && gv->buf) NSObject_release(gv->buf);
+@@ -6215,8 +6257,8 @@ static obj_handle_t mad_pso_realize(struct mad_pso *p) {
+         obj_handle_t err = 0, built = 0;
+         LONG64 t0 = mad_qpc();   /* madeira-bcd */
+         if (!p->lz || mad_lzlib_restore(p))   /* madeira-bcd pso-lazy-libs: the libraries come back first */
+-            built = p->has_vd ? MTLDevice_newRenderPipelineStateVD(p->device_handle, &p->rp, &p->vd, &err)
+-                              : MTLDevice_newRenderPipelineState(p->device_handle, &p->rp, &err);
++            built = p->has_vd ? MAD_GA(MAD_GA_PSO_LAZY, p->device_handle, MTLDevice_newRenderPipelineStateVD(p->device_handle, &p->rp, &p->vd, &err))
++                              : MAD_GA(MAD_GA_PSO_LAZY, p->device_handle, MTLDevice_newRenderPipelineState(p->device_handle, &p->rp, &err));
+         if (built) { MemoryBarrier(); p->rps = built; }   /* pso-async: draws on other threads read rps without the lock */
+         if (err) mad_log_nserror(p->vs_name, err);
+         InterlockedExchangeAdd64(&g_pt_realize, mad_qpc() - t0); InterlockedIncrement(&g_pn_realize);
+@@ -6243,7 +6285,7 @@ static obj_handle_t mad_cpso_realize(struct mad_pso *p) {
+         memset(&ci, 0, sizeof ci);
+         if (!p->lz || mad_lzlib_restore(p)) {   /* madeira-bcd pso-lazy-libs */
+             ci.compute_function = p->vs_fn;
+-            p->cps = MTLDevice_newComputePipelineState(p->device_handle, &ci, &err);
++            p->cps = MAD_GA(MAD_GA_CPS_LAZY, p->device_handle, MTLDevice_newComputePipelineState(p->device_handle, &ci, &err));
+         }
+         if (err) mad_log_nserror("compute pipeline", err);
+         if (!p->cps) {
+@@ -6447,7 +6489,7 @@ static obj_handle_t mad_pso_for_strides(struct mad_pso *p, const UINT strides[16
+             vd.layouts[6 + i].stride = p->vb_stride[i];
+         } else vd.layouts[6 + i].stride = strides[i];
+     }
+-    rps = MTLDevice_newRenderPipelineStateVD(p->device_handle, &p->rp, &vd, &err);
++    rps = MAD_GA(MAD_GA_PSO_VDVAR, p->device_handle, MTLDevice_newRenderPipelineStateVD(p->device_handle, &p->rp, &vd, &err));
+     if (err) mad_log_nserror("render pipeline (vertex-descriptor variant)", err);
+     if (!rps) {
+         /* ml904: second try for the constant case with a zero stride, in case
+@@ -9275,7 +9317,7 @@ static int mad_vt_copy(struct mad_exec *e, const struct mad_cmd *c) {
+             obj_handle_t nb;
+             memset(&bi, 0, sizeof bi);
+             bi.length = MAD_VT_MSLOTS * MAD_VT_MSLOT_BYTES; bi.options = WMTResourceStorageModeShared; bi.memory.ptr = NULL;
+-            nb = MTLDevice_newBuffer(e->q->device->mtl_device, &bi);
++            nb = MAD_GA(MAD_GA_SCRATCH, e->q->device->mtl_device, MTLDevice_newBuffer(e->q->device->mtl_device, &bi));
+             if (nb && bi.memory.ptr) { mad_resident(e->q->device, nb); g_vt_mcpu = (unsigned char *)bi.memory.ptr; g_vt_mbuf = nb; }
+             else if (nb) NSObject_release(nb);
+         }
+@@ -9425,7 +9467,7 @@ static int mad_bc_upload_decoded(struct mad_exec *e, const struct mad_cmd *c) {
+     dst_pitch = (size_t)cw * mad_bcn_texel_size(kind);
+     slice_bytes = dst_pitch * ch;
+     memset(&bi, 0, sizeof bi); bi.length = slice_bytes * cd; bi.options = WMTResourceStorageModeShared;
+-    stage = MTLDevice_newBuffer(e->q->device->mtl_device, &bi);
++    stage = MAD_GA(MAD_GA_SCRATCH, e->q->device->mtl_device, MTLDevice_newBuffer(e->q->device->mtl_device, &bi));
+     if (!stage || !bi.memory.ptr) { if (stage) NSObject_release(stage); return 0; }
+     for (z = 0; z < cd; z++)
+         mad_bcn_decode_image((const uint8_t *)b->cpu + c->u.bt.off + (UINT64)z * c->u.bt.row * c->u.bt.rows, c->u.bt.row,
+@@ -10457,7 +10499,7 @@ static void mad_exec_list(struct mad_queue *q, struct mad_list *l, obj_handle_t
+                 struct mad_device *md = e.q->device;
+                 LONG64 metal = (LONG64)MTLDevice_currentAllocatedSize(md->mtl_device);
+                 LONG64 sa = g_sa_tex_bytes, rings = (LONG64)g_ring_chunks * MAD_ARG_RING_BYTES;
+-                LONG64 theaps = g_hp_dev ? (LONG64)g_hp_dev->hp_total_bytes : 0, mheaps = g_mheap_bytes;
++                LONG64 theaps = (LONG64)md->hp_total_bytes, mheaps = g_mheap_bytes;   /* Porthole: this device's heaps (g_hp_dev is cleared when a device goes, and the line then read 0) */
+                 LONG64 bufs = g_cat_bytes[MAD_CAT_BUF_PRIVATE] + g_cat_bytes[MAD_CAT_BUF_SHARED];
+                 d3d12_log("[madeira-d3d12] ml1150 Metal currentAllocatedSize %llu MB\n", (unsigned long long)(metal >> 20));
+                 /* madeira-bcd metal-gap: see g_sa_tex_bytes */
+@@ -10467,6 +10509,16 @@ static void mad_exec_list(struct mad_queue *q, struct mad_list *l, obj_handle_t
+                           (long long)(metal >> 20), g_sa_tex_n, (long long)(sa >> 20), (long long)(g_sa_tex_logical >> 20),
+                           (long long)(theaps >> 20), (long long)(mheaps >> 20), (long long)(bufs >> 20), g_ring_chunks,
+                           (long long)(rings >> 20), (long long)((metal - sa - theaps - mheaps - bufs - rings) >> 20), md->nmhret);
++                if (g_ga_on > 0) {   /* Porthole gpu-attr */
++                    char line[900], *w = line; unsigned i; LONG64 sum = 0;
++                    w += _snprintf(w, sizeof line, "[madeira-d3d12] gpu-attr: Metal growth seen at each allocation site (MB, calls, calls that grew):");
++                    for (i = 0; i < MAD_GA_N; i++) {
++                        sum += g_ga_bytes[i];
++                        if (g_ga_calls[i] && (size_t)(w - line) < sizeof line - 90)
++                            w += _snprintf(w, sizeof line - (size_t)(w - line), " | %s %lld MB %ld/%ld", g_ga_name[i], (long long)(g_ga_bytes[i] >> 20), g_ga_calls[i], g_ga_grew[i]);
++                    }
++                    d3d12_log("%s | sum %lld MB of Metal's %lld MB\n", line, (long long)(sum >> 20), (long long)(metal >> 20));
++                }
+             }
+         }
+     }
+@@ -12487,7 +12539,7 @@ static int mad_hp_alloc(struct mad_device *d, UINT64 size, UINT64 align, UINT64
+     }
+     if (found < 0) {
+         UINT64 hs = size > MAD_HP_HEAP_BYTES ? size : MAD_HP_HEAP_BYTES;
+-        obj_handle_t heap = MTLDevice_newPlacementHeap(d->mtl_device, hs, WMTResourceStorageModePrivate);
++        obj_handle_t heap = MAD_GA(MAD_GA_HEAP, d->mtl_device, MTLDevice_newPlacementHeap(d->mtl_device, hs, WMTResourceStorageModePrivate));
+         if (heap && mad_grow((void **)&d->theaps, &d->theaps_cap, d->ntheaps + 1, sizeof *d->theaps)) {
+             struct mad_texheap *h = &d->theaps[d->ntheaps];
+             memset(h, 0, sizeof *h);
+@@ -12955,7 +13007,7 @@ static obj_handle_t mad_tvs_view_x(struct mad_device *d, struct mad_resource *r,
+             obj_handle_t nb;
+             memset(&bi, 0, sizeof bi);
+             bi.length = MAD_TVS_CHUNK; bi.options = WMTResourceStorageModeShared; bi.memory.ptr = NULL;
+-            nb = MTLDevice_newBuffer(d->mtl_device, &bi);
++            nb = MAD_GA(MAD_GA_SCRATCH, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &bi));
+             if (!nb || !bi.memory.ptr) { if (nb) NSObject_release(nb); goto full; }
+             mad_resident(d, nb);
+             g_tvs_buf = nb; g_tvs_cpu = (unsigned char *)bi.memory.ptr; g_tvs_gpu = bi.gpu_address; g_tvs_used = 0;
+@@ -15065,7 +15117,7 @@ static HRESULT mad_create_resource_at(struct mad_device *d, D3D12_HEAP_TYPE heap
+                 else { r->hp_used = 1; r->hp_heap = (unsigned)hidx; r->hp_off = hoff; r->hp_size = hsz; mad_hp_release(d, r); r->hp_used = 0; InterlockedIncrement(&d->hp_fallbacks); }
+             }
+         }
+-        if (!r->texture) r->texture = MTLDevice_newTexture(d->mtl_device, &ti);
++        if (!r->texture) r->texture = MAD_GA(MAD_GA_TEX, d->mtl_device, MTLDevice_newTexture(d->mtl_device, &ti));
+         if (!r->texture) { free(r); return mad_creation_failure(d, "newTexture"); }
+         if (!r->hp_used && !r->placed_heap) mad_resident(d, r->texture);   /* ml1145: a placed one is resident through its heap */
+         r->width = ti.width; r->height = ti.height;
+@@ -15145,14 +15197,14 @@ static HRESULT mad_create_resource_at(struct mad_device *d, D3D12_HEAP_TYPE heap
+          * 0.4-0.9 GB of UPLOAD buffers live (ph-valley08-13), and its load-time
+          * peak is what kills the Lumen runs. Metal-allocated shared storage is
+          * charged in full. madeira.cfg upload-swap = 0 turns it off. */
+-        if (!r->buffer && heap_type != D3D12_HEAP_TYPE_DEFAULT && info.length >= (8u << 20) && mad_upload_swap_on() &&
++        if (!r->buffer && heap_type != D3D12_HEAP_TYPE_DEFAULT && info.length >= mad_upload_swap_min() && mad_upload_swap_on() &&
+             (heap_type != D3D12_HEAP_TYPE_READBACK || mad_readback_swap_on())) {   /* madeira-bcd readback-swap */
+             SIZE_T len = (SIZE_T)((info.length + 0xffff) & ~(UINT64)0xffff);
+             void *mem = VirtualAlloc(NULL, len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+             if (mem) {
+                 UINT64 want = info.length;
+                 info.length = len; info.memory.ptr = mem;
+-                r->buffer = MTLDevice_newBuffer(d->mtl_device, &info);
++                r->buffer = MAD_GA(MAD_GA_BUF, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &info));
+                 if (r->buffer) { r->own_mem = mem; InterlockedExchangeAdd64(&g_upload_swap_bytes, (LONG64)len); InterlockedIncrement(&g_upload_swap_n); }
+                 else { VirtualFree(mem, 0, MEM_RELEASE); info.length = want; info.memory.ptr = NULL; info.gpu_address = 0; }
+                 {
+@@ -15176,7 +15228,7 @@ static HRESULT mad_create_resource_at(struct mad_device *d, D3D12_HEAP_TYPE heap
+             if (mem) {
+                 UINT64 want = info.length;
+                 info.length = len; info.memory.ptr = mem; info.options = WMTResourceStorageModeShared;
+-                r->buffer = MTLDevice_newBuffer(d->mtl_device, &info);
++                r->buffer = MAD_GA(MAD_GA_BUF, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &info));
+                 if (r->buffer) {
+                     r->own_mem = mem;   /* released (after the GPU) by the ml1154 path in res_Release */
+                     InterlockedExchangeAdd64(&g_upload_swap_bytes, (LONG64)len); InterlockedIncrement(&g_upload_swap_n);
+@@ -15197,7 +15249,7 @@ static HRESULT mad_create_resource_at(struct mad_device *d, D3D12_HEAP_TYPE heap
+                 }
+             }
+         }
+-        if (!r->buffer) r->buffer = MTLDevice_newBuffer(d->mtl_device, &info);
++        if (!r->buffer) r->buffer = MAD_GA(MAD_GA_BUF, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &info));
+         if (!r->buffer) { free(r); return mad_creation_failure(d, "newBuffer"); }
+         if (!r->placed_heap) {
+             mad_acct(r, heap_type == D3D12_HEAP_TYPE_DEFAULT ? MAD_CAT_BUF_PRIVATE : MAD_CAT_BUF_SHARED, info.length, +1);   /* ml1057 */
+@@ -15320,7 +15372,7 @@ static HRESULT STDMETHODCALLTYPE device_CreateHeap(ID3D12Device *This, const D3D
+         struct mad_device *hd = (struct mad_device *)This;
+         if (backing < 0) { backing = (int)mad_cfg_int_pe("heap-backing", 1); d3d12_log("[madeira-d3d12] ml1145 heap-backing = %d (DEFAULT heaps %s)\n", backing, backing ? "are Metal placement heaps; placed resources alias" : "are descriptions only"); }
+         if (backing && desc->Properties.Type == D3D12_HEAP_TYPE_DEFAULT && desc->SizeInBytes) {
+-            h->mtl = MTLDevice_newPlacementHeap(hd->mtl_device, desc->SizeInBytes, WMTResourceStorageModePrivate);
++            h->mtl = MAD_GA(MAD_GA_HEAP, hd->mtl_device, MTLDevice_newPlacementHeap(hd->mtl_device, desc->SizeInBytes, WMTResourceStorageModePrivate));
+             if (h->mtl) { mad_resident(hd, h->mtl); InterlockedExchangeAdd64(&g_mheap_bytes, (LONG64)desc->SizeInBytes); }   /* madeira-bcd metal-gap */
+             if (said_b++ < 32) d3d12_log("[madeira-d3d12] ml1145 heap %llu KB flags %#x %s\n", (unsigned long long)(desc->SizeInBytes >> 10),
+                                          (unsigned)desc->Flags, h->mtl ? "backed by a Metal placement heap" : "COULD NOT be backed; its resources stand alone");
+@@ -16293,7 +16345,7 @@ static HRESULT STDMETHODCALLTYPE device_CreateDescriptorHeap(ID3D12Device *This,
+         memset(&bi, 0, sizeof bi);
+         bi.length = (uint64_t)sizeof(struct mad_descriptor) * (desc->NumDescriptors ? desc->NumDescriptors : 1);
+         bi.options = WMTResourceStorageModeShared;
+-        h->buffer = MTLDevice_newBuffer(d->mtl_device, &bi);
++        h->buffer = MAD_GA(MAD_GA_DHEAP, d->mtl_device, MTLDevice_newBuffer(d->mtl_device, &bi));
+         if (!h->buffer) { free(h); return mad_creation_failure(d, "descriptor heap buffer"); }
+         h->cpu = (struct mad_descriptor *)bi.memory.ptr;
+         h->gpu_address = bi.gpu_address;
+@@ -17954,7 +18006,7 @@ static int mad_lzlib_stage(struct mad_pso *p, const UINT64 key[2], const char *n
+     mad_libshare_key(blob + sizeof h, (SIZE_T)h.ret_len, name, &k0, &k1);
+     if (mad_libshare_find(k0, k1, &lib, &fn)) { free(blob); *lib_out = lib; *fn_out = fn; return 1; }
+     dd = DispatchData_alloc_init((uint64_t)(uintptr_t)(blob + sizeof h), (uint64_t)h.ret_len);   /* copies the bytes */
+-    if (dd) { lib = MTLDevice_newLibrary(p->device_handle, dd, &err); NSObject_release(dd); }
++    if (dd) { lib = MAD_GA(MAD_GA_LIB_RESTORE, p->device_handle, MTLDevice_newLibrary(p->device_handle, dd, &err)); NSObject_release(dd); }
+     free(blob);
+     if (err) mad_log_nserror("library (pso-lazy-libs)", err);
+     if (!lib) return 0;
+@@ -18355,7 +18407,7 @@ again:
+     LONG64 lib_t0 = mad_qpc();   /* madeira-bcd: timed, with the function lookup below */
+     obj_handle_t dd = DispatchData_alloc_init((uint64_t)(uintptr_t)buf, (uint64_t)a.ret_len);
+     if (dd) {
+-        lib = MTLDevice_newLibrary(d->mtl_device, dd, &err);
++        lib = MAD_GA(MAD_GA_LIB, d->mtl_device, MTLDevice_newLibrary(d->mtl_device, dd, &err));
+         NSObject_release(dd);
+         if (lib) { InterlockedExchangeAdd64(&g_lib_bytes, (LONG64)a.ret_len); InterlockedIncrement(&g_lib_count); }   /* ml1060 */
+     }
+@@ -19406,8 +19458,8 @@ static HRESULT device_CreateGraphicsPipelineState_impl(ID3D12Device *This,
+             mad_pso_warm(p->device_handle, &p->rp, has_vd ? &vd : NULL, has_vd ? 1 : 0);   /* pso-warm */
+         } else {
+             obj_handle_t err = 0;
+-            p->rps = has_vd ? MTLDevice_newRenderPipelineStateVD(d->mtl_device, &rp, &vd, &err)
+-                            : MTLDevice_newRenderPipelineState(d->mtl_device, &rp, &err);
++            p->rps = has_vd ? MAD_GA(MAD_GA_PSO_EAGER, d->mtl_device, MTLDevice_newRenderPipelineStateVD(d->mtl_device, &rp, &vd, &err))
++                            : MAD_GA(MAD_GA_PSO_EAGER, d->mtl_device, MTLDevice_newRenderPipelineState(d->mtl_device, &rp, &err));
+             if (err) mad_log_nserror(p->vs_name, err);
+         }
+     }
+@@ -19664,7 +19716,7 @@ static HRESULT device_CreateComputePipelineState_impl(ID3D12Device *This,
+     }
+     memset(&ci, 0, sizeof ci);
+     ci.compute_function = p->vs_fn;
+-    p->cps = MTLDevice_newComputePipelineState(d->mtl_device, &ci, &err);
++    p->cps = MAD_GA(MAD_GA_CPS_EAGER, d->mtl_device, MTLDevice_newComputePipelineState(d->mtl_device, &ci, &err));
+     if (err) mad_log_nserror("compute pipeline", err);
+     if (!p->cps) {
+         d3d12_log("[madeira-d3d12] newComputePipelineState failed\n");

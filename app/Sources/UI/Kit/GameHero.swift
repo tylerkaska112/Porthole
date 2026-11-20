@@ -81,8 +81,8 @@ struct GameStatTiles: View {
                     Text(stat.title).font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(1)
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.panel.opacity(0.85), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(GlassFill.line, lineWidth: 1))
                 .accessibilityElement(children: .combine)
             }
         }

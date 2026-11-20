@@ -20,7 +20,9 @@ final class VirtualPadView: UIView {
     /// Which controller it imitates: the names on the buttons, their colours and shapes (the game sees an Xbox pad whichever it is).
     var style: VirtualPadStyle = .xbox { didSet { if style != oldValue { setNeedsLayout() } } }
     /// The arrangement of the controls.
-    var preset: VirtualPadLayout.Preset = .standard { didSet { if preset != oldValue { releaseAll(); setNeedsLayout() } } }
+    var preset: VirtualPadLayout.Preset = .porthole { didSet { if preset != oldValue { releaseAll(); setNeedsLayout() } } }
+    /// On an iPad: the Porthole arrangement is drawn bigger and sits further in from the edges.
+    var wide = false { didSet { if wide != oldValue { setNeedsLayout() } } }
 
     private typealias Item = VirtualPadLayout.Item
     private var frames: [Item: CGRect] = [:]
@@ -62,7 +64,7 @@ final class VirtualPadView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let s = safeAreaInsets
-        frames = VirtualPadLayout.frames(in: bounds.size, insets: .init(left: s.left, right: s.right, top: s.top, bottom: s.bottom), scale: scale, preset: preset)
+        frames = VirtualPadLayout.frames(in: bounds.size, insets: .init(left: s.left, right: s.right, top: s.top, bottom: s.bottom), scale: scale, preset: preset, wide: wide)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         draw()
         CATransaction.commit()

@@ -43,9 +43,14 @@ enum LegalLibrary {
     static let credits: [LegalDocument] = [
         LegalDocument(title: "Credits", detail: "Who made what this app is built on", file: "CREDITS.md"),
         LegalDocument(title: "Third-party components", detail: "Wine, FEX, DXMT, FFmpeg and the rest", file: "THIRD-PARTY-NOTICES.md", folder: "legal"),
+        LegalDocument(title: "3D model of the DualSense", detail: "\"Playstation 5 Dualsense\" by AHarmlessPotato, CC BY 4.0", file: "DualSense-LICENSE.txt", folder: "Models"),
+        LegalDocument(title: "3D model of the DualShock 4", detail: "\"DualShock 4 PlayStation Controller\" by shaielwolf, CC BY 4.0", file: "DualShock4-LICENSE.txt", folder: "Models"),
+        LegalDocument(title: "3D model of the Xbox controller", detail: "\"Xbox Controller\" by umkhero, CC BY 4.0", file: "Xbox-LICENSE.txt", folder: "Models"),
         LegalDocument(title: "StikJIT, idevice and StikDebug", detail: "JIT support: what is included and where its source is", file: "StikJIT.md"),
         LegalDocument(title: "MPL-2.0 (StikJIT)", detail: "The licence of the JIT library", file: "MPL-2.0-StikJIT.txt"),
         LegalDocument(title: "Libraries inside StikJIT", detail: "About 130 Rust libraries and their licences", file: "StikJIT-rust-libraries.txt"),
+        LegalDocument(title: "Libraries behind the Discord features", detail: "libdave, mlspp, OpenSSL, libdatachannel, Opus and the rest: what each does and where its source is", file: "Discord-libraries.md"),
+        LegalDocument(title: "Licences of the Discord libraries", detail: "MIT, BSD, Apache-2.0 and MPL-2.0 texts", file: "Discord-libraries-licences.txt"),
     ]
     static let apple: [LegalDocument] = [
         LegalDocument(title: "Metal Shader Converter agreement", detail: "Apple's terms for the converter library", file: "METAL-SHADER-CONVERTER-AGREEMENT.txt", folder: "d3d12"),

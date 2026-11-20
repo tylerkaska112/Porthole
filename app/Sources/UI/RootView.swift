@@ -12,15 +12,21 @@ struct RootView: View {
     @State private var scope = FocusScope()
     @Environment(\.scenePhase) private var scenePhase
     @State private var guides = GuideCenter.shared
+    @ObservedObject private var drives = DriveWatcher.shared
+    @ObservedObject private var discordWatching = DiscordSession.shared
 
-    private static let tabs = [ShellTab(id: "home", title: "Home", symbol: "house.fill"), ShellTab(id: "stores", title: "Stores", symbol: "square.grid.2x2.fill"),
-                               ShellTab(id: "reports", title: "Reports", symbol: "checkmark.seal.fill"), ShellTab(id: "settings", title: "Settings", symbol: "gearshape.fill")]
-    private static let tabOrder: [AppTab] = [.library, .stores, .compatibility, .settings]
-    private static let tabIDs: [AppTab: String] = [.library: "home", .stores: "stores", .compatibility: "reports", .settings: "settings"]
+    /// The sections. Social carries the number of Discord messages waiting.
+    private var tabs: [ShellTab] {
+        [ShellTab(id: "home", title: "Home", symbol: "house.fill"), ShellTab(id: "stores", title: "Stores", symbol: "square.grid.2x2.fill"),
+         ShellTab(id: "reports", title: "Reports", symbol: "checkmark.seal.fill"), ShellTab(id: "social", title: "Social", symbol: "bubble.left.and.bubble.right.fill", badge: DiscordBadge.shared.count),
+         ShellTab(id: "settings", title: "Settings", symbol: "gearshape.fill")]
+    }
+    private static let tabOrder: [AppTab] = [.library, .stores, .compatibility, .social, .settings]
+    private static let tabIDs: [AppTab: String] = [.library: "home", .stores: "stores", .compatibility: "reports", .social: "social", .settings: "settings"]
 
     /// The guide for the section that is open.
     private var tabGuide: String {
-        switch router.tab { case .library: "home"; case .stores: "stores"; case .compatibility: "reports"; case .settings: "settings" }
+        switch router.tab { case .library: "home"; case .stores: "stores"; case .compatibility: "reports"; case .social: "social"; case .settings: "settings" }
     }
     /// Something else covers the screen, so a guide waits.
     private var coverUp: Bool { router.showSetup || router.showAdd || router.pickInstaller || session.tourGame != nil || (session.state != .idle && session.state != .enablingJIT && !isFailed) }
@@ -28,7 +34,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var router = router
         @Bindable var guides = guides
-        AppShell(tabs: Self.tabs,
+        AppShell(tabs: tabs,
                  selection: Binding(get: { Self.tabIDs[router.tab] ?? "home" }, set: { id in router.tab = Self.tabIDs.first { $0.value == id }?.key ?? .library }),
                  showHints: ControllerInput.shared.connected,
                  onHelp: { guides.show(tabGuide) }) {
@@ -37,6 +43,7 @@ struct RootView: View {
                 case .library: HomeScreen()
                 case .stores: StoresScreen()
                 case .compatibility: ReportsScreen()
+                case .social: SocialScreen()
                 case .settings: SettingsScreen()
                 }
             }
@@ -45,13 +52,24 @@ struct RootView: View {
         }
         .navScope(scope)
         .edgeSwipeBack()
-        .sheet(item: $guides.current) { guide in GuideSheet(guide: guide) { runGuideAction($0) } }
+        // Discord messages and calls slide in over the app's screens too (over a game, the game's own banner does it).
+        .overlay(alignment: .top) { if !session.isActive { AppDiscordBanner() } }
+        .sheet(item: $guides.current) { guide in GuideSheet(guide: guide, offersTutorial: true) { runGuideAction($0) } }
         .onChange(of: router.tab) { _, _ in guides.autoShow(tabGuide) }
+        // The first game that gets its picture up offers the tour of the in-game menu (once).
+        .onChange(of: session.launchGameUp) { _, up in if up { TutorialLibrary.shared.gameStarted() }; DiscordPresenceCoordinator.shared.refresh() }
+        .onChange(of: session.isActive) { _, _ in DiscordPresenceCoordinator.shared.refresh() }
+        .onChange(of: router.tab) { _, _ in DiscordPresenceCoordinator.shared.refresh() }
         .onChange(of: coverUp) { _, up in
             guides.blocked = up
             if !up { guides.autoShow(tabGuide) }       // the setup guide or a game has closed: this screen's guide can show now
         }
+        .onChange(of: session.isActive) { _, active in DiscordNotifier.shared.appShowing = !active }
         .onAppear {
+            DiscordNotifier.shared.appShowing = !session.isActive
+            DiscordNotifier.shared.onOpenInApp = { _ in router.openSocial(.discord) }
+            DiscordPresenceCoordinator.shared.attach(router: router, session: session)
+            TutorialLibrary.shared.attach(router: router, model: model, session: session)
             guides.blocked = coverUp
             guides.autoShow(tabGuide)
             scope.onSection = { step in
@@ -73,6 +91,10 @@ struct RootView: View {
         }
         // The setup guide covers the whole screen, on iPhone and iPad.
         .fullScreenCover(isPresented: $router.showSetup) { setupGuide }
+        // Somebody's Go Live, full screen (experimental).
+        .fullScreenCover(isPresented: Binding(get: { discordWatching.watchState != .idle }, set: { if !$0 { discordWatching.dismissWatchFailure() } })) {
+            DiscordStreamScreen { discordWatching.dismissWatchFailure() }
+        }
         .sheet(isPresented: $router.pickInstaller) {
             FilePickerSheet(onPick: { urls in
                 router.pickInstaller = false
@@ -92,13 +114,23 @@ struct RootView: View {
             await CompatStore.shared.flushQueue()
             await CompatStore.shared.refreshBadges(for: model.games)
         }
+        // A game that starts turns the screen to landscape and holds it there (Settings > Display, or the game's own page); the screen is free again when it ends.
+        .onChange(of: session.isActive) { _, active in AutoLandscape.apply(landscape: active && AutoLandscape.wanted(for: session.game)) }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { VPNGuard.shared.recheck(); CellularGuard.shared.recheck() }
             if phase == .active { SteamStore.shared.refreshIfStale() }
             if phase == .active { Task { await AutoFixRules.shared.refreshIfStale() } }
             if phase == .active, UserDefaults.standard.bool(forKey: "f4.problemsSent") { Task { await ProblemTracker.shared.refresh() } }
             if phase == .active { Task { await CompatStore.shared.flushQueue(); await CompatStore.shared.refreshBadges(for: model.games) } }
+            if phase == .active { Task { await DriveWatcher.shared.foreground() } }
+            DriveWatcher.shared.setActive(phase == .active)
         }
+        // An external drive: asks before looking for Steam games on it, and says what was found.
+        .confirm("An external drive is connected", message: drives.offer.map { "Look for Steam games on \u{201C}\($0.name)\u{201D}? Games found are added to your Steam list. iOS asks you to open the drive once to allow it." },
+                 confirmTitle: "Scan it",
+                 isPresented: Binding(get: { drives.offer != nil }, set: { if !$0 { drives.decline() } })) { drives.accept() }
+        .confirm(drives.report?.title ?? "", message: drives.report?.message, confirmTitle: "OK",
+                 isPresented: Binding(get: { drives.report != nil }, set: { if !$0 { drives.report = nil } })) { drives.report = nil }
         .task {
             // Before anything else starts a game: if the last run ended while a game was running, its logs are put aside for a problem report.
             CrashEvidence.captureIfNeeded()
@@ -114,6 +146,9 @@ struct RootView: View {
                 else { SteamStore.shared.error = "\(game.name) downloaded, but no program to run was found. Use Add a game to pick it." }
             }
             SteamStore.shared.start()
+            DriveWatcher.shared.model = model
+            DriveWatcher.shared.setActive(true)
+            Task { await DriveWatcher.shared.foreground() }      // a drive picked earlier is read again, and a new one is offered
             let info = Bundle.main.infoDictionary
             LogStore.shared.log("[app] Porthole \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?")), engine \(CompatEngine.id), \(Bundle.main.bundleIdentifier ?? "?")")
             DockOffline.begin()
@@ -154,9 +189,22 @@ struct RootView: View {
             case .addGame: router.showAdd = true
             case .openStore(let store): router.openStore(store)
             case .openSettings(let page): router.openSettings(page)
+            case .tutorial(let id): TutorialLibrary.shared.start(id)
             }
         }
     }
 
     private var isFailed: Bool { if case .failed = session.state { return true }; return false }
+}
+
+/// The Discord banner over the app's own screens: a small card at the top that takes touches only while it shows (the rest of the screen is the app's).
+private struct AppDiscordBanner: View {
+    @ObservedObject private var notifier = DiscordNotifier.shared
+
+    var body: some View {
+        DiscordBannerView()
+            .frame(maxWidth: 440).frame(height: 96)
+            .padding(.top, 8).padding(.horizontal, 12)
+            .allowsHitTesting(notifier.bannerTouchable)
+    }
 }

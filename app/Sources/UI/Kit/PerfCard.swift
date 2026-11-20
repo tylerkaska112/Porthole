@@ -103,6 +103,8 @@ struct PerfCardView: View {
     var tallest: CGFloat = 10_000
     /// The developer's text block, to the right of the card's numbers.
     var extraText: String?
+    /// For the wide, short room between the controller's two columns on an iPad: the numbers go in at most two rows, each centred, so the card grows outward from its middle as numbers are added.
+    var centred = false
 
     private var headTint: Color { fpsTint ?? ((fps ?? 0) > 0 ? Theme.good : .white.opacity(0.6)) }
 
@@ -131,18 +133,18 @@ struct PerfCardView: View {
 
     /// A number in a cell: the value on top, a small label under it (no icon: the label says what it is, and an icon per cell made every column wider). Cells sit in a grid, so a dozen numbers take about as much room as four rows used to.
     private func cell(_ row: PerfCardRow) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: centred ? .center : .leading, spacing: 0) {
             Text(row.value).font(.system(size: fontSize, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(row.tint ?? .white).lineLimit(1)
             Text(row.label).font(.system(size: max(7, fontSize * 0.7), weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
         }
     }
 
     private var grid: some View {
-        let widest = rows.count <= 3 ? max(1, rows.count) : (rows.count <= 6 ? 3 : 4)
+        let widest = centred ? max(1, (rows.count + 1) / 2) : (rows.count <= 3 ? max(1, rows.count) : (rows.count <= 6 ? 3 : 4))
         // The same number of rows, as even as can be: nine numbers are 3 + 3 + 3, not 4 + 4 + a lone one.
         let columns = (rows.count + (rows.count + widest - 1) / widest - 1) / max(1, (rows.count + widest - 1) / widest)
         let chunks = stride(from: 0, to: rows.count, by: columns).map { Array(rows[$0..<min($0 + columns, rows.count)]) }
-        return Grid(alignment: .leading, horizontalSpacing: 11, verticalSpacing: 4) {
+        return Grid(alignment: centred ? .center : .leading, horizontalSpacing: centred ? 16 : 11, verticalSpacing: 4) {
             ForEach(Array(chunks.enumerated()), id: \.offset) { _, chunk in
                 GridRow { ForEach(chunk) { cell($0) } }
             }

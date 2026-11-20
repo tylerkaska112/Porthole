@@ -23,6 +23,7 @@ struct LaunchHost: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 8)
                 // The in-game menu opens over the right side: the pill stays in what is left of the screen instead of covering the menu's title.
                 .padding(.trailing, menu.panelWidth)
+                .opacity(menu.coversScreen ? 0 : 1)        // a menu that fills the screen leaves no room for it: it is back after the menu closes
                 .animation(.spring(response: 0.32, dampingFraction: 0.9), value: menu.panelWidth)
             } else if let data = session.launchData {
                 LaunchView(data: data, scope: scope, cancel: { session.cancelLaunch() }, showSteam: session.canPeekAtSteam ? { session.launchPeeking = true } : nil)
@@ -87,6 +88,7 @@ final class PassthroughWindow: UIWindow {
     override var canBecomeKey: Bool { false }
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard pillOnly else { return super.hitTest(point, with: event) }
+        guard !MenuPresence.shared.coversScreen else { return nil }
         let free = max(240, bounds.width - MenuPresence.shared.panelWidth)          // the part of the screen the open menu leaves
         let pill = CGRect(x: free / 2 - 120, y: 0, width: 240, height: 64)
         return pill.contains(point) ? super.hitTest(point, with: event) : nil

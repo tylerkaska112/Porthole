@@ -62,16 +62,16 @@ check(gp.controls.count == 13 && gp.controls.allSatisfy { $0.pad != nil }, "the 
 check(gp.sanitized() == gp, "and a layout the editor makes needs no repair")
 check(gp.controls.contains { $0.action == "stick-ls" && $0.isRound } && gp.controls.contains { $0.action == "dpad-pad" && $0.isRound } && gp.controls.filter { $0.isRound }.count == 3, "its sticks and D-pad are the round controls")
 check(gp.controls.first { $0.action == "pad-a" }?.label == "A" && gp.controls.first { $0.action == "pad-start" }?.label == "Menu", "buttons carry their faces")
-var mixed = TouchLayout.mouseAndKeys
+var mixed = ShippedLayouts.universal.layout
 mixed.controls.append(TouchControlSpec(label: "A", action: "pad-a", x: 0.5, y: 0.5, size: 54))
 mixed.controls.append(TouchControlSpec(label: "", action: "stick-rs", x: 0.7, y: 0.7, size: 110))
-check(mixed.sanitized().controls.count == TouchLayout.mouseAndKeys.controls.count + 2, "keys and pad controls live in one layout")
+check(mixed.sanitized().controls.count == ShippedLayouts.universal.layout.controls.count + 2, "keys and pad controls live in one layout")
 var bad = TouchLayout(controls: [TouchControlSpec(label: "x", action: "pad-zz", x: 0.5, y: 0.5), TouchControlSpec(label: "x", action: "stick-xx", x: 0.5, y: 0.5)])
 check(bad.sanitized().controls.isEmpty, "an unknown pad id is dropped, as any unknown action is")
 check(TouchControlSpec(label: "", action: "stick-wasd", x: 0.1, y: 0.1).isRound && !TouchControlSpec(label: "E", action: "key-E", x: 0.1, y: 0.1).isRound && TouchControlSpec(label: "E", action: "key-E", x: 0.1, y: 0.1).pad == nil, "keys are not pad controls, the W A S D stick is round")
 check(TouchControlSpec(label: "", action: "stick-ls", x: 0.1, y: 0.1).faceText == "LS" && TouchControlSpec(label: "", action: "dpad-pad", x: 0.1, y: 0.1).faceText == "+" && TouchControlSpec(label: "", action: "stick-wasd", x: 0.1, y: 0.1).faceText == "WASD", "small pictures of a layout say what a round control is")
 // layout options: opacity, haptics, combos
-var opt = TouchLayout.mouseAndKeys
+var opt = ShippedLayouts.universal.layout
 check(opt.opacity == 1 && opt.haptics, "a layout starts solid with haptics on")
 opt.opacity = 0.1
 check(opt.sanitized().opacity == TouchLayout.opacityRange.lowerBound, "opacity is kept above a quarter, so the controls are never invisible")
@@ -111,6 +111,6 @@ check(PadActions.groups.contains { $0.title == "Controller" && $0.ids.contains("
 print(failed == 0 ? "\nALL PASSED" : "\n\(failed) FAILED")
 exit(failed == 0 ? 0 : 1)
 S
-swiftc -swift-version 5 -o "$OUT/t" "$OUT/main.swift" "$HERE/../../Sources/Core/TouchPadControls.swift" "$HERE/../../Sources/Core/VirtualPadModel.swift" "$HERE/../../Sources/Core/ControllerKind.swift" "$HERE/../../Sources/Core/BindSets.swift" "$HERE/../../Sources/Core/PadActions.swift"
+swiftc -swift-version 5 -o "$OUT/t" "$OUT/main.swift" "$HERE/../../Sources/Core/TouchPadControls.swift" "$HERE/../../Sources/Core/VirtualPadModel.swift" "$HERE/../../Sources/Core/ControllerKind.swift" "$HERE/../../Sources/Core/BindSets.swift" "$HERE/../../Sources/Core/PadActions.swift" "$HERE/../../Sources/Core/ShippedLayouts.swift" "$HERE/../../Sources/Core/PictureBand.swift"
 "$OUT/t"
 rm -rf "$OUT"

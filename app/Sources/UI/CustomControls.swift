@@ -15,8 +15,10 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     private(set) var layout: TouchLayout?
     /// Called after every edit with the layout as it now is (already checked); the owner saves it.
     var onChange: ((TouchLayout) -> Void)?
-    /// Called when the selection changes (nil = nothing selected).
-    var onSelect: ((TouchControlSpec?) -> Void)?
+    /// Called when the selection changes, with the controls now selected (empty = nothing selected).
+    var onSelection: (([TouchControlSpec]) -> Void)?
+    /// Called when the Select mode (taps add to the selection) is switched on or off.
+    var onSelectMode: (() -> Void)?
     /// Called after every edit, so a panel showing the selected control can refresh (its size changed by a pinch, say).
     var onEdited: (() -> Void)?
     /// The on-screen pad's state from the layout's pad controls (mixed layouts), whenever one changes. The HUD merges it with the game controller and hands it to PadInput.
@@ -34,11 +36,28 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     var lookProvider: (() -> Bool)?
     var onToggleLook: (() -> Void)?
     func refreshLookButtons() { placed.forEach { ($0.view as? CustomLookButton)?.show(lookOn: lookProvider?() ?? false) } }
-    private(set) var selectedID: UUID?
+    /// The selected controls, in the order they were picked. Most of the editor works on one control (`selectedID`, which is nil while several are selected); the group tools use all of them.
+    private(set) var selectedIDs: [UUID] = []
+    var selectedID: UUID? {
+        get { selectedIDs.count == 1 ? selectedIDs[0] : nil }
+        set { selectedIDs = newValue.map { [$0] } ?? [] }
+    }
     var selectedSpec: TouchControlSpec? { selectedID.flatMap { id in layout?.controls.first { $0.id == id } } }
-    /// The selected control's centre in this view's own points (nil = nothing selected), so a panel can keep out of its way.
-    var selectedFrame: CGRect? { selectedID.flatMap { id in placed.first { $0.spec.id == id }?.view.frame } }
-    private let outline = CAShapeLayer(), rings = CAShapeLayer(), guides = CAShapeLayer(), handle = CAShapeLayer()
+    var selectedSpecs: [TouchControlSpec] { layout?.controls.filter { selectedIDs.contains($0.id) } ?? [] }
+    /// The selected controls' rectangle in this view's own points (nil = nothing selected), so a panel can keep out of its way.
+    var selectedFrame: CGRect? { placed.filter { selectedIDs.contains($0.spec.id) }.map(\.view.frame).reduce(nil as CGRect?) { $0?.union($1) ?? $1 } }
+    /// While on, a tap on a control adds it to the selection (or takes it out) instead of choosing it alone.
+    var multiSelect = false { didSet { if multiSelect != oldValue { onSelectMode?() } } }
+    private let outline = CAShapeLayer(), rings = CAShapeLayer(), guides = CAShapeLayer(), handle = CAShapeLayer(), marquee = CAShapeLayer()
+    /// While editing: a red ring round controls that sit on top of another one, an orange dashed ring round ones too small to hit (LayoutCheck).
+    private let warnRed = CAShapeLayer(), warnAmber = CAShapeLayer()
+    /// Where the game's picture will be (the layout's placement, or what automatic does), drawn behind the controls so they can be planned around it. Only where `guestSize` is the picture's real
+    /// or a stand-in shape (the sandbox); in a game the picture itself shows, and moves as the placement changes.
+    private let pictureLayer = CAShapeLayer(), pictureText = CATextLayer()
+    /// While editing: the part of the screen the right thumb rests and drags in (`TouchLayout.lookZone`), drawn so controls can be kept out of it.
+    private let lookLayer = CAShapeLayer(), lookText = CATextLayer()
+    var drawsPictureOutline = false { didSet { updatePictureOutline() } }
+    var guestSize = CGSize(width: 1280, height: 720) { didSet { updatePictureOutline() } }
     /// Earlier states of the layout while editing, for Undo and Redo (cleared when editing stops).
     private var undoStack: [TouchLayout] = [], redoStack: [TouchLayout] = []
     var canUndo: Bool { !undoStack.isEmpty }
@@ -60,9 +79,11 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         layout = previous
         rebuildKeepingSelection(); commit(); onHistory?()
     }
-    private enum Drag { case move(id: UUID, grab: CGSize), resize(id: UUID) }
+    /// `move` carries the whole selection: where each control was when the finger went down, and which one the finger holds. `box` draws a rectangle across empty space and selects what it covers.
+    private enum Drag { case move(primary: UUID, grab: CGSize, from: [TouchControlSpec]), resize(id: UUID), box(from: CGPoint, keep: [UUID]) }
     private var drag: Drag?
     private var pinchStart: (id: UUID, size: Double)?
+    private var pinchGroup: [TouchControlSpec]?
 
     /// Every stick of the layout floats (FloatingStick), except while the layout is being edited.
     var floatingSticks = false { didSet { applyFloating() } }
@@ -78,22 +99,38 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
             guard editing != oldValue else { return }
             applyFloating()
             release()
-            if !editing { selectedID = nil; onSelect?(nil) }
+            if !editing { selectedIDs = []; multiSelect = false; onSelection?([]) }
             if editing { undoStack.removeAll(); redoStack.removeAll(); onHistory?() }
-            [outline, rings, handle, guides].forEach { $0.isHidden = !editing }
+            [outline, rings, handle, guides, marquee, warnRed, warnAmber].forEach { $0.isHidden = !editing }
+            marquee.path = nil
+            lookLayer.isHidden = !editing; lookText.isHidden = !editing
             gestureRecognizers?.forEach { $0.isEnabled = editing }
             placed.forEach { $0.view.alpha = editing ? 1 : CGFloat(layout?.opacity ?? 1) }      // the editor shows every control fully
+            placed.forEach { if $0.spec.isOverlay { $0.view.isHidden = !editing } }          // a spot for an overlay is drawn only in the editor
             setNeedsLayout()
         }
     }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        // Left-handed was switched (Settings, or the in-game menu): the controls go to the other side at once.
+        NotificationCenter.default.addObserver(forName: TouchHandedness.changed, object: nil, queue: .main) { [weak self] _ in self?.setNeedsLayout() }
         rings.fillColor = UIColor.clear.cgColor; rings.strokeColor = UIColor(white: 1, alpha: 0.55).cgColor; rings.lineWidth = 1.5; rings.lineDashPattern = [4, 4]
         outline.fillColor = UIColor.clear.cgColor; outline.strokeColor = UIColor.systemYellow.cgColor; outline.lineWidth = 3
         handle.fillColor = UIColor.systemYellow.cgColor; handle.strokeColor = UIColor.black.withAlphaComponent(0.6).cgColor; handle.lineWidth = 1.5
         guides.fillColor = UIColor.clear.cgColor; guides.strokeColor = UIColor.systemCyan.cgColor; guides.lineWidth = 1; guides.lineDashPattern = [5, 4]
-        [rings, outline, handle, guides].forEach { $0.isHidden = true; layer.addSublayer($0) }
+        marquee.fillColor = UIColor.systemYellow.withAlphaComponent(0.10).cgColor; marquee.strokeColor = UIColor.systemYellow.cgColor; marquee.lineWidth = 1.5; marquee.lineDashPattern = [6, 4]
+        warnRed.fillColor = UIColor.clear.cgColor; warnRed.strokeColor = UIColor.systemRed.cgColor; warnRed.lineWidth = 3
+        warnAmber.fillColor = UIColor.clear.cgColor; warnAmber.strokeColor = UIColor.systemOrange.cgColor; warnAmber.lineWidth = 2.5; warnAmber.lineDashPattern = [5, 4]
+        [rings, warnAmber, warnRed, outline, handle, guides, marquee].forEach { $0.isHidden = true; layer.addSublayer($0) }
+        pictureLayer.fillColor = UIColor(white: 1, alpha: 0.07).cgColor; pictureLayer.strokeColor = UIColor(white: 1, alpha: 0.4).cgColor; pictureLayer.lineWidth = 1.5; pictureLayer.lineDashPattern = [8, 6]
+        pictureText.fontSize = 13; pictureText.foregroundColor = UIColor(white: 1, alpha: 0.5).cgColor; pictureText.alignmentMode = .center; pictureText.contentsScale = UIScreen.main.scale
+        pictureText.string = "Game picture"; pictureLayer.isHidden = true; pictureText.isHidden = true
+        layer.insertSublayer(pictureLayer, at: 0); layer.insertSublayer(pictureText, at: 1)
+        lookLayer.fillColor = UIColor.systemTeal.withAlphaComponent(0.07).cgColor; lookLayer.strokeColor = UIColor.systemTeal.withAlphaComponent(0.55).cgColor; lookLayer.lineWidth = 1.5; lookLayer.lineDashPattern = [3, 6]
+        lookText.fontSize = 12; lookText.foregroundColor = UIColor.systemTeal.withAlphaComponent(0.9).cgColor; lookText.alignmentMode = .center; lookText.contentsScale = UIScreen.main.scale
+        lookText.string = "Right thumb: drag here to look or move the mouse"; lookLayer.isHidden = true; lookText.isHidden = true
+        layer.insertSublayer(lookLayer, at: 2); layer.insertSublayer(lookText, at: 3)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(pan(_:))), pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinch(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(tap(_:)))
         // Only while editing: a recogniser on this view also sees touches that land on the sticks and buttons inside it, and a pan that begins
@@ -122,6 +159,7 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
             guard let v = makeView(spec) else { continue }
             v.translatesAutoresizingMaskIntoConstraints = false
             v.alpha = editing ? 1 : CGFloat(layout.opacity)
+            if spec.isOverlay { v.isHidden = !editing; v.isUserInteractionEnabled = false }
             if let control = v as? UIControl { control.addAction(UIAction { [weak self] _ in if self?.editing == false { ControlHaptics.tap() } }, for: .touchDown) }
             addSubview(v)
             let cx = v.centerXAnchor.constraint(equalTo: leadingAnchor, constant: 0), cy = v.centerYAnchor.constraint(equalTo: topAnchor, constant: 0)
@@ -129,8 +167,9 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
             placed.append(Placed(spec: spec, view: v, cx: cx, cy: cy))
         }
         applyFloating()
-        if let id = selectedID, !placed.contains(where: { $0.spec.id == id }) { selectedID = nil; onSelect?(nil) }
-        [rings, outline, handle, guides].forEach { layer.addSublayer($0) }          // above the controls
+        let still = selectedIDs.filter { id in placed.contains { $0.spec.id == id } }
+        if still != selectedIDs { selectedIDs = still; onSelection?(selectedSpecs) }
+        [rings, warnAmber, warnRed, outline, handle, guides, marquee].forEach { layer.addSublayer($0) }          // above the controls
         refreshLookButtons()
         setNeedsLayout()
     }
@@ -141,34 +180,123 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         return CGRect(x: s.left, y: s.top, width: bounds.width - s.left - s.right, height: bounds.height - s.top - s.bottom)
     }
 
+    /// How the layout's fractions land on this screen (a big screen keeps the controls phone-sized and close to their edges; see `ControlSpace`).
+    private var space: ControlSpace { ControlSpace(field: field.size, mirrored: TouchHandedness.leftHanded) }
+
+    /// The button size setting (TouchButtonSize): how much bigger or smaller than their stored size the controls are drawn. Read when the layout is built (a change in the editor
+    /// rebuilds it), so the controls, their outlines and the editing maths all agree.
+    private var sizeFactor: CGFloat { CGFloat(TouchButtonSize.factor(setting: UserDefaults.standard.string(forKey: TouchButtonSize.key), isPad: UIDevice.current.userInterfaceIdiom == .pad)) }
+    /// How wide a control is drawn, in points (an overlay's spot is not a button: its size is as stored).
+    private func drawn(_ spec: TouchControlSpec) -> CGFloat { spec.isOverlay ? CGFloat(spec.size) : CGFloat(spec.size) * sizeFactor }
+    /// The stored size that makes a control look `width` points wide.
+    private func stored(fromDrawn width: Double, for spec: TouchControlSpec) -> Double { spec.isOverlay ? width : width / Double(sizeFactor) }
+
+    /// The setting was changed while this layout is on the screen (the editor's Options): draw the controls again at the new size.
+    func buttonSizeChanged() { rebuildKeepingSelection() }
+
     private func point(of spec: TouchControlSpec) -> CGPoint {
-        let f = field
-        return CGPoint(x: f.minX + CGFloat(spec.x) * f.width, y: f.minY + CGFloat(spec.y) * f.height)
+        let f = field, p = space.point(x: spec.x, y: spec.y)
+        return CGPoint(x: f.minX + p.x, y: f.minY + p.y)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let f = field
         for p in placed {
-            p.cx.constant = f.minX + CGFloat(p.spec.x) * f.width
-            p.cy.constant = f.minY + CGFloat(p.spec.y) * f.height
+            let c = point(of: p.spec)
+            p.cx.constant = c.x; p.cy.constant = c.y
         }
         updateOutline()
+        updatePictureOutline()
+        updateLookZone()
+    }
+
+    private func updateLookZone() {
+        guard editing, bounds.width > 0 else { return }
+        let f = field, z = TouchLayout.lookZone, sp = space
+        let a = sp.point(x: z.minX, y: z.minY), b = sp.point(x: z.maxX, y: z.maxY)
+        let r = CGRect(x: f.minX + min(a.x, b.x), y: f.minY + min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        lookLayer.path = UIBezierPath(roundedRect: r, cornerRadius: 14).cgPath
+        lookText.frame = CGRect(x: r.minX, y: r.maxY - 26, width: r.width, height: 16)
+        CATransaction.commit()
+    }
+
+    private func updatePictureOutline() {
+        pictureLayer.isHidden = !drawsPictureOutline; pictureText.isHidden = !drawsPictureOutline
+        guard drawsPictureOutline, bounds.width > 0 else { return }
+        let r = PictureBand.rect(screen: bounds.size, guest: guestSize, placement: layout?.picture, isPad: UIDevice.current.userInterfaceIdiom == .pad, controlsOn: true, enabled: PictureBand.enabled)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        pictureLayer.path = UIBezierPath(roundedRect: r, cornerRadius: 6).cgPath
+        pictureText.frame = CGRect(x: r.minX, y: r.midY - 9, width: r.width, height: 18)
+        CATransaction.commit()
     }
 
     private func updateOutline() {
         guard editing else { return }
         let ringPath = UIBezierPath()
-        for p in placed {
-            let c = point(of: p.spec), r = CGFloat(p.spec.size) / 2 + 4
+        for p in placed where !p.spec.isOverlay {
+            let c = point(of: p.spec), r = drawn(p.spec) / 2 + 4
             ringPath.append(UIBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)))
         }
         rings.path = ringPath.cgPath
-        guard let id = selectedID, let p = placed.first(where: { $0.spec.id == id }) else { outline.path = nil; handle.path = nil; return }
-        let c = point(of: p.spec), side = CGFloat(p.spec.size)
-        outline.path = UIBezierPath(ovalIn: CGRect(x: c.x - side / 2 - 5, y: c.y - side / 2 - 5, width: side + 10, height: side + 10)).cgPath
-        let h = handleCentre(c, side)
-        handle.path = UIBezierPath(ovalIn: CGRect(x: h.x - 9, y: h.y - 9, width: 18, height: 18)).cgPath
+        updateWarnings()
+        let chosen = placed.filter { selectedIDs.contains($0.spec.id) }
+        guard !chosen.isEmpty else { outline.path = nil; handle.path = nil; return }
+        let path = UIBezierPath()
+        for p in chosen {
+            let c = point(of: p.spec), side = drawn(p.spec)
+            if p.spec.isOverlay {
+                let w = side, h = max(34, side * 0.42)
+                path.append(UIBezierPath(roundedRect: CGRect(x: c.x - w / 2 - 5, y: c.y - h / 2 - 5, width: w + 10, height: h + 10), cornerRadius: 16))
+            } else {
+                path.append(UIBezierPath(ovalIn: CGRect(x: c.x - side / 2 - 5, y: c.y - side / 2 - 5, width: side + 10, height: side + 10)))
+            }
+        }
+        outline.path = path.cgPath
+        if chosen.count == 1 {
+            let p = chosen[0], c = point(of: p.spec), h = handleCentre(c, drawn(p.spec))
+            handle.path = UIBezierPath(ovalIn: CGRect(x: h.x - 9, y: h.y - 9, width: 18, height: 18)).cgPath
+        } else {
+            handle.path = nil          // several: the size slider and the pinch scale them together
+        }
+    }
+
+    /// Outlines the controls LayoutCheck finds fault with, drawn where the controls are drawn (size setting and left-handed included).
+    private func updateWarnings() {
+        guard let layout else { warnRed.path = nil; warnAmber.path = nil; return }
+        let check = LayoutCheck.run(layout, field: field.size, scale: Double(sizeFactor), mirrored: TouchHandedness.leftHanded)
+        let red = UIBezierPath(), amber = UIBezierPath()
+        for p in placed where !p.spec.isOverlay {
+            let c = point(of: p.spec), r = drawn(p.spec) / 2 + 8
+            let ring = UIBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+            if check.overlapping.contains(p.spec.id) { red.append(ring) } else if check.small.contains(p.spec.id) { amber.append(ring) }
+        }
+        warnRed.path = red.cgPath; warnAmber.path = amber.cgPath
+    }
+
+    /// Moving the selection by a few points with the Nudge arrows: `nudgeBegan` once for a press (one Undo step), `nudge` for each step, `nudgeEnded` to save. The step is in points on the
+    /// screen: the layout follows however the screen's size and left-handed map it.
+    func nudgeBegan() { if layout?.locked != true, !selectedIDs.isEmpty { remember() } }
+    func nudge(dx: CGFloat, dy: CGFloat) {
+        guard layout?.locked != true, let first = selectedSpecs.first, var l = layout else { return }
+        let f = field, p0 = point(of: first), sp = space
+        let a = sp.fractions(of: CGPoint(x: p0.x - f.minX, y: p0.y - f.minY)), b = sp.fractions(of: CGPoint(x: p0.x - f.minX + dx, y: p0.y - f.minY + dy))
+        l.controls = ControlArrange.moved(l.controls, ids: Set(selectedIDs), dx: b.x - a.x, dy: b.y - a.y)
+        layout = l
+        for i in placed.indices { if let spec = l.controls.first(where: { $0.id == placed[i].spec.id }) { placed[i].spec.x = spec.x; placed[i].spec.y = spec.y } }
+        setNeedsLayout(); layoutIfNeeded(); onEdited?()
+    }
+    func nudgeEnded() { commit() }
+
+    /// Sets the selected control's width to an exact number (Size's number, tapped): clamped to the allowed range.
+    func setSelectedSize(_ size: Double) {
+        guard layout?.locked != true, !selectedIDs.isEmpty else { return }
+        remember()
+        let clamped = min(max(size.rounded(), TouchLayout.sizeRange.lowerBound), TouchLayout.sizeRange.upperBound)
+        guard var l = layout else { return }
+        for i in l.controls.indices where selectedIDs.contains(l.controls[i].id) { l.controls[i].size = clamped }
+        layout = l
+        rebuildKeepingSelection(); commit()
     }
 
     /// The resize dot sits on the outline at the lower right (45 degrees), so dragging it to a distance d from the centre makes the control 2 x d wide.
@@ -197,7 +325,15 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func tap(_ g: UITapGestureRecognizer) {
         guard editing else { return }
-        select(control(at: g.location(in: self))?.spec.id)
+        let hit = control(at: g.location(in: self))?.spec.id
+        if multiSelect {
+            // Select mode: a tap takes a control in or out of the selection; a tap on empty space leaves it as it is.
+            guard let hit else { return }
+            if let i = selectedIDs.firstIndex(of: hit) { selectedIDs.remove(at: i) } else { selectedIDs.append(hit) }
+            selectionChanged()
+        } else {
+            select(hit)
+        }
     }
 
     @objc private func pan(_ g: UIPanGestureRecognizer) {
@@ -207,38 +343,60 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         case .began:
             // A pan begins after the finger has moved a few points: work from where it went down, or a neighbour gets grabbed.
             let start = CGPoint(x: point.x - g.translation(in: self).x, y: point.y - g.translation(in: self).y)
-            if layout?.locked != true, let id = selectedID, let p = placed.first(where: { $0.spec.id == id }), hypot(start.x - handleCentre(self.point(of: p.spec), CGFloat(p.spec.size)).x,
-                                                                                            start.y - handleCentre(self.point(of: p.spec), CGFloat(p.spec.size)).y) < 28 {
+            if layout?.locked != true, let id = selectedID, let p = placed.first(where: { $0.spec.id == id }), hypot(start.x - handleCentre(self.point(of: p.spec), drawn(p.spec)).x,
+                                                                                            start.y - handleCentre(self.point(of: p.spec), drawn(p.spec)).y) < 28 {
                 remember(); drag = .resize(id: id); return
             }
-            guard let p = control(at: start) else { drag = nil; return }
-            select(p.spec.id)
+            guard let p = control(at: start) else {
+                // Empty space: draw a box and select what it covers (in Select mode, in addition to what is selected already).
+                let keep = multiSelect ? selectedIDs : []
+                if !multiSelect, !selectedIDs.isEmpty { selectedIDs = []; selectionChanged() }
+                drag = .box(from: start, keep: keep); return
+            }
+            if !selectedIDs.contains(p.spec.id) {
+                if multiSelect { selectedIDs.append(p.spec.id); selectionChanged() } else { select(p.spec.id) }
+            }
             if layout?.locked == true { drag = nil; return }      // a locked layout is only selected, never moved
             remember()
-            drag = .move(id: p.spec.id, grab: CGSize(width: p.view.center.x - point.x, height: p.view.center.y - point.y))
+            drag = .move(primary: p.spec.id, grab: CGSize(width: p.view.center.x - point.x, height: p.view.center.y - point.y), from: selectedSpecs)
         case .changed:
             guard let d = drag else { return }
             switch d {
-            case .move(let id, let grab):
-                guard let i = placed.firstIndex(where: { $0.spec.id == id }) else { return }
+            case .move(let primary, let grab, let from):
+                guard let origin = from.first(where: { $0.id == primary }) else { return }
                 let f = field
                 var c = CGPoint(x: point.x + grab.width, y: point.y + grab.height)
-                let s = snap(c, excluding: id); c = s.point; showGuides(vertical: s.vertical, horizontal: s.horizontal)
-                let x = Double((c.x - f.minX) / max(f.width, 1)), y = Double((c.y - f.minY) / max(f.height, 1))
-                placed[i].spec.x = min(max(x, 0.02), 0.98); placed[i].spec.y = min(max(y, 0.04), 0.96)
-                if var l = layout, let k = l.controls.firstIndex(where: { $0.id == id }) {
-                    l.controls[k].x = placed[i].spec.x; l.controls[k].y = placed[i].spec.y
-                    layout = l
-                }
+                let s = snap(c, excluding: Set(from.map(\.id))); c = s.point; showGuides(vertical: s.vertical, horizontal: s.horizontal)
+                // How far the held control has moved, as fractions of the screen; the rest of the selection moves the same.
+                let at = space.fractions(of: CGPoint(x: c.x - f.minX, y: c.y - f.minY))
+                let dx = at.x - origin.x, dy = at.y - origin.y
+                guard var l = layout else { return }
+                var base = l.controls
+                for spec in from { if let k = base.firstIndex(where: { $0.id == spec.id }) { base[k].x = spec.x; base[k].y = spec.y } }
+                let moved = ControlArrange.moved(base, ids: Set(from.map(\.id)), dx: dx, dy: dy)
+                for (k, spec) in moved.enumerated() { l.controls[k].x = spec.x; l.controls[k].y = spec.y }
+                layout = l
+                for i in placed.indices { if let spec = l.controls.first(where: { $0.id == placed[i].spec.id }) { placed[i].spec.x = spec.x; placed[i].spec.y = spec.y } }
                 setNeedsLayout(); layoutIfNeeded()
             case .resize(let id):
                 guard let current = layout?.controls.first(where: { $0.id == id }) else { return }
                 let d = hypot(point.x - self.point(of: current).x, point.y - self.point(of: current).y)
-                resize(id, to: Double(2 * (d - 5)))          // the dot sits 5 points outside the control's edge
+                resize(id, to: stored(fromDrawn: Double(2 * (d - 5)), for: current))          // the dot sits 5 points outside the control's edge
+            case .box(let from, let keep):
+                let rect = CGRect(x: min(from.x, point.x), y: min(from.y, point.y), width: abs(point.x - from.x), height: abs(point.y - from.y))
+                marquee.path = UIBezierPath(roundedRect: rect, cornerRadius: 6).cgPath
+                guard let l = layout else { return }
+                let f = field
+                // The box is drawn on the screen; the controls are compared in the layout's own space.
+                let sp = space
+                let inField = sp.designRect(CGRect(x: rect.minX - f.minX, y: rect.minY - f.minY, width: rect.width, height: rect.height))
+                var ids = keep
+                for id in ControlArrange.inside(inField, specs: l.controls, in: sp.design) where !ids.contains(id) { ids.append(id) }
+                if ids != selectedIDs { selectedIDs = ids; selectionChanged() }
             }
         case .ended, .cancelled:
-            if drag != nil { commit() }
-            drag = nil; showGuides(vertical: nil, horizontal: nil)
+            if case .move = drag { commit() } else if case .resize = drag { commit() }
+            drag = nil; showGuides(vertical: nil, horizontal: nil); marquee.path = nil
         default: break
         }
     }
@@ -247,14 +405,22 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         guard editing, layout?.locked != true else { return }
         switch g.state {
         case .began:
+            if selectedIDs.count > 1 {
+                // Several selected: the pinch makes the whole group bigger or smaller, spacing and all.
+                remember(); pinchGroup = layout?.controls
+                return
+            }
             guard let id = selectedID ?? control(at: g.location(in: self))?.spec.id, let spec = layout?.controls.first(where: { $0.id == id }) else { return }
             if selectedID != id { select(id) }
             remember(); pinchStart = (id, spec.size)
         case .changed:
-            if let s = pinchStart { resize(s.id, to: s.size * Double(g.scale)) }
+            if let all = pinchGroup, var l = layout {
+                l.controls = ControlArrange.scaled(all, ids: Set(selectedIDs), by: Double(g.scale), in: space.design)
+                layout = l; rebuildKeepingSelection(); onEdited?()
+            } else if let s = pinchStart { resize(s.id, to: s.size * Double(g.scale)) }
         case .ended, .cancelled:
-            if pinchStart != nil { commit() }
-            pinchStart = nil
+            if pinchStart != nil || pinchGroup != nil { commit() }
+            pinchStart = nil; pinchGroup = nil
         default: break
         }
     }
@@ -269,10 +435,10 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     }
 
     /// Snaps a dragged centre to the middle of the screen and to the rows and columns of the other controls (within 8 points), and says which guide lines to show.
-    private func snap(_ c: CGPoint, excluding id: UUID) -> (point: CGPoint, vertical: CGFloat?, horizontal: CGFloat?) {
+    private func snap(_ c: CGPoint, excluding ids: Set<UUID>) -> (point: CGPoint, vertical: CGFloat?, horizontal: CGFloat?) {
         let f = field, near: CGFloat = 8
         var xs: [CGFloat] = [f.midX], ys: [CGFloat] = [f.midY]
-        for p in placed where p.spec.id != id { let o = point(of: p.spec); xs.append(o.x); ys.append(o.y) }
+        for p in placed where !ids.contains(p.spec.id) { let o = point(of: p.spec); xs.append(o.x); ys.append(o.y) }
         var out = c, v: CGFloat?, h: CGFloat?
         if let x = xs.min(by: { abs($0 - c.x) < abs($1 - c.x) }), abs(x - c.x) <= near { out.x = x; v = x }
         if let y = ys.min(by: { abs($0 - c.y) < abs($1 - c.y) }), abs(y - c.y) <= near { out.y = y; h = y }
@@ -287,16 +453,30 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     }
 
     func select(_ id: UUID?) {
-        selectedID = id
-        updateOutline()
-        onSelect?(id.flatMap { id in layout?.controls.first { $0.id == id } })
+        selectedIDs = id.map { [$0] } ?? []
+        selectionChanged()
     }
 
-    /// Changes the selected control (its label, action, mode or size) and saves.
+    private func selectionChanged() {
+        updateOutline()
+        onSelection?(selectedSpecs)
+    }
+
+    func selectIDs(_ ids: [UUID]) {
+        selectedIDs = ids
+        selectionChanged()
+    }
+
+    func selectAll() {
+        selectedIDs = layout?.controls.map(\.id) ?? []
+        selectionChanged()
+    }
+
+    /// Changes the selected control (its label, action, mode or size) and saves; with several selected, each of them.
     func changeSelected(_ edit: (inout TouchControlSpec) -> Void) {
-        guard var l = layout, let id = selectedID, let i = l.controls.firstIndex(where: { $0.id == id }) else { return }
+        guard var l = layout, !selectedIDs.isEmpty else { return }
         remember()
-        edit(&l.controls[i])
+        for i in l.controls.indices where selectedIDs.contains(l.controls[i].id) { edit(&l.controls[i]) }
         layout = l; rebuildKeepingSelection(); commit()
     }
 
@@ -305,20 +485,22 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         guard l.controls.count < TouchLayout.maxControls else { return }
         remember()
         l.controls.append(spec)
-        layout = l; selectedID = spec.id; rebuildKeepingSelection(); commit(); onSelect?(spec)
+        layout = l; selectedID = spec.id; rebuildKeepingSelection(); commit(); selectionChanged()
     }
 
     /// Adds a control for an action ("key-E", "lmb", "stick-wasd" ...) with the label and size a new control should have, at a point in this view (nil = in a free spot).
     @discardableResult
     func addControl(action: String, at point: CGPoint? = nil) -> TouchControlSpec? {
         let pad = TouchPadControl(action: action)
+        // An overlay has one spot: asking for it again selects the one there is.
+        if TouchControlSpec.overlayActions.contains(action), let existing = layout?.controls.first(where: { $0.action == action }) { select(existing.id); return existing }
         let stick = action == "stick-wasd" || action == "stick-arrows" || pad?.isRound == true
         let f = field
         var x = 0.5, y = 0.5
-        if let point { x = Double((point.x - f.minX) / max(f.width, 1)); y = Double((point.y - f.minY) / max(f.height, 1)) }
+        if let point { (x, y) = space.fractions(of: CGPoint(x: point.x - f.minX, y: point.y - f.minY)) }
         else if let free = freeSpot() { (x, y) = free }
         let label = stick ? "" : PadActions.shortLabel(action)
-        let size = pad == .dpad ? 110.0 : (stick ? 120.0 : 54.0)
+        let size = TouchControlSpec.overlayActions.contains(action) ? TouchControlSpec.overlayBase : (pad == .dpad ? 110.0 : (stick ? 120.0 : 54.0))
         let spec = TouchControlSpec(label: label, action: action, mode: "tap",
                                     x: min(max(x, 0.04), 0.96), y: min(max(y, 0.06), 0.94), size: size)
         guard (layout?.controls.count ?? 0) < TouchLayout.maxControls else { return nil }
@@ -336,8 +518,9 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
                 let angle = Double(k) / Double(max(1, ring * 8)) * 2 * Double.pi
                 let c = CGPoint(x: f.midX + CGFloat(cos(angle)) * CGFloat(ring) * step, y: f.midY + CGFloat(sin(angle)) * CGFloat(ring) * step * 0.7)
                 guard f.insetBy(dx: 40, dy: 40).contains(c) else { continue }
-                if !placed.contains(where: { hypot(point(of: $0.spec).x - c.x, point(of: $0.spec).y - c.y) < CGFloat($0.spec.size) / 2 + 40 }) {
-                    return (Double((c.x - f.minX) / f.width), Double((c.y - f.minY) / f.height))
+                if !placed.contains(where: { hypot(point(of: $0.spec).x - c.x, point(of: $0.spec).y - c.y) < drawn($0.spec) / 2 + 40 }) {
+                    let at = space.fractions(of: CGPoint(x: c.x - f.minX, y: c.y - f.minY))
+                    return (at.x, at.y)
                 }
             }
         }
@@ -346,33 +529,82 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
 
     /// The editor's size slider: `began` remembers the state for Undo, `changed` resizes live, `ended` saves.
     func adjustSelectedSize(_ size: Double, phase: UIGestureRecognizer.State) {
-        guard let id = selectedID, layout?.locked != true else { return }
+        guard !selectedIDs.isEmpty, layout?.locked != true else { return }
+        func apply(_ size: Double) {
+            guard var l = layout else { return }
+            if let id = selectedID { resize(id, to: size); return }
+            l.controls = ControlArrange.sized(l.controls, ids: Set(selectedIDs), to: size)
+            if l != layout { layout = l; rebuildKeepingSelection(); onEdited?() }
+        }
         switch phase {
         case .began: remember()
-        case .changed: resize(id, to: size)
-        case .ended, .cancelled: resize(id, to: size); commit()
+        case .changed: apply(size)
+        case .ended, .cancelled: apply(size); commit()
         default: break
         }
     }
 
+    /// Copies of the selected controls, a little down and to the right of the originals; the copies are then the selection.
     func duplicateSelected() {
-        guard let spec = selectedSpec, (layout?.controls.count ?? 0) < TouchLayout.maxControls else { return }
-        var copy = spec; copy.id = UUID(); copy.x = min(spec.x + 0.07, 0.96); copy.y = min(spec.y + 0.1, 0.94)
-        addControl(copy)
+        guard var l = layout, !selectedIDs.isEmpty else { return }
+        let room = TouchLayout.maxControls - l.controls.count
+        let copies = Array(ControlArrange.copies(of: l.controls, ids: Set(selectedIDs)).filter { c in !(c.isOverlay && l.controls.contains { $0.action == c.action }) }.prefix(max(room, 0)))
+        guard !copies.isEmpty else { return }
+        remember()
+        l.controls.append(contentsOf: copies)
+        layout = l; selectedIDs = copies.map(\.id); rebuildKeepingSelection(); commit(); selectionChanged()
     }
 
     func removeSelected() {
-        guard var l = layout, l.locked != true, let id = selectedID else { return }
+        guard var l = layout, l.locked != true, !selectedIDs.isEmpty else { return }
         remember()
-        l.controls.removeAll { $0.id == id }
-        layout = l; selectedID = nil; rebuildKeepingSelection(); commit(); onSelect?(nil)
+        l.controls.removeAll { selectedIDs.contains($0.id) }
+        layout = l; selectedIDs = []; rebuildKeepingSelection(); commit(); selectionChanged()
+    }
+
+    // MARK: Several at once
+
+    /// Lines the selected controls up on an edge or a centre line of the group.
+    func align(_ edge: ControlArrange.Edge) {
+        // Flipped for the left hand, "left" is what the person sees: the layout's own right edge.
+        let own = TouchHandedness.storedEdge(edge, left: .left, right: .right, flipped: TouchHandedness.leftHanded)
+        arrange { ControlArrange.align($0, ids: Set(selectedIDs), edge: own, in: space.design, scale: Double(sizeFactor)) }
+    }
+    /// Spaces three or more selected controls evenly, across or down.
+    func distribute(_ axis: ControlArrange.Axis) { arrange { ControlArrange.distribute($0, ids: Set(selectedIDs), axis: axis, in: space.design, scale: Double(sizeFactor)) } }
+    /// Flips the selected controls left to right in place; with `wholeLayout` every control of the layout, about the middle of the screen (a left-handed layout).
+    func mirror(wholeLayout: Bool) {
+        let ids = wholeLayout ? Set(layout?.controls.map(\.id) ?? []) : Set(selectedIDs)
+        arrange { ControlArrange.mirror($0, ids: ids, wholeScreen: wholeLayout, in: space.design) }
+    }
+    private func arrange(_ change: ([TouchControlSpec]) -> [TouchControlSpec]) {
+        guard var l = layout, l.locked != true else { return }
+        let new = change(l.controls)
+        guard new != l.controls else { return }
+        remember()
+        l.controls = new
+        layout = l; rebuildKeepingSelection(); commit()
+    }
+
+    /// Puts the selected controls on the clipboard, to paste into this layout or another one.
+    func copySelectionToClipboard() { ControlClipboard.copy(selectedSpecs) }
+    /// Adds what is on the clipboard (moved a little if its controls are already where it was copied from), and selects it.
+    func pasteClipboard() {
+        guard var l = layout, l.locked != true, ControlClipboard.count > 0 else { return }
+        var fresh = ControlClipboard.paste(into: l.controls, room: TouchLayout.maxControls - l.controls.count)
+        guard !fresh.isEmpty else { return }
+        let overlap = fresh.contains { f in l.controls.contains { abs($0.x - f.x) < 0.01 && abs($0.y - f.y) < 0.01 && $0.action == f.action } }
+        if overlap { fresh = ControlArrange.moved(fresh, ids: Set(fresh.map(\.id)), dx: 0.05, dy: 0.08) }
+        remember()
+        l.controls.append(contentsOf: fresh)
+        layout = l; selectedIDs = fresh.map(\.id); rebuildKeepingSelection(); commit(); selectionChanged()
     }
 
     /// Replaces every control with a starting layout (the editor's Presets); Undo brings the old ones back.
     func replaceLayout(_ new: TouchLayout) {
         guard layout?.locked != true else { return }      // a locked layout is not swapped out (the editor's Presets button is greyed while it is locked)
         remember()
-        layout = new; selectedID = nil; build(); layoutIfNeeded(); commit(); onSelect?(nil)
+        layout = new; selectedIDs = []; build(); layoutIfNeeded(); commit(); selectionChanged()
     }
 
     /// Layout options (the editor's Options menu): how solid the controls are drawn when playing, and the tap on a press.
@@ -395,18 +627,27 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         l.locked = on; layout = l; commit()
     }
 
+    /// Where this layout wants the game's picture (nil: automatic).
+    func setPicture(_ placement: PicturePlacement?) {
+        guard var l = layout else { return }
+        remember()
+        l.picture = placement; layout = l; updatePictureOutline(); commit()
+    }
+
     /// The shape and colour of the selected key or mouse button (nil: the usual).
-    func setShape(_ shape: String?) { changeSelected { $0.shape = shape } }
-    func setColour(_ colour: String?) { changeSelected { $0.colour = colour } }
+    func setShape(_ shape: String?) { changeSelected { if $0.canTakeShape { $0.shape = shape } } }
+    func setColour(_ colour: String?) { changeSelected { if $0.canTakeShape { $0.colour = colour } } }
 
     /// Which control is drawn over which is the order in the layout: the last is on top.
-    func bringSelectedToFront() { moveSelected { $0.append($1) } }
-    func sendSelectedToBack() { moveSelected { $0.insert($1, at: 0) } }
-    private func moveSelected(_ put: (inout [TouchControlSpec], TouchControlSpec) -> Void) {
-        guard var l = layout, let id = selectedID, let i = l.controls.firstIndex(where: { $0.id == id }) else { return }
+    func bringSelectedToFront() { moveSelected(toFront: true) }
+    func sendSelectedToBack() { moveSelected(toFront: false) }
+    /// The chosen controls go to the front or the back together, keeping the order they had among themselves.
+    private func moveSelected(toFront: Bool) {
+        guard var l = layout, !selectedIDs.isEmpty else { return }
         remember()
-        let spec = l.controls.remove(at: i)
-        put(&l.controls, spec)
+        let chosen = l.controls.filter { selectedIDs.contains($0.id) }
+        l.controls.removeAll { selectedIDs.contains($0.id) }
+        l.controls = toFront ? l.controls + chosen : chosen + l.controls
         layout = l; rebuildKeepingSelection(); commit()
     }
 
@@ -424,9 +665,9 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func rebuildKeepingSelection() {
-        let keep = selectedID
+        let keep = selectedIDs
         build()
-        selectedID = keep
+        selectedIDs = keep.filter { id in placed.contains { $0.spec.id == id } }
         layoutIfNeeded(); updateOutline()
     }
 
@@ -461,7 +702,8 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func makeView(_ spec: TouchControlSpec) -> UIView? {
-        let side = CGFloat(spec.size)
+        let side = drawn(spec)
+        if spec.isOverlay { return OverlayChip(spec: spec) }
         if spec.action == "keyboard" { return CustomScreenButton(title: spec.label, symbol: "keyboard", side: side) { [weak self] in self?.onToggleKeyboard?() } }
         if let pad = spec.pad {
             let report: (VirtualPadSample) -> Void = { [weak self, id = spec.id] s in self?.padChanged(id, s) }
@@ -502,7 +744,7 @@ final class CustomControlsView: UIView, UIGestureRecognizerDelegate {
         case .wheel(let delta):
             let b = KeyButton(spec.label, .tap(0), side: side)
             b.titleLabel?.adjustsFontSizeToFitWidth = true; b.titleLabel?.minimumScaleFactor = 0.45
-            b.addAction(UIAction { _ in winios_pointer(0, 0, 0x800, UInt32(bitPattern: delta)) }, for: .touchUpInside)
+            b.addAction(UIAction { _ in ControlOutput.pointer(0, 0, 0x800, UInt32(bitPattern: delta)) }, for: .touchUpInside)
             return b
         case .lookToggle:
             let b = CustomLookButton(spec.label, side: side)
@@ -534,6 +776,11 @@ final class CustomLookButton: UIButton {
     }
 }
 
+extension TouchControlSpec {
+    /// Whether a shape and a colour mean anything for this control: keys and mouse buttons have them, sticks, pad controls, the keyboard button and overlay spots do not.
+    var canTakeShape: Bool { !isStick && pad == nil && action != "keyboard" && !isOverlay }
+}
+
 extension PadAction {
     var isKey: Bool { if case .key = self { return true }; return false }
 }
@@ -557,8 +804,8 @@ final class CustomMouseButton: UIButton {
         accessibilityLabel = (button == 0 ? "Left" : button == 1 ? "Right" : "Middle") + " mouse button" + (title.isEmpty ? "" : ", \(title)")
     }
     required init?(coder: NSCoder) { fatalError() }
-    private func press() { isPressed = true; backgroundColor = UIColor.systemOrange.withAlphaComponent(0.8); winios_pointer(0, 0, down, 0) }
-    func release() { guard isPressed else { return }; isPressed = false; backgroundColor = baseColour ?? UIColor(white: 0, alpha: 0.55); winios_pointer(0, 0, up, 0) }
+    private func press() { isPressed = true; backgroundColor = UIColor.systemOrange.withAlphaComponent(0.8); ControlOutput.pointer(0, 0, down, 0) }
+    func release() { guard isPressed else { return }; isPressed = false; backgroundColor = baseColour ?? UIColor(white: 0, alpha: 0.55); ControlOutput.pointer(0, 0, up, 0) }
 }
 
 /// A stick that holds W A S D or the arrow keys (eight directions).
@@ -650,4 +897,29 @@ final class CustomStick: UIView {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { end() } }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { if let t = tracking, touches.contains(t) { end() } }
     func release() { end() }
+}
+
+
+/// A spot for an overlay in the editor: the performance numbers or the people in a Discord call. It is drawn only while editing (the overlay itself draws while playing, centred here, as wide as
+/// this chip compared with its usual size) and never takes touches.
+final class OverlayChip: UIView {
+    init(spec: TouchControlSpec) {
+        super.init(frame: .zero)
+        let w = CGFloat(spec.size), h = max(34, w * 0.42)
+        let perf = spec.action == "overlay-perf"
+        backgroundColor = UIColor.systemTeal.withAlphaComponent(0.30)
+        layer.cornerRadius = 12; layer.borderWidth = 2; layer.borderColor = UIColor.systemTeal.cgColor
+        let icon = UIImageView(image: UIImage(systemName: perf ? "speedometer" : "person.wave.2.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: max(12, h * 0.36), weight: .bold)))
+        icon.tintColor = .white
+        let text = UILabel(); text.text = perf ? "Performance" : "Discord call"; text.textColor = .white; text.font = .systemFont(ofSize: max(10, h * 0.30), weight: .bold)
+        text.adjustsFontSizeToFitWidth = true; text.minimumScaleFactor = 0.5
+        let row = UIStackView(arrangedSubviews: [icon, text]); row.axis = .horizontal; row.spacing = 6; row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false; addSubview(row)
+        NSLayoutConstraint.activate([row.centerXAnchor.constraint(equalTo: centerXAnchor), row.centerYAnchor.constraint(equalTo: centerYAnchor), row.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 6), row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6)])
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: w).isActive = true; heightAnchor.constraint(equalToConstant: h).isActive = true
+        isUserInteractionEnabled = false
+        accessibilityLabel = perf ? "Performance overlay spot" : "Discord call overlay spot"
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }

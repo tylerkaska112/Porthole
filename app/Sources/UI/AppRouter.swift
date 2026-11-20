@@ -4,7 +4,7 @@ import SwiftUI
 import Observation
 
 /// The app's top-level sections. On iPhone they are the tab bar; on iPad the same list becomes a sidebar.
-enum AppTab: Hashable { case library, stores, compatibility, settings }
+enum AppTab: Hashable { case library, stores, compatibility, social, settings }
 
 /// What the Stores tab shows: its list of launchers (nil), every launcher's games on one page, or one launcher's library.
 enum StoresSelection: Hashable { case all, store(GameStore), downloads, software, softwareItem(String) }
@@ -47,12 +47,15 @@ final class AppRouter {
     /// One program's page in Software (Blender's).
     var onSoftwareItem: Bool { if case .softwareItem? = storesSelection { return true }; return false }
     func openReports(_ scope: ReportsScope) { reportsScope = scope; tab = .compatibility }
+    /// The Social tab, on Discord or on Steam's friends.
+    var socialSection: SocialSection?
+    func openSocial(_ section: SocialSection = .discord) { socialSection = section; tab = .social }
     func openSettings(_ page: SettingsPage? = nil, sub: SettingsSub? = nil) { settingsSub = sub; settingsPage = page; tab = .settings }
 }
 
 /// The pages in Settings' list, in the order of SettingsScreen.sections.
 enum SettingsPage: String, Hashable, CaseIterable, Identifiable {
-    case display, performance, sound, controls, stores, saves, storage, jit, appearance, updates, signing, advanced, reports, fixing, guides, about, report
+    case display, performance, sound, controls, stores, saves, storage, jit, appearance, updates, signing, advanced, reports, fixing, guides, community, about, report
     var id: String { rawValue }
 }
 
@@ -63,4 +66,6 @@ enum SettingsSub: Hashable {
     case components, links, diagnostics
     /// Two pages that sit one level below a Settings page: the VPN and cellular options of JIT and connection, and the full list of builds on Updates.
     case connectionExtras, olderVersions
+    /// The pages behind the doors of Settings > Controls: the settings of each kind of input, and the two pages that test a controller and a keyboard and mouse.
+    case controlsController, controlsKeyboard, controlsTouch, controlsTests, controlsTestPad, controlsTestKeys, controlsSticks
 }

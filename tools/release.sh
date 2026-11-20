@@ -7,6 +7,7 @@
 # Before running: bump MARKETING_VERSION / CURRENT_PROJECT_VERSION in app/project.yml and add a CHANGELOG.json entry for that build.
 # Builds the Release configuration. F4_CONFIGURATION=Debug builds Debug instead (tried on devices for much longer; see docs/ENGINE.md).
 # Fails fast, BEFORE the build, if the build is already published or has no changelog entry. Publishing is state-changing: it writes into the Hub's folder.
+
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # This machine's paths (F4_BUILD_ROOT, HUB_PUBLISH, ...) live in tools/local.env, which is not committed.
@@ -28,6 +29,13 @@ PUBLISH="${HUB_PUBLISH:-}"
 # The name this build has on the Hub: PORTHOLE_HUB_APP_ID from your Local.xcconfig (it must match what the installed app asks for), else "porthole".
 APPID=$(sed -n -E 's/^[[:space:]]*PORTHOLE_HUB_APP_ID[[:space:]]*=[[:space:]]*([A-Za-z0-9_-]+).*/\1/p' app/Config/Local.xcconfig 2>/dev/null | tail -1)
 APPID="${APPID:-porthole}"
+# The public channel is promote_public.sh's: a private build never goes there. A build for the old Discord test channel keeps its label and tag; everything else is a normal private build.
+[ "$APPID" != "porthole-stable" ] || { echo "✗ 'porthole-stable' is the public channel: tools/promote_public.sh owns it, not release.sh." >&2; exit 1; }
+if [ "$APPID" = "porthole-discord" ]; then
+  HUB_NAME="Porthole (Discord test)"; TAG_NAME="discord-${BUILD}"
+else
+  HUB_NAME="Porthole"; TAG_NAME="v${VERSION}"
+fi
 IPA="dist/Porthole-${VERSION}-${BUILD}-unsigned.ipa"
 
 [ -f "$PUBLISH" ] || { echo "✗ set HUB_PUBLISH (in tools/local.env) to your Hub's publish.py; not found: '$PUBLISH'"; exit 1; }
@@ -59,13 +67,13 @@ if [ -f "$HOME/.porthole/release-signing.key" ]; then
 else
   echo "⚠ no release signing key (~/.porthole/release-signing.key): publishing unsigned. Installs that carry the release key will refuse this update."
 fi
-python3 "$PUBLISH" "$IPA" --app "$APPID" --name "Porthole" --notes "${NOTES:-Build $BUILD}" --changelog CHANGELOG.json --data "$DATA" ${SIGNATURE:+--signature "$SIGNATURE"}
+python3 "$PUBLISH" "$IPA" --app "$APPID" --name "$HUB_NAME" --notes "${NOTES:-Build $BUILD}" --changelog CHANGELOG.json --data "$DATA" ${SIGNATURE:+--signature "$SIGNATURE"}
 for old in dist/Porthole-*-unsigned.ipa; do [ "$old" = "$IPA" ] || rm -f "$old"; done
 echo "▸ done"
 
 # Mark this exact source state so any release can be restored later:  git checkout v<version>
-if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-  echo "▸ tag v${VERSION} already exists (not moved)"
+if git rev-parse -q --verify "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+  echo "▸ tag ${TAG_NAME} already exists (not moved)"
 else
-  git tag -a "v${VERSION}" -m "Release ${VERSION} (build ${BUILD})" 2>/dev/null && echo "▸ tagged v${VERSION}" || true
+  git tag -a "${TAG_NAME}" -m "Release ${VERSION} (build ${BUILD})" 2>/dev/null && echo "▸ tagged ${TAG_NAME}" || true
 fi

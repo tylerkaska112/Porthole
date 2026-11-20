@@ -37,7 +37,6 @@ struct GamePage: View {
         Group {
             if let game {
                 ZStack(alignment: .top) {
-                    backdrop(game)
                     GeometryReader { geo in
                         let wide = geo.size.width > geo.size.height * 1.05
                         if wide {
@@ -67,6 +66,14 @@ struct GamePage: View {
                                 }
                             }
                         }
+                    }
+                }
+                // Glass surfaces (buttons, panels, chips, rows) are drawn darker here: this page can sit on a light picture, and white words on pale glass were hard to read.
+                .shadedGlass()
+                // The picture is Home's own, drawn by the app's frame at the same size and place: going between Home and this page it does not change or reload.
+                .background {
+                    GeometryReader { geo in
+                        BackdropPublisher(game: GameCardData(id: game.id, name: game.name, subtitle: ""), fraction: geo.size.height > geo.size.width ? 0.72 : 0.8, owner: "page", dim: 0.3)
                     }
                 }
                 .task(id: game.exe) {
@@ -120,20 +127,6 @@ struct GamePage: View {
 
     // MARK: Top
 
-    /// The game's art fills the whole page, softened and darkened so the rows on top stay readable.
-    private func backdrop(_ g: Game) -> some View {
-        ZStack {
-            AmbientBackdrop(animated: false)
-            Color.clear
-                .overlay { GameArtView(id: g.id, name: g.name, kind: .hero).blur(radius: 7).scaleEffect(1.08) }
-                .clipped()
-                .overlay { Color.black.opacity(0.38) }
-                .overlay { LinearGradient(colors: [.clear, Theme.backgroundBottom.opacity(0.55), Theme.backgroundBottom.opacity(0.9)], startPoint: .top, endPoint: .bottom) }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-    }
-
     private func hero(_ g: Game, back: Bool) -> some View {
         let busy = session.isActive
         let preparing = busy && session.game == g
@@ -178,7 +171,7 @@ struct GamePage: View {
         CopyNoteCard(game: g)
         if steam.signedIn, let appID = g.dockAppID { SteamCloudCard(appID: appID, store: steam) { open(.cloud) } }
         SettingsGroup(title: "Set up") {
-            ActionRow(id: "gp-door-controls", symbol: "gamecontroller.fill", title: "Controls and key binds", subtitle: (g.controls ?? .standard) == .firstPerson ? "First person" : "Mouse and keys") { open(.controls) }
+            ActionRow(id: "gp-door-controls", symbol: "gamecontroller.fill", title: "Controls and key binds", subtitle: Self.controlsSummary(g)) { open(.controls) }
             ActionRow(id: "gp-door-more", symbol: "slider.horizontal.3", title: "More options", subtitle: "Speed, memory, engine and launch options") { open(.more) }
         }
         if g.steamAppID ?? g.dockAppID != nil {
@@ -234,6 +227,7 @@ struct GamePage: View {
     @ViewBuilder private func subContent(_ s: Sub, _ g: Game) -> some View {
         switch s {
         case .controls:
+            GameControlsCard(gameID: g.id)
             controlsSection(g)
             GameBindsSection(gameID: g.id)
         case .compat: compatSection(g)
@@ -280,6 +274,10 @@ struct GamePage: View {
                 OverrideRow(id: "gp-res", symbol: "display", title: "Resolution", info: "The size of the screen this game sees. Default follows Settings > Display. Applies the next time the game starts.",
                             value: DisplayResolution.offered(s.resolution), globalText: globalRes,
                             options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: aspect)) }) { v in setting(g) { $0.resolution = v } }
+                OverrideRow(id: "gp-landscape", symbol: "rectangle.landscape.rotate", title: "Orientation",
+                            info: "Landscape: the screen turns to landscape when this game starts and stays there while it runs, even with the system's rotation lock on. Any orientation: the screen follows how you hold the device. Default follows Settings > Display.",
+                            value: s.autoLandscape, globalText: AutoLandscape.appWide ? "Landscape" : "Any orientation",
+                            options: [(1, "Landscape"), (0, "Any orientation")]) { v in setting(g) { $0.autoLandscape = v } }
                 OverrideRow(id: "gp-power", symbol: "bolt.fill", title: "Power mode", info: "Default follows Settings > Performance. Max runs up to the screen\u{2019}s maximum (120 FPS on a ProMotion screen, otherwise 60), Saver is 30 FPS and cooler.",
                             value: s.powerMode, globalText: PowerManager.shared.chosen.title,
                             options: PowerMode.allCases.map { ($0.rawValue, $0.title) }) { v in setting(g) { $0.powerMode = v } }
@@ -339,21 +337,27 @@ struct GamePage: View {
         }
     }
 
+    /// The line on the Controls door: what this game starts with.
+    static func controlsSummary(_ g: Game) -> String {
+        if g.followsDefaultControls { return "My default: " + DefaultControls.current.kind.title }
+        if g.activeBindSetID != nil { return "Bind set" }
+        if g.virtualPad == true { return "On-screen game controller" }
+        return DefaultControls.current.touchLayout != nil ? DefaultControls.current.kind.title : "Universal"
+    }
+
     private func controlsSection(_ g: Game) -> some View {
-        let first = g.controls == .firstPerson
         return VStack(alignment: .leading, spacing: 18) {
             SettingsGroup(title: "On-screen controls") {
-                ChoiceRow(id: "gp-layout", symbol: "gamecontroller.fill", title: "Layout",
-                          info: first ? "Left stick walks (W A S D). Drag on the right half of the screen to look. Buttons: jump, crouch, use, reload, sprint, fire and aim."
-                                      : "Tap to click, drag to hold the button, press and hold for right click, pinch to zoom, with E / F / Tab / Esc always on screen.",
-                          options: [(ControlLayout.standard, "Mouse and keys"), (ControlLayout.firstPerson, "First person")],
-                          selection: Binding(get: { g.controls ?? .standard }, set: { v in model.update(g) { $0.controls = v == .standard ? nil : v } }))
-                if first {
-                    let current = g.settings?.lookSensitivity ?? LaunchSettings.globalLookSensitivity
-                    SliderRow(id: "gp-look", symbol: "scope", title: "Look sensitivity" + (g.settings?.lookSensitivity == nil ? " (default)" : ""),
-                              value: Binding(get: { current }, set: { v in setting(g) { $0.lookSensitivity = v } }), range: LaunchSettings.lookRange, step: 0.1, format: { String(format: "%.1f\u{00D7}", $0) })
-                    if g.settings?.lookSensitivity != nil { ActionRow(id: "gp-look-reset", symbol: "arrow.counterclockwise", title: "Use the app-wide look sensitivity", chevron: false) { setting(g) { $0.lookSensitivity = nil } } }
+                if !g.followsDefaultControls {
+                    ActionRow(id: "gp-use-default", symbol: "arrow.uturn.backward", title: "Use my default controls",
+                              subtitle: "Back to \(DefaultControls.current.kind.title.lowercased()), as set in Settings > Controls. Your saved binds for this game are kept.", chevron: false) {
+                        model.update(g) { $0.ownControls = false; $0.virtualPad = nil; $0.activeBindSetID = nil }
+                    }
                 }
+                let current = g.settings?.lookSensitivity ?? LaunchSettings.globalLookSensitivity
+                SliderRow(id: "gp-look", symbol: "scope", title: "Look sensitivity" + (g.settings?.lookSensitivity == nil ? " (default)" : ""),
+                          value: Binding(get: { current }, set: { v in setting(g) { $0.lookSensitivity = v } }), range: LaunchSettings.lookRange, step: 0.1, format: { String(format: "%.1f\u{00D7}", $0) })
+                if g.settings?.lookSensitivity != nil { ActionRow(id: "gp-look-reset", symbol: "arrow.counterclockwise", title: "Use the app-wide look sensitivity", chevron: false) { setting(g) { $0.lookSensitivity = nil } } }
             }
         }
     }

@@ -21,10 +21,7 @@ struct AppearancePage: View {
     var body: some View {
         PageScaffold(title: "Appearance", symbol: "paintpalette.fill", subtitle: "Theme, colours and motion") {
             SettingsGroup(title: "Colour scheme", note: "The colours of the whole app.") {
-                AdaptiveGrid(minWidth: 108, spacing: 12) {
-                    ForEach(Palette.presets) { swatch($0) }
-                    swatch(Palette.custom(accent: theme.customAccent))
-                }
+                PalettePicker()
                 HStack {
                     Image(systemName: "eyedropper.halffull").foregroundStyle(Theme.accent)
                     Text("Your own colour").font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundStyle(Theme.text)
@@ -48,40 +45,25 @@ struct AppearancePage: View {
             }
         }
     }
-
-    private func swatch(_ p: Palette) -> some View {
-        let selected = theme.presetID == p.id
-        return Button { theme.presetID = p.id } label: {
-            VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous).fill(LinearGradient(colors: [Color(hex: p.bgTop), Color(hex: p.bgBottom)], startPoint: .top, endPoint: .bottom))
-                    Circle().fill(LinearGradient(colors: [Color(hex: p.accent), Color(hex: p.accent2)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 30, height: 30)
-                        .shadow(color: Color(hex: p.accent).opacity(0.7), radius: 8)
-                }
-                .frame(height: 64)
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(selected ? Color(hex: p.accent) : Theme.line, lineWidth: selected ? 3 : 1))
-                Text(p.name).font(.footnote.weight(selected ? .bold : .regular)).foregroundStyle(Theme.text)
-            }
-        }
-        .buttonStyle(.plain)
-        .focusTarget("theme-\(p.id)", radius: 16, scale: 1.05) { theme.presetID = p.id }
-        .accessibilityLabel(p.name)
-    }
 }
 
 // MARK: - Display
 
 struct DisplayPage: View {
-    @State private var resolution = LaunchSettings.globalResolution
-    private let aspect = LaunchSettings.screenAspect
+    @AppStorage(ExternalDisplay.enabledKey) private var useExternal = true
 
     var body: some View {
         PageScaffold(title: "Display", symbol: "display") {
             SettingsGroup(title: "Picture", note: "What every game starts with. A game's own page can change it for that game.") {
-                ChoiceRow(id: "dp-res", symbol: "rectangle.expand.vertical", title: "Resolution",
-                          info: "The size of the screen games see. Higher is sharper but needs more memory and a faster device; lower is faster. Games that pick their own resolution can choose any size up to this one, and the picture is scaled to your screen. Each game can have its own on its page. Applies the next time a game starts.",
-                          options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: aspect)) },
-                          selection: Binding(get: { resolution }, set: { id in resolution = id; LaunchSettings.globalResolution = id; LogStore.shared.log("[settings] resolution=\(id)") }))
+                ResolutionChoiceRow()
+            }
+            SettingsGroup(title: "Orientation", note: "A game's own page can change this for that game.") {
+                AutoLandscapeRow()
+            }
+            SettingsGroup(title: "Other screens") {
+                ToggleRow(id: "dp-external", symbol: "tv", title: "Play on a connected display",
+                          info: "When a TV or monitor is connected with a cable (USB-C or Lightning to HDMI), the game fills that screen and the controls stay on your iPhone or iPad. Between games the display shows a waiting screen instead of mirroring Porthole. AirPlay Screen Mirroring on an iPhone is only a copy of the device's screen: iOS does not give apps a second screen over it. Turn this off to keep mirroring your device's screen, then connect the display again.",
+                          isOn: $useExternal)
             }
         }
     }
@@ -90,7 +72,6 @@ struct DisplayPage: View {
 // MARK: - Performance
 
 struct PerformancePage: View {
-    @State private var power = PowerManager.shared.userMode
     @State private var keepWhenHot = PowerManager.shared.ignoreHeat
     @State private var swapMB = LaunchSettings.globalSwapMB
     @State private var swapCoverage = LaunchSettings.globalSwapCoverage
@@ -101,9 +82,7 @@ struct PerformancePage: View {
     var body: some View {
         PageScaffold(title: "Performance", symbol: "speedometer") {
             SettingsGroup(title: "Power", note: "How fast games run and what happens when the device gets hot.") {
-                ChoiceRow(id: "pf-power", symbol: "bolt.fill", title: "Power mode",
-                          info: "\(power.detail). By default a game drops to Battery saver (30 FPS and Eco) by itself when the device gets hot. Each game can pick its own on its page.",
-                          options: PowerMode.allCases.map { ($0, $0.title) }, selection: Binding(get: { power }, set: { power = $0; PowerManager.shared.set($0) }))
+                PowerModeChoiceRow()
                 EngineChoiceRow(id: "pf-bgrun", key: "background-run", title: "Keep a game running in the background")
                 ToggleRow(id: "pf-hot", symbol: "thermometer.high", title: "Keep my mode when hot",
                           info: "Stops the automatic drop when the device gets hot. Eco mode puts the game on the slow cores, so loading can crawl; this keeps full speed instead, and the device may get hotter and drain faster.",
@@ -414,6 +393,12 @@ struct SteamSettingsPage: View {
                     }
                 }
             }
+            SettingsGroup(title: "Downloads", note: "Where Steam games are downloaded from.") {
+                ChoiceRow(id: "st-region", symbol: "network", title: "Download region",
+                          info: "Which of Valve's download servers a game comes from. Automatic lets Steam choose from where you are, which is right almost always. A nearer or less busy region can be faster in special cases: a different one can only help, never change what you get. If a region has no server for a download, Steam's own choice is used. Applies to the next download.",
+                          options: [(0, "Automatic")] + SteamDownloadRegion.all.map { ($0.cell, $0.name) },
+                          selection: Binding(get: { SteamDownloadRegion.chosen() ?? 0 }, set: { cell in UserDefaults.standard.set(cell, forKey: SteamDownloadRegion.key); SteamLog.event("[steam-region] chosen: \(SteamDownloadRegion.name(forCell: cell) ?? "automatic")") }))
+            }
             SettingsGroup(title: "Starting games", note: "How Steam signs in when a game starts.") {
                 ToggleRow(id: "st-saved-signin", symbol: "bolt.badge.checkmark.fill", title: "Start from Steam's saved sign-in",
                           info: "On: once a game has started online, the next starts use what Steam saved: no new sign-in and no ownership check each time, about ten seconds faster. Steam renews the saved sign-in with an online start, which happens by itself after two weeks or when Steam could not use it. In such a start Steam is offline, so what needs a connection inside the game (multiplayer, Steam achievements) does not work: a game's own page can ask for an online sign-in every time. Off: every start signs in online, as before.",
@@ -459,8 +444,8 @@ struct SteamSettingsPage: View {
                               info: "Stops using this folder so you can choose another one. Nothing is deleted from the drive. Games that were put on this folder are no longer listed as installed here.") { confirmForgetSSD = true }
                         .disabled(storageBusy)
                 } else {
-                    ActionRow(id: "st-ssd-choose", symbol: "externaldrive.badge.plus", title: "Choose an SSD library folder", subtitle: "Make a folder on the drive first, then open that folder",
-                              info: "In the picker, open the drive, make a new folder on it (for example \u{201C}Porthole\u{201D}: the \u{22EF} menu, New Folder), open that folder and press Open. Choosing the drive\u{2019}s top level may not work: on some drives iOS gives Open no answer there. Pick a folder on a drive plugged into the device (a dedicated folder). Steam games you download to it keep their files, download progress and caches there. Cloud folders and network shares are not supported. If you unplug the drive during a game, the game ends.") { chooseFolder() }
+                    ActionRow(id: "st-ssd-choose", symbol: "externaldrive.badge.plus", title: "Choose an SSD library folder", subtitle: "A drive or folder that already has Steam games, or a new folder",
+                              info: "Open a drive or folder that already holds Steam games (a Steam library from a PC, or one Porthole made) and press Open: the games found are added to your Steam list. Or, for a new library, open the drive, make a new folder on it (for example \u{201C}Porthole\u{201D}: the \u{22EF} menu, New Folder), open that folder and press Open. Choosing the drive\u{2019}s top level may not work: on some drives iOS gives Open no answer there. Pick a folder on a drive plugged into the device (a dedicated folder). Steam games you download to it keep their files, download progress and caches there. Cloud folders and network shares are not supported. If you unplug the drive during a game, the game ends.") { chooseFolder() }
                         .disabled(storageBusy)
                 }
                 if storageBusy { ValueRow(id: "st-ssd-busy", symbol: "hourglass", title: "Checking the folder", value: "Please wait\u{2026}") }
@@ -499,8 +484,8 @@ struct SteamSettingsPage: View {
                 SteamLog.event("[steam-storage] folder picked: \(url.lastPathComponent)")
                 Task {
                     defer { storageBusy = false }
-                    do { try await storage.register(url); storageError = nil; await storage.scan(); SteamLog.event("[steam-storage] folder registered") }
-                    catch { storageError = ErrorText.plain(error); SteamLog.event("[steam-storage] folder refused: \(ErrorText.plain(error))") }
+                    await DriveWatcher.shared.adopt(url)
+                    storageError = nil
                 }
             case .failure(let failure):
                 SteamLog.event("[steam-storage] folder picker closed without a folder")
@@ -542,10 +527,24 @@ struct SetupPage: View {
 /// Tips and guides: turn the short explanations on or off, show them again, or open one by hand.
 struct GuidesPage: View {
     @State private var center = GuideCenter.shared
+    @State private var coach = Coach.shared
+    @State private var unavailable: String?
+    @State private var queued: String?
 
     var body: some View {
         @Bindable var center = center
-        PageScaffold(title: "Tips and guides", symbol: "lightbulb.fill") {
+        PageScaffold(title: "Tutorials and tips", symbol: "lightbulb.fill") {
+            SettingsGroup(title: "Tutorials", note: "Walk-throughs that point at the real buttons and move on as you use them. The cross on the card ends one at any time.") {
+                ForEach(TutorialLibrary.shared.all) { t in
+                    ActionRow(id: "tu-\(t.id)", symbol: t.symbol, title: t.title, subtitle: t.summary, detail: coach.isDone(t.id) ? "Done" : "\(t.minutes) min", chevron: false) {
+                        unavailable = t.unavailable?(); queued = nil
+                        if unavailable == nil { TutorialLibrary.shared.start(t.id); queued = TutorialLibrary.shared.notice }
+                    }
+                }
+                if let unavailable { Text(unavailable).font(.footnote).foregroundStyle(Theme.warn).padding(.horizontal, 6) }
+                if let queued { Text(queued).font(.footnote).foregroundStyle(Theme.good).padding(.horizontal, 6) }
+                ActionRow(id: "tu-reset", symbol: "arrow.counterclockwise", title: "Mark every tutorial as not done", chevron: false) { coach.resetProgress() }
+            }
             SettingsGroup(title: "Tips", note: "Short explanations that appear the first time you open a screen.") {
                 ToggleRow(id: "gd-on", symbol: "lightbulb.fill", title: "Show tips",
                           info: "A short explanation appears the first time you open a screen, and when you start your first game. The question mark at the top of every screen opens it again.", isOn: $center.enabled)
@@ -598,5 +597,71 @@ struct AboutPage: View {
             }
         }
         .sheet(isPresented: $licences) { LicencesSheet() }
+    }
+}
+
+// MARK: - Rows shared by Settings and the first-run setup
+
+/// Settings > Display > Resolution. The first-run setup shows the same row.
+struct ResolutionChoiceRow: View {
+    @State private var resolution = LaunchSettings.globalResolution
+    private let aspect = LaunchSettings.screenAspect
+    var body: some View {
+        ChoiceRow(id: "dp-res", symbol: "rectangle.expand.vertical", title: "Resolution",
+                  info: "The size of the screen games see. Higher is sharper but needs more memory and a faster device; lower is faster. Games that pick their own resolution can choose any size up to this one, and the picture is scaled to your screen. Each game can have its own on its page. Applies the next time a game starts.",
+                  options: DisplayResolution.allIDs.map { ($0, DisplayResolution.title(id: $0, screenAspect: aspect)) },
+                  selection: Binding(get: { resolution }, set: { id in resolution = id; LaunchSettings.globalResolution = id; LogStore.shared.log("[settings] resolution=\(id)") }))
+    }
+}
+
+/// Settings > Display > Turn to landscape when a game starts.
+struct AutoLandscapeRow: View {
+    @AppStorage(AutoLandscape.key) private var autoLandscape = true
+    var body: some View {
+        ToggleRow(id: "dp-landscape", symbol: "rectangle.landscape.rotate", title: "Turn to landscape when a game starts",
+                  info: "On: the screen turns to landscape when a game starts and stays there while it runs, even if you hold the device upright or lie down with it, and even with the system's rotation lock on. When the game ends the screen is free again. Off: the screen follows how you hold the device.",
+                  isOn: $autoLandscape)
+    }
+}
+
+/// Settings > Performance > Power mode.
+struct PowerModeChoiceRow: View {
+    @State private var power = PowerManager.shared.userMode
+    var body: some View {
+        ChoiceRow(id: "pf-power", symbol: "bolt.fill", title: "Power mode",
+                  info: "\(power.detail). By default a game drops to Battery saver (30 FPS and Eco) by itself when the device gets hot. Each game can pick its own on its page.",
+                  options: PowerMode.allCases.map { ($0, $0.title) }, selection: Binding(get: { power }, set: { power = $0; PowerManager.shared.set($0) }))
+    }
+}
+
+/// The colour schemes as a grid of swatches: Settings > Appearance and the first-run setup. `includeCustom` adds the person's own colour (picked on the Appearance page).
+struct PalettePicker: View {
+    var includeCustom = true
+    @State private var theme = ThemeStore.shared
+
+    var body: some View {
+        AdaptiveGrid(minWidth: 108, spacing: 12) {
+            ForEach(Palette.presets) { swatch($0) }
+            if includeCustom { swatch(Palette.custom(accent: theme.customAccent)) }
+        }
+    }
+
+    private func swatch(_ p: Palette) -> some View {
+        let selected = theme.presetID == p.id
+        return Button { theme.presetID = p.id } label: {
+            VStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous).fill(LinearGradient(colors: [Color(hex: p.bgTop), Color(hex: p.bgBottom)], startPoint: .top, endPoint: .bottom))
+                    Circle().fill(LinearGradient(colors: [Color(hex: p.accent), Color(hex: p.accent2)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 30, height: 30)
+                        .shadow(color: Color(hex: p.accent).opacity(0.7), radius: 8)
+                }
+                .frame(height: 64)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(selected ? Color(hex: p.accent) : Theme.line, lineWidth: selected ? 3 : 1))
+                Text(p.name).font(.footnote.weight(selected ? .bold : .regular)).foregroundStyle(Theme.text)
+            }
+        }
+        .buttonStyle(.plain)
+        .focusTarget("theme-\(p.id)", radius: 16, scale: 1.05) { theme.presetID = p.id }
+        .accessibilityLabel(p.name)
     }
 }

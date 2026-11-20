@@ -198,24 +198,41 @@ struct GameDemo: View {
 }
 
 
-/// The first-run guide's welcome and games pages, with sample values.
+/// The first-run guide's pages, with sample values: the welcome page, a page of choices (the real SetupControlsChoices cannot be built here, so the page is drawn from the same kit
+/// rows) and the games page. `page` is the screen name: setup, setup-controls, setup-games.
 struct SetupDemo: View {
-    let games: Bool
+    let page: String
     @Environment(\.verticalSizeClass) private var vSize
+    @State private var size = ""
+    @State private var left = false
+    @State private var festive = true
 
     var body: some View {
         ZStack {
             AmbientBackdrop(animated: false)
             VStack(spacing: 0) {
                 HStack(alignment: .top) {
-                    if games { SetupStepper(names: ["Speed", "Components", "Games"], current: 3, done: [true, true, false]).frame(maxWidth: 360) }
-                    Spacer()
-                    PillButton(id: "su-later", title: "Finish later", symbol: "xmark") {}
+                    if page != "setup" {
+                        SetupStepper(names: ["Yours", "Speed", "Components", "Games"], current: page == "setup-games" ? 4 : 1,
+                                     done: [page == "setup-games", page == "setup-games", page == "setup-games", false]).frame(maxWidth: 440)
+                    }
+                    Spacer(minLength: 8)
+                    if UIScreen.main.bounds.width < 500 { IconPillButton(id: "su-later", symbol: "xmark", label: "Finish later") {} } else { PillButton(id: "su-later", title: "Finish later", symbol: "xmark") {} }
                 }
                 .padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 6).frame(maxWidth: 728)
+                if page != "setup" {
+                    HStack(spacing: 8) {
+                        Text(page == "setup-games" ? "Games" : "Controls").font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.textDim)
+                        Text(page == "setup-games" ? "Optional" : "Your choice \u{00B7} 1 of 4").font(.caption2.weight(.bold)).foregroundStyle(Theme.textDim)
+                            .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.textDim.opacity(0.15), in: Capsule())
+                        Spacer()
+                    }
+                    .padding(.horizontal, 24).padding(.bottom, 6).frame(maxWidth: 728)
+                }
                 FocusScroll {
                     VStack(alignment: .leading, spacing: 16) {
-                        if games {
+                        switch page {
+                        case "setup-games":
                             Text("Add your games").font(.system(size: 28, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
                             SettingsGroup(title: "Stores") {
                                 StoreSignInRow(id: "su-steam", store: .steam, signedIn: true, info: "x") {}
@@ -223,18 +240,35 @@ struct SetupDemo: View {
                                 StoreSignInRow(id: "su-gog", store: .gog, signedIn: false, info: "x") {}
                                 StoreSignInRow(id: "su-itch", store: .itch, signedIn: false, info: "x") {}
                             }
-                        } else {
+                        case "setup-controls":
+                            Text("How will you play?").font(.system(size: 28, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
+                            DefaultControlsPicker()
+                            SettingsGroup(title: "Touch buttons", note: "How the on-screen buttons are drawn on this device. Try it above shows the result.") {
+                                ChoiceRow(id: "ct-button-size", symbol: "circle.dashed", title: "Button size", options: TouchButtonSize.choices.map { ($0.value, $0.title) }, selection: $size)
+                                ToggleRow(id: "ct-left-handed", symbol: "hand.point.left.fill", title: "Left-handed", isOn: $left)
+                            }
+                            SettingsGroup(title: "Controller") {
+                                ValueRow(id: "su-pad-state", symbol: "gamecontroller", title: "No controller connected", value: "Optional")
+                            }
+                        case "setup-look":
+                            Text("Colours and sound").font(.system(size: 28, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
+                            SettingsGroup(title: "Festive") {
+                                ToggleRow(id: "su-festive", symbol: "moon.stars.fill", title: "Festive themes", subtitle: "Holiday looks that appear by themselves around the day", isOn: $festive)
+                            }
+                        default:
                             SetupWelcomeHero(compact: vSize == .compact)
                             VStack(spacing: 10) {
-                                SetupStepCard(id: "su-o-1", number: 1, symbol: "bolt.fill", title: "Full speed", subtitle: "About 2 minutes", tag: "Needed") {}
-                                SetupStepCard(id: "su-o-2", number: 2, symbol: "shippingbox.fill", title: "Windows components", subtitle: "About 25 MB", tag: "Done", tagGood: true) {}
-                                SetupStepCard(id: "su-o-3", number: 3, symbol: "gamecontroller.fill", title: "Add your games", subtitle: "Steam, Epic Games, GOG, itch.io, Amazon Games, EA or Files", tag: "Optional") {}
+                                SetupStepCard(id: "su-o-1", number: 1, symbol: "slider.horizontal.3", title: "Make it yours", subtitle: "Controls, colours, sound and power", tag: "Your choice") {}
+                                SetupStepCard(id: "su-o-2", number: 2, symbol: "bolt.fill", title: "Full speed", subtitle: "About 2 minutes", tag: "Needed") {}
+                                SetupStepCard(id: "su-o-3", number: 3, symbol: "shippingbox.fill", title: "Windows components", subtitle: "About 25 MB", tag: "Recommended") {}
+                                SetupStepCard(id: "su-o-4", number: 4, symbol: "gamecontroller.fill", title: "Add your games", subtitle: "Steam, Epic Games, GOG, itch.io, Amazon Games, EA or Files", tag: "Optional") {}
                             }
+                            ActionRow(id: "su-essentials", symbol: "forward.fill", title: "Just the essentials", subtitle: "Skip the choices and get ready to play; every one of them is in Settings", chevron: false) {}
                         }
                     }
                     .padding(.horizontal, 24).padding(.vertical, 12).frame(maxWidth: 680).frame(maxWidth: .infinity)
                 }
-                PillButton(id: "su-next", title: games ? "Continue" : "Let's start", symbol: "chevron.right", style: .primary) {}.padding(.vertical, 12)
+                PillButton(id: "su-next", title: page == "setup" ? "Let's start" : "Continue", symbol: "chevron.right", style: .primary) {}.padding(.vertical, 12)
             }
         }
     }

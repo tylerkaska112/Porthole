@@ -131,7 +131,8 @@ final class EpicAuth: ObservableObject {
         do {
             let token = try await validAccessToken()
             guard let account = store.loadTokens(), !account.accountID.isEmpty else { return }
-            let url = URL(string: "https://datastorage-public-service-liveegs.ol.epicgames.com/api/v1/access/egstore/savesync/\(account.accountID)/\(appName)/")!
+            // Legendary's host for Epic's cloud saves. The older ol.epicgames.com name no longer resolves (13 of 15 Epic reports log "hostname could not be found" here).
+            let url = URL(string: "https://datastorage-public-service-liveegs.live.use1a.on.epicgames.com/api/v1/access/egstore/savesync/\(account.accountID)/\(appName)/")!
             var request = URLRequest(url: url)
             request.setValue("bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -154,8 +155,10 @@ final class EpicAuth: ObservableObject {
         }
     }
 
-    /// Legendary's get_game_token: exchange codes are fetched for one launch and never saved.
-    func gameArguments(appName: String) async throws -> String {
+    /// Legendary's get_game_token: exchange codes are fetched for one launch and never saved. `game` adds what Epic's own launcher passes besides the sign-in (Legendary's
+    /// get_launch_parameters): the sandbox the game belongs to, the ownership token a game that checks one asks for, and the catalog's extra arguments. Those are looked up
+    /// best-effort: a failure there is logged and the game still starts with the sign-in, as before.
+    func gameArguments(appName: String, game: EpicGame? = nil) async throws -> String {
         let token = try await validAccessToken()
         guard let account = store.loadTokens() else { throw EpicAuthError.notSignedIn }
         var request = URLRequest(url: URL(string: "https://\(oauthHost)/account/api/oauth/exchange")!)
@@ -165,15 +168,60 @@ final class EpicAuth: ObservableObject {
         guard (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let code = json["code"] as? String, !code.isEmpty else { throw EpicAuthError.network }
-        let arguments = ["-AUTH_LOGIN=unused", "-AUTH_PASSWORD=" + code, "-AUTH_TYPE=exchangecode",
-                         "-epicapp=" + appName, "-epicenv=Prod", "-EpicPortal",
-                         "-epicusername=" + account.displayName, "-epicuserid=" + account.accountID, "-epiclocale=en"]
-        // Madeira's tokenizer groups double-quoted values; embedded quotes/control characters
-        // cannot be represented and must not turn an account name into another argument.
-        guard arguments.allSatisfy({ !$0.contains("\"") && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }) else {
+
+        var attributes = EpicLaunchArguments.Attributes()
+        var tokenPath: String?
+        let namespace = game?.namespace
+        if let game, !game.namespace.isEmpty, let catalogID = game.catalogItemId, !catalogID.isEmpty {
+            if let found = await EpicLibrary.shared.launchAttributes(namespace: game.namespace, catalogItemId: catalogID, token: token) { attributes = found }
+            if attributes.requiresOwnershipToken {
+                tokenPath = await writeOwnershipToken(appName: appName, namespace: game.namespace, catalogItemId: catalogID, accountID: account.accountID, token: token)
+            }
+        }
+        LogStore.shared.log("[epic] launch arguments: sandbox \(namespace?.isEmpty == false ? "yes" : "no"), ownership token \(attributes.requiresOwnershipToken ? (tokenPath != nil ? "yes" : "needed but not fetched") : "not needed"), extra arguments \(attributes.additionalCommandLine.isEmpty ? "none" : "\(attributes.additionalCommandLine.count) characters")")
+
+        let arguments: [String]
+        do {
+            arguments = try EpicLaunchArguments.build(appName: appName, exchangeCode: code, displayName: account.displayName, accountID: account.accountID,
+                                                      namespace: namespace, ownershipTokenPath: tokenPath)
+        } catch {
+            // Madeira's tokenizer groups double-quoted values; embedded quotes/control characters
+            // cannot be represented and must not turn an account name into another argument.
             throw EpicContentError.invalid("Epic returned invalid launch parameters.")
         }
-        return arguments.map { "\"" + $0 + "\"" }.joined(separator: " ")
+        let quoted = arguments.map { "\"" + $0 + "\"" }.joined(separator: " ")
+        return attributes.additionalCommandLine.isEmpty ? quoted : quoted + " " + attributes.additionalCommandLine
+    }
+
+    /// Epic's ownership token for a game that checks one (the same request Epic's launcher makes), written where the game can read it: a file in Porthole's drive C, whose
+    /// Windows path goes on the command line as -epicovt. Nil when it could not be fetched or written.
+    private func writeOwnershipToken(appName: String, namespace: String, catalogItemId: String, accountID: String, token: String) async -> String? {
+        do {
+            var request = URLRequest(url: URL(string: "https://ecommerceintegration-public-service-ecomprod02.ol.epicgames.com/ecommerceintegration/api/public/platforms/EPIC/identities/\(accountID)/ownershipToken")!)
+            request.httpMethod = "POST"
+            request.setValue("bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 4
+            var body = URLComponents()
+            body.queryItems = [URLQueryItem(name: "nsCatalogItemId", value: "\(namespace):\(catalogItemId)")]
+            request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
+            let (data, response) = try await StoreNetwork.session.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty, data.count < 64 * 1024 else {
+                LogStore.shared.log("[epic] ownership token: Epic answered \((response as? HTTPURLResponse)?.statusCode ?? 0)", level: .error)
+                return nil
+            }
+            let windows = EpicLaunchArguments.tokenPath(appName: appName)
+            guard let file = AppModel.unixURL(forWindows: windows) else { return nil }
+            let folder = file.deletingLastPathComponent()
+            try? FileManager.default.removeItem(at: folder)                     // an old token is of no use
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+            return windows
+        } catch {
+            LogStore.shared.log("[epic] ownership token: \(error.localizedDescription)", level: .error)
+            return nil
+        }
     }
 
     func signOut() {

@@ -101,6 +101,7 @@
   box.addEventListener("focus", load);
   document.addEventListener("keydown", function (e) { if (e.key === "/" && document.activeElement !== box && !/INPUT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) { e.preventDefault(); box.focus(); } });
   var initialQ = fromAddress();
+  if (!initialQ && /[?&]search\b/.test(location.search)) box.focus();
   if (initialQ) { box.value = initialQ; run(); }
   window.addEventListener("hashchange", function () { var v = fromAddress(); if (v && v !== box.value) { box.value = v; run(); } });
 })();

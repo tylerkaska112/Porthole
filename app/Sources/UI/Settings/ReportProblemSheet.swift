@@ -27,7 +27,8 @@ struct ReportProblemPage: View {
     }
 
     private static let issues = URL(string: "https://github.com/tylerkaska112/PortHole/issues/new/choose")!
-    private static let discord = URL(string: "https://discord.gg/N7PkdptTFn")!
+    private static let discord = CommunityLinks.discord!
+    private static let x = CommunityLinks.x!
 
     var body: some View {
         PageScaffold(title: "Report a problem", symbol: "exclamationmark.bubble.fill", subtitle: "Send the developer what went wrong") {
@@ -86,6 +87,7 @@ struct ReportProblemPage: View {
                 }
                 ActionRow(id: "rp-github", symbol: "arrow.up.right.square", title: "Open an issue on GitHub", subtitle: "Attach the file to it", chevron: false) { UIApplication.shared.open(Self.issues) }
                 ActionRow(id: "rp-discord", symbol: "bubble.left.and.bubble.right.fill", title: "Ask on Discord", subtitle: "There are support channels", chevron: false) { UIApplication.shared.open(Self.discord) }
+                ActionRow(id: "rp-x", symbol: "megaphone.fill", title: "Follow Porthole on X", subtitle: "News and new versions", chevron: false) { UIApplication.shared.open(Self.x) }
                 if let sentNote { Text(sentNote).font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
             }
         }

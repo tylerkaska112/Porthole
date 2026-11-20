@@ -17,6 +17,13 @@ extension SettingsSub {
         case .diagnostics: "Diagnostics"
         case .connectionExtras: "VPN and cellular options"
         case .olderVersions: "Older versions"
+        case .controlsController: "Controller"
+        case .controlsKeyboard: "Keyboard and mouse"
+        case .controlsTouch: "Touch screen"
+        case .controlsTests: "Test and troubleshoot"
+        case .controlsTestPad: "Test controller"
+        case .controlsTestKeys: "Test keyboard and mouse"
+        case .controlsSticks: "Sticks and drift"
         }
     }
 
@@ -24,6 +31,7 @@ extension SettingsSub {
     var parent: SettingsSub? {
         switch self {
         case .engineGroup, .engineChanged: .engineGroups
+        case .controlsTestPad, .controlsTestKeys, .controlsSticks: .controlsTests
         default: nil
         }
     }
@@ -33,6 +41,7 @@ extension SettingsSub {
         if case .store = self { return .stores }
         if self == .connectionExtras { return .jit }
         if self == .olderVersions { return .updates }
+        if self == .controlsController || self == .controlsKeyboard || self == .controlsTouch || self == .controlsTests || self == .controlsTestPad || self == .controlsTestKeys || self == .controlsSticks { return .controls }
         return .advanced
     }
 
@@ -48,6 +57,13 @@ extension SettingsSub {
         case .diagnostics: "hub-diagnostics"
         case .connectionExtras: "hub-connection-extras"
         case .olderVersions: "hub-older-versions"
+        case .controlsController: "ct-door-controller"
+        case .controlsKeyboard: "ct-door-keyboard"
+        case .controlsTouch: "ct-door-touch"
+        case .controlsTests: "ct-door-tests"
+        case .controlsTestPad: "ct-door-test-pad"
+        case .controlsTestKeys: "ct-door-test-keys"
+        case .controlsSticks: "ct-door-sticks"
         }
     }
 }

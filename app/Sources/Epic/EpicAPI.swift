@@ -241,6 +241,31 @@ final class EpicLibrary: ObservableObject {
         return try JSONDecoder().decode([String: EpicCatalogItem].self, from: data)
     }
 
+    /// What Epic's catalog says one game's launch needs (see EpicLaunchArguments). Nil when the lookup failed: the caller starts the game without them.
+    func launchAttributes(namespace: String, catalogItemId: String, token: String) async -> EpicLaunchArguments.Attributes? {
+        var components = URLComponents(string: "https://catalog-public-service-prod06.ol.epicgames.com/catalog/api/shared/namespace/\(namespace)/bulk/items")!
+        components.queryItems = [URLQueryItem(name: "id", value: catalogItemId),
+                                 URLQueryItem(name: "includeDLCDetails", value: "true"),
+                                 URLQueryItem(name: "includeMainGameDetails", value: "true"),
+                                 URLQueryItem(name: "country", value: "US"),
+                                 URLQueryItem(name: "locale", value: "en-US")]
+        var request = URLRequest(url: components.url!)
+        request.setValue("bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 4
+        do {
+            let (data, response) = try await StoreNetwork.session.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let json = try? JSONSerialization.jsonObject(with: data) else {
+                LogStore.shared.log("[epic] launch attributes: Epic answered \((response as? HTTPURLResponse)?.statusCode ?? 0)", level: .error)
+                return nil
+            }
+            return EpicLaunchArguments.attributes(fromCatalog: json, catalogItemId: catalogItemId)
+        } catch {
+            LogStore.shared.log("[epic] launch attributes: \(error.localizedDescription)", level: .error)
+            return nil
+        }
+    }
+
     private static func artwork(from images: [EpicKeyImage]?, preferring order: [String]) -> URL? {
         guard let images = images else { return nil }
         for type in order {

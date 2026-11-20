@@ -46,21 +46,21 @@ struct SetupWelcomeHero: View {
                 PortholeMark(size: 64)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Welcome to Porthole").font(.system(size: 26, weight: .black, design: .rounded)).foregroundStyle(Theme.text)
-                    Text("Three quick steps. Stop any time.").font(.subheadline).foregroundStyle(Theme.textDim)
+                    Text("Choose how you play, then get ready. Stop any time.").font(.subheadline).foregroundStyle(Theme.textDim)
                 }
             }
         } else {
             VStack(spacing: 10) {
                 PortholeMark(size: 128).shadow(color: Theme.accent.opacity(0.55 * Theme.glowStrength), radius: 30)
                 Text("Welcome to Porthole").font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(Theme.text)
-                Text("Windows games on your iPhone and iPad.\nThree quick steps, and you can stop any time.").font(.system(size: 16, design: .rounded)).foregroundStyle(Theme.textDim).multilineTextAlignment(.center)
+                Text("Windows games on your iPhone and iPad.\nChoose how you want it, then get ready. You can stop any time.").font(.system(size: 16, design: .rounded)).foregroundStyle(Theme.textDim).multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity).padding(.vertical, 6)
         }
     }
 }
 
-/// One of the three steps on the welcome page: a big number, what it is, how long it takes, and whether it is needed.
+/// One of the steps on the welcome page: a big number, what it is, how long it takes, and whether it is needed.
 struct SetupStepCard: View {
     let id: AnyHashable
     let number: Int

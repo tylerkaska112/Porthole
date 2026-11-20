@@ -102,6 +102,7 @@ struct StoreSheetShell<Art: View, Content: View>: View {
         }
         .presentationBackground(Theme.background)
         .preferredColorScheme(Theme.scheme)
+        .releasesKeyboardOnAppear()
     }
 }
 

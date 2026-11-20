@@ -1,0 +1,278 @@
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -444,6 +444,86 @@
+ static _Atomic int g_bg_mute;
+ /* Published to the RT callback. Written with release, read with acquire. */
+ static _Atomic(struct ios_stream *) g_mix[IOS_MAX_STREAMS];
++
++/* Porthole voice bridge (Discord branch, patch 0200): Porthole is ONE audio source. The app mixes everything itself, so Discord's sound is added into this
++ * endpoint's output (after the game's own mix and the background mute, so it is heard while the game is paused, muted for the background, or absent) and
++ * the microphone comes in on this same unit (full duplex), not through a second audio engine that would fight this one for the hardware.
++ * Two lock-free single-producer rings of mono float samples at the endpoint's rate:
++ *   playback: the app writes (porthole_voice_write), the render callback reads and puts the same sample on every output channel;
++ *   capture:  the render callback writes what the microphone delivered, the app reads (porthole_voice_read).
++ * Nothing in here blocks the real-time thread. */
++#define PV_RING 16384u    /* frames, power of two: about 340 ms at 48 kHz */
++static float g_pv_play[PV_RING];
++static float g_pv_cap[PV_RING];
++static _Atomic uint64_t g_pv_play_w, g_pv_play_r, g_pv_cap_w, g_pv_cap_r;
++static _Atomic int g_pv_active;     /* the render callback mixes and captures */
++static _Atomic uint64_t g_pv_cap_drops, g_pv_play_short, g_pv_render_errs;
++static int g_pv_hold;               /* the endpoint must keep running for the voice (under g_dev_lock) */
++static int g_pv_mic_wanted;         /* the app wants the microphone (under g_dev_lock) */
++static int g_pv_mic_on;             /* input is enabled on the unit (under g_dev_lock; read by the callback) */
++static float g_pv_scratch[4096];
++
++static int ios_pv_setup_input(AudioUnit au, UInt32 rate, int on)
++{
++    UInt32 flag = on ? 1u : 0u;
++    OSStatus err = AudioUnitSetProperty(au, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &flag, sizeof(flag));
++    if (err) { fprintf(stderr, "[ios_audio] pv EnableIO(input,%u): %d\n", (unsigned)flag, (int)err); return 0; }
++    if (on) {
++        AudioStreamBasicDescription asbd = {0};
++        asbd.mSampleRate = rate;
++        asbd.mFormatID = kAudioFormatLinearPCM;
++        asbd.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
++        asbd.mFramesPerPacket = 1;
++        asbd.mChannelsPerFrame = 1;
++        asbd.mBitsPerChannel = 32;
++        asbd.mBytesPerFrame = 4;
++        asbd.mBytesPerPacket = 4;
++        err = AudioUnitSetProperty(au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &asbd, sizeof(asbd));
++        if (err) { fprintf(stderr, "[ios_audio] pv input StreamFormat: %d\n", (int)err); return 0; }
++    }
++    return 1;
++}
++
++/* Sums the voice into `out` (after the game's mix) and reads the microphone. Real-time thread. */
++static void ios_pv_render(AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, float *out, UInt32 nframes, UInt32 ch)
++{
++    uint64_t r, w, avail, n, i;
++    UInt32 c;
++
++    r = atomic_load_explicit(&g_pv_play_r, memory_order_relaxed);
++    w = atomic_load_explicit(&g_pv_play_w, memory_order_acquire);
++    avail = w - r;
++    n = avail < nframes ? avail : nframes;
++    for (i = 0; i < n; i++) {
++        float v = g_pv_play[(r + i) & (PV_RING - 1)];
++        for (c = 0; c < ch; c++) out[i * ch + c] += v;
++    }
++    atomic_store_explicit(&g_pv_play_r, r + n, memory_order_release);
++    if (n < nframes) atomic_fetch_add_explicit(&g_pv_play_short, nframes - n, memory_order_relaxed);
++
++    if (g_pv_mic_on && g_dev.au && nframes <= 4096) {
++        AudioBufferList abl;
++        AudioUnitRenderActionFlags f = 0;
++        OSStatus err;
++        (void)flags;
++        abl.mNumberBuffers = 1;
++        abl.mBuffers[0].mNumberChannels = 1;
++        abl.mBuffers[0].mDataByteSize = nframes * sizeof(float);
++        abl.mBuffers[0].mData = g_pv_scratch;
++        err = AudioUnitRender(g_dev.au, &f, ts, 1, nframes, &abl);
++        if (err) {
++            atomic_fetch_add_explicit(&g_pv_render_errs, 1, memory_order_relaxed);
++        } else {
++            uint64_t cw = atomic_load_explicit(&g_pv_cap_w, memory_order_relaxed);
++            uint64_t cr = atomic_load_explicit(&g_pv_cap_r, memory_order_acquire);
++            uint64_t room = PV_RING - (cw - cr);
++            uint64_t m = room < nframes ? room : nframes;
++            for (i = 0; i < m; i++) g_pv_cap[(cw + i) & (PV_RING - 1)] = g_pv_scratch[i];
++            if (m < nframes) atomic_fetch_add_explicit(&g_pv_cap_drops, nframes - m, memory_order_relaxed);
++            atomic_store_explicit(&g_pv_cap_w, cw + m, memory_order_release);
++        }
++    }
++}
+ 
+ /* Madeira MADEIRA_AUDIO_GAIN: the game's volume at the endpoint, in percent of what the game sends, for a game that is too
+  * loud or too quiet next to the rest of the phone's sound. Unset: 100, and the render callback does one comparison and nothing else. 10 to 200 is
+@@ -829,7 +909,7 @@
+     size_t total = (size_t)nframes * dev_ch;
+     size_t k, cap_floats, clamped = 0;
+     int i;
+-    (void)refcon; (void)flags; (void)ts; (void)bus;
++    (void)refcon; (void)bus;
+ 
+     /* Never write past what Core Audio handed us: the format is packed
+      * interleaved, so there is exactly one buffer, but trust its size rather
+@@ -844,7 +924,11 @@
+     }
+ 
+     memset(out, 0, total * sizeof(float));
+-    if (atomic_load_explicit(&g_ios_audio_paused, memory_order_relaxed)) {   /* paused, silence */
++    if (atomic_load_explicit(&g_ios_audio_paused, memory_order_relaxed)) {   /* paused, silence (the voice still plays) */
++        if (atomic_load_explicit(&g_pv_active, memory_order_relaxed)) {
++            ios_pv_render(flags, ts, out, nframes, dev_ch);
++            for (k = 0; k < total; k++) { if (out[k] > 1.0f) out[k] = 1.0f; else if (out[k] < -1.0f) out[k] = -1.0f; }
++        }
+         atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);
+         return noErr;
+     }
+@@ -865,6 +949,10 @@
+     if (clamped) atomic_fetch_add_explicit(&g_dev.clamped, clamped, memory_order_relaxed);
+     if (atomic_load_explicit(&g_bg_mute, memory_order_relaxed))
+         memset(out, 0, total * sizeof(float));
++    if (atomic_load_explicit(&g_pv_active, memory_order_relaxed)) {   /* the voice goes in last: not muted, not paused */
++        ios_pv_render(flags, ts, out, nframes, dev_ch);
++        for (k = 0; k < total; k++) { if (out[k] > 1.0f) out[k] = 1.0f; else if (out[k] < -1.0f) out[k] = -1.0f; }
++    }
+     atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);
+     return noErr;
+ }
+@@ -937,6 +1025,7 @@
+                                kAudioUnitScope_Input, 0, &cb, sizeof(cb));
+     if (err) { fprintf(stderr, "[ios_audio] ml1026 SetRenderCallback: %d\n", (int)err); goto fail; }
+ 
++    g_pv_mic_on = g_pv_mic_wanted ? ios_pv_setup_input(g_dev.au, g_dev.rate, 1) : 0;
+     if ((err = AudioUnitInitialize(g_dev.au))) {
+         fprintf(stderr, "[ios_audio] ml1026 AudioUnitInitialize: %d\n", (int)err);
+         goto fail;
+@@ -1093,7 +1182,7 @@
+         struct ios_stream *m = atomic_load_explicit(&g_mix[i], memory_order_relaxed);
+         if (m && m->started) { any = 1; break; }
+     }
+-    if (!any && !g_bg_keepalive && g_dev.au && g_dev.running) {
++    if (!any && !g_bg_keepalive && !g_pv_hold && g_dev.au && g_dev.running) {
+         AudioOutputUnitStop(g_dev.au);
+         g_dev.running = 0;
+     }
+@@ -1111,6 +1200,7 @@
+ 
+     atomic_store_explicit(&g_bg_mute, mute ? 1 : 0, memory_order_relaxed);
+     pthread_mutex_lock(&g_dev_lock);
++    if (g_pv_hold) { keepalive = 1; halt = 0; }   /* a voice call keeps the endpoint running whatever the background logic wants */
+     g_bg_keepalive = keepalive && !halt;
+     g_bg_halt = halt ? 1 : 0;
+     for (i = 0; i < IOS_MAX_STREAMS; i++) {
+@@ -1133,7 +1223,7 @@
+         OSStatus err = AudioOutputUnitStart(g_dev.au);
+         if (err) fprintf(stderr, "[ios_audio] bg AudioOutputUnitStart: %d\n", (int)err);
+         else g_dev.running = 1;
+-    } else if (g_dev.au && g_dev.running && (g_bg_halt || (!any && !g_bg_keepalive))) {
++    } else if (g_dev.au && g_dev.running && (g_bg_halt || (!any && !g_bg_keepalive && !g_pv_hold))) {
+         AudioOutputUnitStop(g_dev.au);
+         g_dev.running = 0;
+     }
+@@ -1144,6 +1234,121 @@
+     return running;
+ }
+ 
++/* Porthole voice bridge: see g_pv_*. Called by the app (Discord voice). With `want_mic` the microphone is read on the endpoint's own unit; the app's AVAudioSession must
++ * already be a record-capable category and the permission granted. Creates the endpoint when no game has (48 kHz stereo) and starts it. Returns
++ * bit0: the endpoint runs, bit1: the microphone is on. The endpoint rate is porthole_voice_rate(). */
++int porthole_voice_start(int want_mic)
++{
++    int flags = 0;
++    OSStatus err;
++
++    pthread_mutex_lock(&g_dev_lock);
++    g_pv_mic_wanted = want_mic ? 1 : 0;
++    g_pv_hold = 1;
++    if (!g_dev.au) {
++        struct ios_stream fmt;
++        memset(&fmt, 0, sizeof(fmt));
++        fmt.sample_rate = IOS_AUDIO_SAMPLE_RATE;
++        fmt.channels = IOS_AUDIO_CHANNELS;
++        int failed_before = g_dev.failed;
++        if (ios_dev_create_locked(&fmt) && !failed_before) g_dev.failed = 0;
++    } else if (want_mic != g_pv_mic_on) {
++        /* the unit exists (a game plays): input is switched on or off with the unit stopped and uninitialised */
++        int was_running = g_dev.running;
++        if (was_running) { AudioOutputUnitStop(g_dev.au); g_dev.running = 0; }
++        AudioUnitUninitialize(g_dev.au);
++        g_pv_mic_on = want_mic ? ios_pv_setup_input(g_dev.au, g_dev.rate, 1) : (ios_pv_setup_input(g_dev.au, g_dev.rate, 0), 0);
++        if ((err = AudioUnitInitialize(g_dev.au))) fprintf(stderr, "[ios_audio] pv AudioUnitInitialize after input change: %d\n", (int)err);
++        if (was_running) {
++            if (!(err = AudioOutputUnitStart(g_dev.au))) g_dev.running = 1;
++            else fprintf(stderr, "[ios_audio] pv restart after input change: %d\n", (int)err);
++        }
++    }
++    atomic_store_explicit(&g_pv_play_r, atomic_load_explicit(&g_pv_play_w, memory_order_acquire), memory_order_release);
++    atomic_store_explicit(&g_pv_cap_r, atomic_load_explicit(&g_pv_cap_w, memory_order_acquire), memory_order_release);
++    if (g_dev.au && !g_dev.running && !g_bg_halt && !atomic_load_explicit(&g_dev_suspended, memory_order_acquire)) {
++        if (!(err = AudioOutputUnitStart(g_dev.au))) g_dev.running = 1;
++        else fprintf(stderr, "[ios_audio] pv AudioOutputUnitStart: %d\n", (int)err);
++    }
++    if (g_dev.au) atomic_store_explicit(&g_pv_active, 1, memory_order_release);
++    if (g_dev.au && g_dev.running) flags |= 1;
++    if (g_pv_mic_on) flags |= 2;
++    fprintf(stderr, "[ios_audio] pv start: mic wanted=%d on=%d, endpoint %s (%u Hz, %u ch)\n", want_mic, g_pv_mic_on,
++            (flags & 1) ? "running" : "not running", g_dev.rate, g_dev.channels);
++    pthread_mutex_unlock(&g_dev_lock);
++    return flags;
++}
++
++void porthole_voice_stop(void)
++{
++    int any = 0, i;
++
++    pthread_mutex_lock(&g_dev_lock);
++    atomic_store_explicit(&g_pv_active, 0, memory_order_release);
++    g_pv_hold = 0;
++    g_pv_mic_wanted = 0;
++    if (g_dev.au && g_pv_mic_on) {   /* the microphone indicator goes out with the input */
++        int was_running = g_dev.running;
++        OSStatus err;
++        if (was_running) { AudioOutputUnitStop(g_dev.au); g_dev.running = 0; }
++        AudioUnitUninitialize(g_dev.au);
++        ios_pv_setup_input(g_dev.au, g_dev.rate, 0);
++        g_pv_mic_on = 0;
++        if ((err = AudioUnitInitialize(g_dev.au))) fprintf(stderr, "[ios_audio] pv AudioUnitInitialize after stop: %d\n", (int)err);
++        if (was_running && !(err = AudioOutputUnitStart(g_dev.au))) g_dev.running = 1;
++    }
++    for (i = 0; i < IOS_MAX_STREAMS; i++) {
++        struct ios_stream *m = atomic_load_explicit(&g_mix[i], memory_order_relaxed);
++        if (m && m->started) { any = 1; break; }
++    }
++    if (!any && !g_bg_keepalive && g_dev.au && g_dev.running) { AudioOutputUnitStop(g_dev.au); g_dev.running = 0; }
++    fprintf(stderr, "[ios_audio] pv stop: capture dropped %llu frames, playback short %llu frames, capture render errors %llu\n",
++            (unsigned long long)atomic_load_explicit(&g_pv_cap_drops, memory_order_relaxed),
++            (unsigned long long)atomic_load_explicit(&g_pv_play_short, memory_order_relaxed),
++            (unsigned long long)atomic_load_explicit(&g_pv_render_errs, memory_order_relaxed));
++    pthread_mutex_unlock(&g_dev_lock);
++}
++
++unsigned porthole_voice_rate(void) { return g_dev.rate ? g_dev.rate : IOS_AUDIO_SAMPLE_RATE; }
++int porthole_voice_mic_on(void) { return g_pv_mic_on; }
++
++/* App -> speaker: mono float samples at porthole_voice_rate(). Returns how many were taken. */
++size_t porthole_voice_write(const float *src, size_t frames)
++{
++    uint64_t w = atomic_load_explicit(&g_pv_play_w, memory_order_relaxed);
++    uint64_t r = atomic_load_explicit(&g_pv_play_r, memory_order_acquire);
++    uint64_t room = PV_RING - (w - r);
++    size_t n = frames < room ? frames : (size_t)room, i;
++    for (i = 0; i < n; i++) g_pv_play[(w + i) & (PV_RING - 1)] = src[i];
++    atomic_store_explicit(&g_pv_play_w, w + n, memory_order_release);
++    return n;
++}
++
++/* Frames written and not yet played. */
++size_t porthole_voice_playback_fill(void)
++{
++    return (size_t)(atomic_load_explicit(&g_pv_play_w, memory_order_acquire) - atomic_load_explicit(&g_pv_play_r, memory_order_acquire));
++}
++
++/* Microphone -> app: mono float samples at porthole_voice_rate(). Returns how many were copied. */
++size_t porthole_voice_read(float *dst, size_t max_frames)
++{
++    uint64_t r = atomic_load_explicit(&g_pv_cap_r, memory_order_relaxed);
++    uint64_t w = atomic_load_explicit(&g_pv_cap_w, memory_order_acquire);
++    uint64_t avail = w - r;
++    size_t n = avail < max_frames ? (size_t)avail : max_frames, i;
++    for (i = 0; i < n; i++) dst[i] = g_pv_cap[(r + i) & (PV_RING - 1)];
++    atomic_store_explicit(&g_pv_cap_r, r + n, memory_order_release);
++    return n;
++}
++
++void porthole_voice_stats(uint64_t *cap_drops, uint64_t *play_short, uint64_t *render_errs)
++{
++    if (cap_drops) *cap_drops = atomic_load_explicit(&g_pv_cap_drops, memory_order_relaxed);
++    if (play_short) *play_short = atomic_load_explicit(&g_pv_play_short, memory_order_relaxed);
++    if (render_errs) *render_errs = atomic_load_explicit(&g_pv_render_errs, memory_order_relaxed);
++}
++
+ /* Is the endpoint really rendering? An interruption, or a category change
+  * while it ran, can stop the RemoteIO unit without telling us, and then iOS
+  * would suspend Madeira (and the game would be silent). Called by the app

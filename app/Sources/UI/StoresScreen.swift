@@ -273,7 +273,6 @@ struct AllStoreGamesScreen: View {
                     openSteam = nil
                     scope?.focused = "sg-\(game.id)"
                 }
-                .background { Theme.backgroundTop.ignoresSafeArea().allowsHitTesting(false) }
                 .transition(.opacity)
             }
             if let game = openEpic {
@@ -281,7 +280,6 @@ struct AllStoreGamesScreen: View {
                     openEpic = nil
                     scope?.focused = "eg-\(game.appName)"
                 }
-                .background { Theme.backgroundTop.ignoresSafeArea().allowsHitTesting(false) }
                 .transition(.opacity)
             }
         }

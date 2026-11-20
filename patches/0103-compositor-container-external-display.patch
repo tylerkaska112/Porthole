@@ -1,0 +1,61 @@
+--- a/app/Runtime/Winios/Winios.h	2026-10-11 03:29:13
++++ b/app/Runtime/Winios/Winios.h	2026-10-11 03:29:13
+@@ -50,6 +50,9 @@
+  * Safe to call before or after the compositor exists; main-thread
+  * dispatch inside. */
+ void winios_set_compositor_frame(double x, double y, double w, double h);
++/* Porthole 0103: put the compositor inside this UIView (the window of a connected external display) instead of the key window; NULL puts it back.
++ * A void pointer so the header stays plain C. */
++void winios_set_compositor_container(void *container_uiview);
+ void winios_set_desktop_rect(double x, double y, double w, double h, int set);
+ 
+ /* S2 trackpad pointer. (x, y) are ABSOLUTE wine-desktop pixels (the
+--- a/app/Runtime/Winios/Winios.m	2026-10-11 03:29:13
++++ b/app/Runtime/Winios/Winios.m	2026-10-11 03:29:13
+@@ -906,6 +906,28 @@
+         if (g_desk_rect_set == (set != 0) && (!set || CGRectEqualToRect(g_desk_rect, r))) return;
+         g_desk_rect = r;
+         g_desk_rect_set = set != 0;
++        winios_layout_compositor();
++    });
++}
++
++/* Porthole 0103 (external display): the view the compositor is added to instead of the app's key window. Swift sets it to a view in the window of a
++ * connected AirPlay or cable display while a game runs there, and back to nil when the display goes away. A compositor that already exists is moved. */
++static __weak UIView *g_comp_container;
++static UIWindow *winios_key_window(void) {
++    for (UIWindow *w in UIApplication.sharedApplication.windows) {
++        if (w.isKeyWindow) return w;
++    }
++    return UIApplication.sharedApplication.windows.firstObject;
++}
++void winios_set_compositor_container(void *container_uiview) {
++    UIView *container = (__bridge UIView *)container_uiview;
++    dispatch_async(dispatch_get_main_queue(), ^{
++        g_comp_container = container;
++        if (!g_compositor_view) return;
++        UIView *target = container ?: winios_key_window();
++        if (!target || g_compositor_view.superview == target) return;
++        [g_compositor_view removeFromSuperview];
++        [target addSubview:g_compositor_view];
+         winios_layout_compositor();
+     });
+ }
+@@ -1100,7 +1122,7 @@
+         g_compositor_view.backgroundColor = UIColor.clearColor;
+         g_compositor_view.opaque = NO;
+         g_comp_game = YES;
+-        [win addSubview:g_compositor_view];
++        [(g_comp_container ?: win) addSubview:g_compositor_view];
+         winios_layout_compositor();
+         fprintf(stderr, "[winios] game-mode window overlay attached (MADEIRA_GAME_WINDOWS=0 disables)\n");
+         fflush(stderr);
+@@ -1133,7 +1155,7 @@
+     g_desk_bg = [CALayer layer];
+     g_desk_bg.backgroundColor = [UIColor colorWithRed:0.0 green:0.502 blue:0.502 alpha:1.0].CGColor;
+     [g_compositor_view.layer addSublayer:g_desk_bg];
+-    [win addSubview:g_compositor_view];
++    [(g_comp_container ?: win) addSubview:g_compositor_view];
+     winios_layout_compositor();
+     fprintf(stderr, "[winios] compositor attached inside presentation frame\n");
+     fflush(stderr);

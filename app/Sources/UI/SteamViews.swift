@@ -106,8 +106,6 @@ struct SteamOwnedList: View {
 
     @AppStorage(StoreSort.key) private var sortRaw = StoreSort.name.rawValue
     @State private var showSort = false
-    @State private var showFriends = false
-    @State private var friendsScope = FocusScope()
     @State private var sortScope = FocusScope()
     private var sort: StoreSort { StoreSort(rawValue: sortRaw) ?? .name }
 
@@ -176,7 +174,7 @@ struct SteamOwnedList: View {
         free = free == Int64.max ? free : free - 500_000_000
         var used: Int64 = 0, queued = 0, skipped = 0
         for g in games {
-            let need = Int64(g.spaceNeeded)
+            let need = Int64(store.spaceNeeded(for: g))
             if used + need <= free { store.install(g.id); used += need; queued += 1 } else { skipped += 1 }
         }
         notice = skipped > 0 ? "Queued \(queued) of \(games.count). The other \(skipped) need more free space than the device has left." : nil
@@ -187,7 +185,7 @@ struct SteamOwnedList: View {
     private var selectionBar: some View {
         let games = selectedGames
         let total = games.reduce(UInt64(0)) { $0 + $1.sizeBytes }
-        let needed = games.reduce(UInt64(0)) { $0 + $1.spaceNeeded }
+        let needed = games.reduce(UInt64(0)) { $0 + store.spaceNeeded(for: $1) }
         return VStack(spacing: 8) {
             if let free = SteamGameTile.freeSpace(), total > 0 {
                 Text("\(games.count) selected \u{00B7} \(SteamGameTile.size(total)) to download \u{00B7} \(SteamGameTile.size(UInt64(max(free, 0)))) free")
@@ -220,7 +218,7 @@ struct SteamOwnedList: View {
             else { IconPillButton(id: "so-refresh", symbol: "arrow.clockwise", label: "Refresh the list") { Task { await store.refresh() } } }
             searchField
             SegmentedPills(options: [.init(id: "all", title: "All"), .init(id: "installed", title: "Installed"), .init(id: "controller", title: "Controller")], selection: filter) { filter = $0 }
-            IconPillButton(id: "so-friends", symbol: "person.2.fill", label: "Friends") { showFriends = true }
+            IconPillButton(id: "so-friends", symbol: "person.2.fill", label: "Friends") { router.openSocial(.steam) }
             IconPillButton(id: "so-sort", symbol: "arrow.up.arrow.down", label: "Sort: \(sort.title)") { showSort = true }
             IconPillButton(id: "so-f-select", symbol: "checkmark.circle", label: selecting ? "Stop selecting" : "Select several to download", on: selecting) { selecting.toggle(); if !selecting { selected = [] } }
         } content: {
@@ -247,9 +245,6 @@ struct SteamOwnedList: View {
                 ForEach(shown) { game in SteamGameTile(store: store, game: game, notice: $notice, selecting: selecting, selected: selected.contains(game.id), selectable: needsDownload(game),
                                               open: { if selecting { toggle(game) } else { open = game } }) { removing = game } }
             }
-        }
-        .sheet(isPresented: $showFriends) {
-            GameSubSheet(title: "Friends", scope: friendsScope, close: { showFriends = false }) { SteamFriendsList() }.preferredColorScheme(Theme.scheme)
         }
         .sheet(isPresented: $showSort) {
             ChoiceSheet(title: "Sort by", options: StoreSort.options(includingSize: true), selected: sort, scope: sortScope) { value in
@@ -422,7 +417,7 @@ struct SteamGameTile: View {
     private func begin(to library: String?) {
         notice = nil
         if store.destination(for: game.id, chosen: library) == SteamStorageLibrary.internalID,
-           game.sizeBytes > 0, let free = Self.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
+           game.sizeBytes > 0, case let need = store.spaceNeeded(for: game), need > 0, let free = Self.freeSpace(), free < Int64(need) + 500_000_000 {
             notice = "Not enough free space for \(game.name): it needs about \(Self.size(game.diskBytes ?? game.sizeBytes)) on the device and it has \(Self.size(UInt64(free)))."
             return
         }

@@ -1,0 +1,195 @@
+{
+ "parts": {
+  "y": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    40.6,
+    32.938,
+    18.967
+   ],
+   "pieces": 1
+  },
+  "b": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    51.275,
+    22.219,
+    15.497
+   ],
+   "pieces": 1
+  },
+  "stick_r": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    20.484,
+    -2.512,
+    24.009
+   ],
+   "pieces": 6
+  },
+  "static_89": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "pieces": 262
+  },
+  "menu": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    11.386,
+    22.227,
+    19.626
+   ],
+   "pieces": 2
+  },
+  "lt": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    -45.405,
+    45.938,
+    4.728
+   ],
+   "pieces": 1
+  },
+  "stick_l": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    -39.64,
+    21.451,
+    23.18
+   ],
+   "pieces": 6
+  },
+  "view": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    -11.445,
+    22.17,
+    18.406
+   ],
+   "pieces": 3
+  },
+  "x": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    29.667,
+    22.197,
+    20.352
+   ],
+   "pieces": 1
+  },
+  "lb": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    -39.246,
+    40.558,
+    18.369
+   ],
+   "pieces": 1
+  },
+  "rb": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    39.244,
+    40.558,
+    18.369
+   ],
+   "pieces": 1
+  },
+  "rt": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    45.403,
+    45.938,
+    4.728
+   ],
+   "pieces": 1
+  },
+  "dpad": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    -20.579,
+    -3.386,
+    21.583
+   ],
+   "pieces": 1
+  },
+  "guide": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    0.011,
+    38.411,
+    18.391
+   ],
+   "pieces": 3
+  },
+  "a": {
+   "materials": [
+    "89"
+   ],
+   "pivot": [
+    40.381,
+    11.665,
+    18.353
+   ],
+   "pieces": 1
+  }
+ },
+ "materials": {
+  "89": {
+   "base": "xbox_89_base.png"
+  }
+ },
+ "model": "xbox",
+ "roles": {
+  "ls": "stick_l",
+  "rs": "stick_r",
+  "a": "a",
+  "b": "b",
+  "x": "x",
+  "y": "y",
+  "up": "dpad",
+  "down": "dpad",
+  "left": "dpad",
+  "right": "dpad",
+  "lb": "lb",
+  "rb": "rb",
+  "lt": "lt",
+  "rt": "rt",
+  "home": "guide",
+  "view": "view",
+  "menu": "menu"
+ },
+ "decals": {}
+}

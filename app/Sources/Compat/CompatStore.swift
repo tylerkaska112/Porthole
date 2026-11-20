@@ -260,7 +260,7 @@ final class CompatStore: ObservableObject {
             launch: game.dockAppID != nil && game.launchDirect != true ? "steam" : "direct", power: power, keepModeWhenHot: s.keepModeWhenHot,
             swapMB: max(0, s.swapMB), swapCoverage: ["", "blocks", "wide"].contains(s.swapCoverage) ? s.swapCoverage : "", vramMB: max(0, s.vramMB),
             audioCushionMs: min(2000, max(0, s.audioCushionMs)), preciseMath: s.preciseMath, desktopDisplay: s.dockDesktop,
-            controls: (game.controls ?? .standard) == .firstPerson ? "firstPerson" : "standard")
+            controls: "standard")          // the built-in layouts are gone: every game uses a layout now, so this part of a report no longer varies
     }
 
     func submit(game: Game, rating: CompatVerdict, stability: CompatStability, tags: [CompatTag], source: CompatSource,

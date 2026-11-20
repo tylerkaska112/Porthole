@@ -15,7 +15,7 @@ OUT="${OUT:-$F4_BUILD_ROOT/ntdll-lib}"; WORK="$OUT/obj"; mkdir -p "$WORK"
 # BASE=<library>: start from that archive instead of the one in vendor/ (to stack rebuilt objects on an earlier copy, for example the OpenGL one).
 cp "${BASE:-$M/app/Madeira/libntdll_unix.a}" "$OUT/libntdll_unix.a"
 for NAME in "$@"; do
-  OBJ=$NAME; EXTRA=(); UNDEF=()
+  OBJ=$NAME; EXTRA=(); UNDEF=(); SRCPATH=
   case "$NAME" in
     virtual) SRCFILE=virtual_ios.c ;;
     signal_arm64) SRCFILE=signal_arm64_ios.c ;;
@@ -26,7 +26,7 @@ for NAME in "$@"; do
     file) SRCFILE=../../wine/dlls/ntdll/unix/file.c ;;
     sync) SRCFILE=../../wine/dlls/ntdll/unix/sync.c ;;   # fastsync (patch 0140)
     env) SRCFILE=env_ios.c ;;
-    audio_null) SRCFILE=audio_null_ios.c; OBJ=audio_null_ios ;;          # silent audio clock (patch 0163, PR 349)
+    audio_null) SRCFILE=audio_null_ios.c; OBJ=audio_null_ios; [ -n "${AUDIO_NULL_SRC:-}" ] && SRCPATH=$AUDIO_NULL_SRC ;;   # AUDIO_NULL_SRC=<file>: a patched copy of it (patch 0200, tools/build_discord_audio.sh)          # silent audio clock (patch 0163, PR 349)
     crypt32) SRCFILE=../crypto-unix/crypt32_unixlib_ios.c; OBJ=crypt32_unixlib      # root store (patch 0163, PR 356)
              EXTRA=(-D__wine_unix_call_funcs=crypt32_unix_call_funcs -D__wine_unix_call_wow64_funcs=crypt32_unix_call_wow64_funcs
                     -I"$WINE_SRC/dlls/crypt32" -I"$M/toolchains/gnutls-ios/include" -include "$M/build/crypto-unix/ios_gnutls_shim.h") ;;
@@ -47,7 +47,7 @@ for NAME in "$@"; do
     -D__WINESRC__ -DLTC_NO_PROTOTYPES -DLTC_SOURCE -D_NTSYSTEM_ -D_ACRTIMP= -DWINBASEAPI= \
     -DBINDIR=\"/usr/local/bin\" -DLIBDIR=\"/usr/local/lib\" -DDATADIR=\"/usr/local/share\" -DSYSTEMDLLPATH=\"\" \
     -DWINE_UNIX_LIB -DWINE_IOS=1 -Dget_thread_context=ntdll_get_thread_context -Dset_thread_context=ntdll_set_thread_context \
-    "${UNDEF[@]+"${UNDEF[@]}"}" -c "$BUILD_DIR/$SRCFILE" -o "$WORK/$OBJ.o" 2>"$WORK/$NAME.err" || { cat "$WORK/$NAME.err" | grep error; exit 1; }
+    "${UNDEF[@]+"${UNDEF[@]}"}" -c "${SRCPATH:-$BUILD_DIR/$SRCFILE}" -o "$WORK/$OBJ.o" 2>"$WORK/$NAME.err" || { cat "$WORK/$NAME.err" | grep error; exit 1; }
   ( cd "$WORK" && xcrun -sdk iphoneos ar r "$OUT/libntdll_unix.a" "$OBJ.o" 2>&1 | grep -v "^ar: creating" || true )
 done
 xcrun -sdk iphoneos ranlib "$OUT/libntdll_unix.a"

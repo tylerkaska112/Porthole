@@ -49,6 +49,8 @@ import UserNotifications
 // Log tag: [bg-run].
 @MainActor final class BackgroundRun {
     static let shared = BackgroundRun()
+    /// Set while Discord voice owns the audio session (play and record): keeping-alive then leaves the session's category alone.
+    nonisolated(unsafe) static var sessionManagedElsewhere = false
 
     /// Minutes a running game keeps going after Madeira leaves the screen. 0: iOS pauses it within seconds, as before.
     static var gameMinutes: Double { minutes(MadeiraConfig.gameValue("background-run") ?? MadeiraConfig.get("background-run"), default: 0) }
@@ -319,7 +321,7 @@ import UserNotifications
     /// Other apps' audio plays alongside Madeira's while it is away, so starting music
     /// in another app does not interrupt (and so end) Madeira's background run.
     private func mixWithOthers() {
-        guard !changedCategory else { return }
+        guard !changedCategory, !Self.sessionManagedElsewhere else { return }
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
             changedCategory = true
@@ -331,6 +333,7 @@ import UserNotifications
     /// Back as it was: the game session's own category (WineProcessBridge.m), and a
     /// session we only made active for a download made inactive again.
     private func restoreSession() {
+        guard !Self.sessionManagedElsewhere else { return }
         let session = AVAudioSession.sharedInstance()
         if changedCategory {
             try? session.setCategory(.playback, options: [])

@@ -3,7 +3,8 @@
 import SwiftUI
 import LauncherCore
 
-/// The first-run walkthrough, in plain words: Welcome, three numbered steps (Full speed, Windows components, Games) and Done.
+/// The first-run walkthrough, in plain words: Welcome, four numbered steps and Done. Step 1 is "Make it yours" (four pages of choices: controls, colours and sound, picture and power,
+/// helpers: every default is already chosen, so each page can be passed with Continue); steps 2 to 4 get the app ready (Full speed, Windows components, Games).
 /// A step that is not finished says so on its button ("Skip for now"), nothing is skipped silently, and where the person got to is remembered.
 struct SetupGuideView: View {
     @EnvironmentObject var model: AppModel
@@ -17,6 +18,7 @@ struct SetupGuideView: View {
     /// A phone held sideways: the height is what is scarce, so the buttons move up beside the steps and the pages get the whole height.
     @Environment(\.verticalSizeClass) private var vSize
     private var short: Bool { vSize == .compact }
+    @Environment(\.horizontalSizeClass) private var hSize
     var openAdd: () -> Void = {}
     var openSteam: () -> Void = {}
     var openEpic: () -> Void = {}
@@ -34,14 +36,36 @@ struct SetupGuideView: View {
     }
 
     private enum Step: Int, CaseIterable {
-        case welcome, speed, downloads, games, tips, done
+        case welcome, controls, look, power, helpers, speed, downloads, games, tips, done
 
-        /// Position among the numbered steps (1...3); the first and last page are not numbered.
-        var number: Int? { (1...3).contains(rawValue) ? rawValue : nil }
-        static let numbered = 3
+        /// Position among the numbered steps (1...4); the four pages of choices are all step 1, and the first and last page are not numbered.
+        var number: Int? {
+            switch self {
+            case .controls, .look, .power, .helpers: 1
+            case .speed: 2
+            case .downloads: 3
+            case .games: 4
+            case .welcome, .tips, .done: nil
+            }
+        }
+        static let numbered = 4
+        /// Which of the four pages of choices this is (1...4), if it is one.
+        var choiceIndex: Int? {
+            switch self {
+            case .controls: 1
+            case .look: 2
+            case .power: 3
+            case .helpers: 4
+            default: nil
+            }
+        }
         var name: String {
             switch self {
             case .welcome: "Welcome"
+            case .controls: "Controls"
+            case .look: "Colours and sound"
+            case .power: "Picture and power"
+            case .helpers: "Helpers"
             case .speed: "Full speed"
             case .downloads: "Windows components"
             case .games: "Games"
@@ -55,7 +79,7 @@ struct SetupGuideView: View {
     }
 
     @State private var step: Step = {
-        let saved = UserDefaults.standard.integer(forKey: "f4.setupStep")
+        let saved = UserDefaults.standard.integer(forKey: "f4.setupStep2")   // the pages were numbered differently before the choices were added
         return Step(rawValue: saved).flatMap { $0 == .done ? nil : $0 } ?? .welcome       // an out-of-range number from an older version of the guide starts over
     }()
 
@@ -88,7 +112,7 @@ struct SetupGuideView: View {
         case .speed: .needed
         case .downloads: .recommended
         case .games: .optional
-        case .welcome, .tips, .done: nil
+        case .welcome, .controls, .look, .power, .helpers, .tips, .done: nil
         }
     }
 
@@ -100,7 +124,7 @@ struct SetupGuideView: View {
         case .speed: jitReady && (!tunnelNeeded || tunnelAllowed)
         case .downloads: runtimeReady
         case .games: anyStore || !model.games.isEmpty
-        case .welcome, .tips, .done: true
+        case .welcome, .controls, .look, .power, .helpers, .tips, .done: true      // the choices have their defaults already
         }
     }
 
@@ -109,6 +133,10 @@ struct SetupGuideView: View {
     private var firstFocus: AnyHashable {
         switch step {
         case .welcome, .tips, .done: "su-next"
+        case .controls: "dc-\(DefaultControls.current.kind.rawValue)"
+        case .look: "theme-\(ThemeStore.shared.presetID)"
+        case .power: "dp-res"
+        case .helpers: "su-help-fix"
         case .speed:
             if method != .inApp { tunnelNeeded && !tunnelAllowed ? "su-tunnel" : "su-next" }
             else { hasPairing ? (tunnelNeeded ? "su-tunnel" : "su-next") : (OnDevicePairing.isSupported ? "su-pair-here" : "su-pair-pick") }
@@ -126,6 +154,10 @@ struct SetupGuideView: View {
                     VStack(alignment: .leading, spacing: short ? 12 : 16) {
                         switch step {
                         case .welcome: welcome
+                        case .controls: header("How will you play?", info: "Pick the controls every game starts with. Try it lets you press the buttons and feel the layout; nothing reaches a game. A single game can have its own controls on its page, and all of this is in Settings \u{203A} Controls.", infoTitle: "Controls"); SetupControlsChoices()
+                        case .look: header("Colours and sound", info: "Choose how Porthole looks and how loud games are. Everything here is in Settings too.", infoTitle: "Colours and sound"); SetupLookChoices()
+                        case .power: header("Picture and power", info: "Higher resolution is sharper but needs more memory; a faster power mode uses more battery and runs warmer. Each game can change both on its own page.", infoTitle: "Picture and power"); SetupPowerChoices()
+                        case .helpers: header("Helpers", info: "What Porthole may do for you after a game. Nothing here sends anything by itself.", infoTitle: "Helpers"); SetupHelperChoices()
                         case .speed: speedPage
                         case .downloads: downloadsPage
                         case .games: gamesPage
@@ -148,7 +180,7 @@ struct SetupGuideView: View {
             scope.defaultFocus = firstFocus; scope.focused = firstFocus
         }
         .onChange(of: step) { _, now in
-            UserDefaults.standard.set(now == .done ? 0 : now.rawValue, forKey: "f4.setupStep")
+            UserDefaults.standard.set(now == .done ? 0 : now.rawValue, forKey: "f4.setupStep2")
             scope.defaultFocus = firstFocus; scope.focused = firstFocus
         }
         .onDisappear { UserDefaults.standard.set(true, forKey: "f4.setupSeen") }
@@ -182,7 +214,7 @@ struct SetupGuideView: View {
                         }
                     }
                     Text(step.name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.textDim).lineLimit(1)
-                    if let need = need(step) { tag(complete(step) ? "Done" : need.label, good: complete(step)) }
+                    stepTag(step)
                 }
                 Spacer(minLength: 8)
                 if step != .welcome { PillButton(id: "su-back", title: "Back", symbol: "chevron.left") { go(-1) } }
@@ -204,15 +236,17 @@ struct SetupGuideView: View {
         VStack(spacing: 10) {
             HStack(alignment: .top) {
                 if let n = step.number {
-                    SetupStepper(names: ["Speed", "Components", "Games"], current: n, done: [complete(.speed), complete(.downloads), complete(.games)]).frame(maxWidth: 360)
+                    SetupStepper(names: ["Yours", "Speed", "Components", "Games"], current: n, done: [step.rawValue > Step.helpers.rawValue, complete(.speed), complete(.downloads), complete(.games)]).frame(maxWidth: 440)
                 }
-                Spacer()
-                PillButton(id: "su-later", title: step == .done ? "Close" : "Finish later", symbol: "xmark") { dismiss() }
+                Spacer(minLength: 8)
+                // A phone held upright has no room for the words next to four steps.
+                if hSize == .compact { IconPillButton(id: "su-later", symbol: "xmark", label: step == .done ? "Close" : "Finish later") { dismiss() } }
+                else { PillButton(id: "su-later", title: step == .done ? "Close" : "Finish later", symbol: "xmark") { dismiss() } }
             }
-            if step.number != nil, let need = need(step) {
+            if step.number != nil {
                 HStack(spacing: 8) {
                     Text(step.name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.textDim)
-                    tag(complete(step) ? "Done" : need.label, good: complete(step))
+                    stepTag(step)
                     Spacer()
                 }
             }
@@ -262,10 +296,13 @@ struct SetupGuideView: View {
         VStack(alignment: .leading, spacing: 16) {
             SetupWelcomeHero(compact: short)
             VStack(spacing: 10) {
-                SetupStepCard(id: "su-o-1", number: 1, symbol: "bolt.fill", title: "Full speed", subtitle: "About 2 minutes", tag: complete(.speed) ? "Done" : Need.needed.label, tagGood: complete(.speed)) { step = .speed }
-                SetupStepCard(id: "su-o-2", number: 2, symbol: "shippingbox.fill", title: "Windows components", subtitle: "About 25 MB", tag: complete(.downloads) ? "Done" : Need.recommended.label, tagGood: complete(.downloads)) { step = .downloads }
-                SetupStepCard(id: "su-o-3", number: 3, symbol: "gamecontroller.fill", title: "Add your games", subtitle: "Steam, Epic Games, GOG, itch.io, Amazon Games, EA or Files", tag: complete(.games) ? "Done" : Need.optional.label, tagGood: complete(.games)) { step = .games }
+                SetupStepCard(id: "su-o-1", number: 1, symbol: "slider.horizontal.3", title: "Make it yours", subtitle: "Controls, colours, sound and power", tag: "Your choice", tagGood: false) { step = .controls }
+                SetupStepCard(id: "su-o-2", number: 2, symbol: "bolt.fill", title: "Full speed", subtitle: "About 2 minutes", tag: complete(.speed) ? "Done" : Need.needed.label, tagGood: complete(.speed)) { step = .speed }
+                SetupStepCard(id: "su-o-3", number: 3, symbol: "shippingbox.fill", title: "Windows components", subtitle: "About 25 MB", tag: complete(.downloads) ? "Done" : Need.recommended.label, tagGood: complete(.downloads)) { step = .downloads }
+                SetupStepCard(id: "su-o-4", number: 4, symbol: "gamecontroller.fill", title: "Add your games", subtitle: "Steam, Epic Games, GOG, itch.io, Amazon Games, EA or Files", tag: complete(.games) ? "Done" : Need.optional.label, tagGood: complete(.games)) { step = .games }
             }
+            ActionRow(id: "su-essentials", symbol: "forward.fill", title: "Just the essentials", subtitle: "Skip the choices and get ready to play; every one of them is in Settings",
+                      chevron: false) { step = .speed }
             RowBase(id: "su-privacy", symbol: "lock.shield.fill", tint: Theme.good, title: "Stays on this device",
                     info: "Your store sign-ins stay in this device\u{2019}s Keychain and go only to the store itself. Porthole goes online to download what you ask for (Microsoft\u{2019}s components, your game downloads and updates), to check for updates, and to load compatibility badges. It asks for the whole list of badges, so nobody is told which games you own. A compatibility report or a problem report is sent only when you choose to send one; a problem log is cleaned of account names, e-mail addresses and public IP addresses first.", action: {}) { EmptyView() }
         }
@@ -406,11 +443,31 @@ struct SetupGuideView: View {
             }
             if !short { header(ready ? "You're all set" : "Almost there") }
             if !ready { Text("Games won't start until full speed is set up.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6) }
-            SettingsGroup {
+            SettingsGroup(title: "Ready") {
                 summaryRow(.speed, jitReady && (!tunnelNeeded || tunnelAllowed) ? "Full speed: \(method.title)" : (jitReady ? "Connection not chosen yet (LocalDevVPN or the private link)" : "Full speed isn't set up"))
                 summaryRow(.downloads, runtimeReady ? "Windows components ready" : "Windows components missing")
                 summaryRow(.games, anyStore || !model.games.isEmpty ? "Games: \([steam.signedIn ? "Steam" : nil, epic.signedIn ? "Epic Games" : nil, gog.signedIn ? "GOG" : nil, itch.signedIn ? "itch.io" : nil, amazon.signedIn ? "Amazon Games" : nil, ea.signedIn ? "EA app" : nil, model.games.isEmpty ? nil : "\(model.games.count) imported"].compactMap { $0 }.joined(separator: ", "))" : "No games added yet")
             }
+            choicesGroup
+            SettingsGroup(title: "Learn the app") {
+                ActionRow(id: "su-tour", symbol: "map.fill", title: "Show me around", subtitle: "A short tour that points at the real buttons. More tutorials are in Settings.", chevron: false) {
+                    dismiss()
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(800))      // the setup has to finish closing first
+                        TutorialLibrary.shared.start("tour")
+                    }
+                }
+            }
+        }
+    }
+
+    /// What was chosen on the four pages of choices, each a tap away from changing.
+    private var choicesGroup: some View {
+        SettingsGroup(title: "Your choices", note: "Tap one to change it. All of them are in Settings too.") {
+            ActionRow(id: "su-yc-controls", symbol: "gamecontroller.fill", title: "Controls", subtitle: SetupSummary.controls(), chevron: false) { step = .controls }
+            ActionRow(id: "su-yc-look", symbol: "paintpalette.fill", title: "Colours and sound", subtitle: SetupSummary.look(), chevron: false) { step = .look }
+            ActionRow(id: "su-yc-power", symbol: "speedometer", title: "Picture and power", subtitle: SetupSummary.power(), chevron: false) { step = .power }
+            ActionRow(id: "su-yc-helpers", symbol: "wand.and.stars", title: "Helpers", subtitle: SetupSummary.helpers(), chevron: false) { step = .helpers }
         }
     }
 
@@ -418,6 +475,12 @@ struct SetupGuideView: View {
         RowBase(id: "su-sum-\(s.rawValue)", symbol: complete(s) ? "checkmark.circle.fill" : "circle.dashed", tint: complete(s) ? Theme.good : Theme.warn, title: text, action: { if !complete(s) { step = s } }) {
             if !complete(s) { Image(systemName: "chevron.right").font(.footnote.weight(.bold)).foregroundStyle(Theme.textDim) }
         }
+    }
+
+    /// The small label beside a step's name: "2 of 4" on the pages of choices, otherwise Needed / Recommended / Optional, or Done.
+    @ViewBuilder private func stepTag(_ s: Step) -> some View {
+        if let i = s.choiceIndex { tag("Your choice \u{00B7} \(i) of 4") }
+        else if let need = need(s) { tag(complete(s) ? "Done" : need.label, good: complete(s)) }
     }
 
     private func tag(_ s: String, good: Bool = false) -> some View {

@@ -7,11 +7,14 @@ factorio*/
 Factorio_*/
 Factorio_*.zip
 app/RuntimeStage
+app/DaveStage
 app/*.xcodeproj
 dist/
 
 # The maintainer's own build identity and machine paths
 app/Config/Local.xcconfig
+app/Config/Local.xcconfig.*
+!app/Config/Local.xcconfig.example
 tools/local.env
 .build/
 .swiftpm/
@@ -22,3 +25,4 @@ app/Vendor/
 
 # Output of tools/release.sh (holds this machine's paths)
 release.log
+__pycache__/

@@ -72,21 +72,24 @@ struct GameEngineSection: View {
                 SettingsGroup(title: "On-screen controller", note: "For a game that needs a controller on a device that has none.") {
                     ToggleRow(id: "ge-vpad", symbol: "gamecontroller", title: "Show a game controller on the screen",
                               info: "Draws an Xbox controller over the game: two sticks (tap one to click it), a direction pad, A B X Y, both bumpers and triggers, View and Menu. The game sees an ordinary Xbox pad. The touch layouts are put away while it is on, and a real controller works with it. You can also switch it during the game: swipe in from the right edge for the menu, then Controls > On screen.",
-                              isOn: Binding(get: { g.virtualPad == true }, set: { on in AppModel.shared.update(g) { $0.virtualPad = on ? true : nil } }))
-                    if g.virtualPad == true {
+                              isOn: Binding(get: { g.effectiveVirtualPad }, set: { on in AppModel.shared.update(g) { $0.virtualPad = on ? true : nil; $0.ownControls = true } }))
+                    if g.effectiveVirtualPad {
+                        ChoiceRow(id: "ge-vpad-layout", symbol: "square.grid.3x2.fill", title: "Layout",
+                                  info: VirtualPadLayout.Preset.allCases.map { "\($0.title): \($0.detail)" }.joined(separator: "\n\n") + "\n\nEvery controller type has both.",
+                                  options: VirtualPadLayout.Preset.allCases.map { ($0, $0.title) },
+                                  selection: Binding(get: { VirtualPadLayout.preset(game: g.virtualPadLayout, last: UserDefaults.standard.string(forKey: VirtualPadLayout.lastKey)) },
+                                                     set: { p in
+                                                         AppModel.shared.update(g) { $0.virtualPadLayout = p.rawValue }
+                                                         UserDefaults.standard.set(p.rawValue, forKey: VirtualPadLayout.lastKey)
+                                                     }))
                         ChoiceRow(id: "ge-vpad-style", symbol: "gamecontroller.fill", title: "Controller type",
-                                  info: VirtualPadStyle.allCases.map { "\($0.title): \($0.detail)" }.joined(separator: "\n\n") + "\n\nA type brings its own look and its own layout (you can pick another layout below). The game always sees an Xbox pad.",
+                                  info: VirtualPadStyle.allCases.map { "\($0.title): \($0.detail)" }.joined(separator: "\n\n") + "\n\nA type changes only the names and colours on the buttons. The game always sees an Xbox pad.",
                                   options: VirtualPadStyle.allCases.map { ($0, $0.title) },
                                   selection: Binding(get: { VirtualPadStyle.style(game: g.virtualPadStyle, last: UserDefaults.standard.string(forKey: VirtualPadStyle.lastKey)) },
                                                      set: { st in
-                                                         AppModel.shared.update(g) { $0.virtualPadStyle = st.rawValue; $0.virtualPadLayout = st.nativePreset.rawValue }
-                                                         UserDefaults.standard.set(st.rawValue, forKey: VirtualPadStyle.lastKey); UserDefaults.standard.set(st.nativePreset.rawValue, forKey: VirtualPadLayout.lastKey)
+                                                         AppModel.shared.update(g) { $0.virtualPadStyle = st.rawValue }
+                                                         UserDefaults.standard.set(st.rawValue, forKey: VirtualPadStyle.lastKey)
                                                      }))
-                        ChoiceRow(id: "ge-vpad-layout", symbol: "rectangle.3.group", title: "Layout",
-                                  info: VirtualPadLayout.Preset.allCases.map { "\($0.title): \($0.detail)" }.joined(separator: "\n\n"),
-                                  options: VirtualPadLayout.Preset.allCases.map { ($0, $0.title) },
-                                  selection: Binding(get: { VirtualPadLayout.preset(game: g.virtualPadLayout, last: UserDefaults.standard.string(forKey: VirtualPadLayout.lastKey)) },
-                                                     set: { p in AppModel.shared.update(g) { $0.virtualPadLayout = p.rawValue }; UserDefaults.standard.set(p.rawValue, forKey: VirtualPadLayout.lastKey) }))
                     }
                 }
                 if PadInput.keyboardMouseAvailable {
@@ -299,7 +302,7 @@ struct GameConfigSheet: View {
                             .font(.system(size: 14, design: .monospaced)).foregroundStyle(Theme.text)
                             .scrollContentBackground(.hidden).autocorrectionDisabled().textInputAutocapitalization(.never)
                             .frame(minHeight: 220).padding(10)
-                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
                         let parsed = MadeiraConfig.parse(text)
                         let n = parsed.count
@@ -351,7 +354,7 @@ struct EngineLineHelp: View {
                         }
                     }
                     .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
             }
             .padding(.top, 6)

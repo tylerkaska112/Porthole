@@ -50,7 +50,7 @@ struct SteamGamePage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            backdrop
+            ShellArt(key: "\(game.id)|\(page?.headerURL?.absoluteString ?? "")", art: AnyView(backdrop))
             GeometryReader { geo in
                 let wide = geo.size.width > geo.size.height * 1.05
                 if wide {
@@ -113,6 +113,7 @@ struct SteamGamePage: View {
         .confirm("Remove \(game.name)?", message: "This deletes the game's files from the device. You can download it again.", confirmTitle: "Delete files", destructive: true, isPresented: $confirmRemove) {
             store.uninstall(game); for g in model.games where g.steamAppID == game.id { model.remove(g) }
         }
+        .releasesKeyboardOnAppear()
     }
 
     private struct ViewerIndex: Identifiable { let index: Int; var id: Int { index } }
@@ -379,7 +380,7 @@ struct SteamGamePage: View {
     private func begin(to library: String?) {
         notice = nil
         if store.destination(for: game.id, chosen: library) == SteamStorageLibrary.internalID,
-           game.sizeBytes > 0, let free = SteamGameTile.freeSpace(), free < Int64(game.spaceNeeded) + 500_000_000 {
+           game.sizeBytes > 0, case let need = store.spaceNeeded(for: game), need > 0, let free = SteamGameTile.freeSpace(), free < Int64(need) + 500_000_000 {
             notice = "Not enough free space: it needs about \(SteamGameTile.size(game.diskBytes ?? game.sizeBytes)) on the device and it has \(SteamGameTile.size(UInt64(free)))."
             return
         }

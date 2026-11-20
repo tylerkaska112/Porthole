@@ -62,6 +62,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Porthole uses the local network to pair this iPhone with itself so JIT can be switched on without a computer.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Discord voice (experimental) uses the microphone to send your voice to the voice channel you join. It is only used while you are in one.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
@@ -84,6 +86,32 @@
 	<string>$(PORTHOLE_SOURCE_URL)</string>
 	<key>PortholeStorageFolder</key>
 	<string>$(PORTHOLE_STORAGE_FOLDER)</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleExternalDisplay</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>External Display (legacy)</string>
+					<key>UISceneDelegateClassName</key>
+					<string>PortholeExternalSceneDelegate</string>
+				</dict>
+			</array>
+			<key>UIWindowSceneSessionRoleExternalDisplayNonInteractive</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>External Display</string>
+					<key>UISceneDelegateClassName</key>
+					<string>PortholeExternalSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

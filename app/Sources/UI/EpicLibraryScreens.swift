@@ -302,7 +302,7 @@ struct EpicGamePage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            backdrop
+            ShellArt(key: game.heroURL?.absoluteString ?? game.artworkURL?.absoluteString ?? game.appName, art: AnyView(backdrop))
             GeometryReader { geo in
                 let wide = geo.size.width > geo.size.height * 1.05
                 if wide {
@@ -348,6 +348,7 @@ struct EpicGamePage: View {
         .sheet(item: $writing) { ReportSheet(game: $0).environmentObject(model).preferredColorScheme(Theme.scheme) }
         .confirm("Delete \(game.title)'s files?", message: "This frees the space on the device, including saves kept in the game's folder. You can download it again.", confirmTitle: "Delete files",
                  destructive: true, isPresented: $confirmRemove) { installer.uninstall(game.appName) }
+        .releasesKeyboardOnAppear()
     }
 
     // MARK: Pieces
@@ -374,6 +375,7 @@ struct EpicGamePage: View {
 
     /// What Epic says about the game: the screenshots, the description and the rows that open the rest.
     @ViewBuilder private var pageContent: some View {
+        if let name = installer.antiCheat(game.appName) { antiCheatNote(name) }
         if !media.isEmpty { mediaStrip }
         about
         doors
@@ -487,6 +489,21 @@ struct EpicGamePage: View {
                 }
             }
         }
+    }
+
+    /// The game ships an online anti-cheat Porthole's Windows cannot run: said on its page, from the moment the download starts.
+    private func antiCheatNote(_ name: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.shield.fill").font(.system(size: 22)).foregroundStyle(Theme.warn)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Uses \(name)").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(EpicAntiCheat.warning(name)).font(.system(size: 14)).foregroundStyle(Theme.textDim).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warn.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.warn.opacity(0.4), lineWidth: 1))
+        .focusTarget("ep-anticheat", radius: 16, scale: 1.01, action: {})
     }
 
     private var doors: some View {

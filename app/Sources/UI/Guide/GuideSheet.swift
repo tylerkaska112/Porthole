@@ -8,13 +8,15 @@ struct GuideSheet: View {
     let guide: Guide
     /// Does what a step's button says (open Add a game, a store, a settings page). Nothing happens when a guide is shown somewhere that cannot.
     var perform: (GuideAction) -> Void = { _ in }
+    /// Whether the last step offers the interactive tutorial. Only where `perform` can really start it.
+    var offersTutorial = false
     @State private var index: Int
     @State private var scope = FocusScope()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.verticalSizeClass) private var vSize
 
-    init(guide: Guide, startAt: Int = 0, perform: @escaping (GuideAction) -> Void = { _ in }) {
-        self.guide = guide; self.perform = perform
+    init(guide: Guide, startAt: Int = 0, offersTutorial: Bool = false, perform: @escaping (GuideAction) -> Void = { _ in }) {
+        self.guide = guide; self.perform = perform; self.offersTutorial = offersTutorial
         _index = State(initialValue: startAt)
     }
 
@@ -92,6 +94,10 @@ struct GuideSheet: View {
             Text(step.text).font(.body).foregroundStyle(Theme.text.opacity(0.88)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             if let action = step.action {
                 PillButton(id: "guide-action", title: action.title, symbol: action.symbol) { perform(action) }.padding(.top, 4)
+            }
+            // The last step of a screen's guide offers the interactive version: the same screen, with the real buttons pointed at.
+            if last, offersTutorial, let id = TutorialLibrary.shared.tutorialID(forGuide: guide.id) {
+                PillButton(id: "guide-tutorial", title: "Walk me through it", symbol: "hand.point.up.left.fill", style: .primary) { perform(.tutorial(id)) }.padding(.top, 4)
             }
         }
     }

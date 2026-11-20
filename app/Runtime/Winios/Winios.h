@@ -56,6 +56,9 @@ void winios_cancel_text(void);
  * Safe to call before or after the compositor exists; main-thread
  * dispatch inside. */
 void winios_set_compositor_frame(double x, double y, double w, double h);
+/* Porthole 0103: put the compositor inside this UIView (the window of a connected external display) instead of the key window; NULL puts it back.
+ * A void pointer so the header stays plain C. */
+void winios_set_compositor_container(void *container_uiview);
 void winios_set_desktop_rect(double x, double y, double w, double h, int set);
 
 /* S2 trackpad pointer. (x, y) are ABSOLUTE wine-desktop pixels (the

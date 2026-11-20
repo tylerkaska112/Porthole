@@ -66,7 +66,7 @@ struct PillButton: View {
     private var background: AnyShapeStyle {
         switch style {
         case .primary: AnyShapeStyle(Theme.accentGradient)
-        case .glass: AnyShapeStyle(Theme.panelHigh)
+        case .glass: AnyShapeStyle(GlassFill.high)
         case .danger: AnyShapeStyle(Theme.bad.opacity(0.14))
         }
     }
@@ -146,6 +146,7 @@ struct GlowChip: View {
     let text: String
     var symbol: String?
     var tint: Color = Theme.textDim
+    @Environment(\.shadedGlass) private var shaded
     var body: some View {
         HStack(spacing: 5) {
             if let symbol { Image(systemName: symbol).font(.caption2.weight(.bold)) }
@@ -153,7 +154,7 @@ struct GlowChip: View {
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(tint.opacity(0.14), in: Capsule())
+        .background { Capsule().fill(.black.opacity(shaded ? 0.4 : 0)); Capsule().fill(tint.opacity(0.14)) }
         .overlay(Capsule().strokeBorder(tint.opacity(0.25), lineWidth: 1))
     }
 }
@@ -294,7 +295,7 @@ struct SegmentedPills: View {
             }
         }
         .padding(3)
-        .background(Theme.panel, in: Capsule())
+        .background(GlassFill.panel, in: Capsule())
         .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
     }
 }

@@ -4,6 +4,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$(mktemp -d)"
 cp "$HERE/main.swift" "$OUT/main.swift"
-swiftc -swift-version 5 -o "$OUT/vp" "$OUT/main.swift" "$HERE/../../Sources/Core/VirtualPadModel.swift" "$HERE/../../Sources/Core/ControllerKind.swift"
+swiftc -swift-version 5 -o "$OUT/vp" "$OUT/main.swift" "$HERE/../../Sources/Core/VirtualPadModel.swift" "$HERE/../../Sources/Core/ControllerKind.swift" "$HERE/../../Sources/Core/PictureBand.swift"
 "$OUT/vp"
 rm -rf "$OUT"

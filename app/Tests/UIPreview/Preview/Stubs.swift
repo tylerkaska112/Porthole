@@ -47,3 +47,9 @@ final class InputSettings {
 
 /// Stand-in for the row of store buttons (UI/StoresScreen.swift).
 struct StoreSwitcher: View { var body: some View { EmptyView() } }
+
+/// The share sheet (UIKit, in the app's Saves page); the preview only needs something to present.
+struct ActivityView: View {
+    let items: [Any]
+    var body: some View { Text("Share sheet").padding() }
+}

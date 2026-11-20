@@ -5,6 +5,12 @@
 #   tools/finish_release.sh [--dry-run] [commit]          default commit: HEAD of the checkout this is run in
 #
 # Fast-forward only: it stops if main or prerelease holds anything the commit does not. Tags v<MARKETING_VERSION> at the commit when that tag is absent.
+
+# 1.4.0 (with the Discord features) is not released until the maintainer says so (docs/BRANCH-1.4.0.md).
+if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "1.4.0" ] && [ -z "$ALLOW_DISCORD_RELEASE" ]; then
+  echo "✗ This is the 1.4.0 branch: it is not released, built for the public channel or promoted yet. See docs/BRANCH-1.4.0.md." >&2
+  exit 1
+fi
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DRY=0; ARG=""

@@ -168,7 +168,8 @@ final class AutoFixStore: ObservableObject {
         let settings = LaunchSettings.resolve(for: game)
         var context = AutoFix.Context(ending: .init(endedUnexpectedly: unexpectedly, endedEarly: early), swapMB: settings.swapMB, swapCoverage: settings.swapCoverage, freeStorageMB: storage,
                                       deviceMemoryMB: Int(ProcessInfo.processInfo.physicalMemory >> 20), configText: game.engine?.config ?? "",
-                                      largeAddressAllowed: InstallCheck.largeAddressSpaceAllowed)
+                                      largeAddressAllowed: InstallCheck.largeAddressSpaceAllowed,
+                                      runsDirectly: game.dockAppID != nil && game.launchDirect == true)
         // A line the game already gets from its known fixes (GameFixes) counts as set.
         if let fix = GameFixes.fix(forSteamAppID: game.dockAppID ?? game.steamAppID), !fix.configLines.isEmpty { context.configText += "\n" + fix.configLines.joined(separator: "\n") }
         let id = game.id
@@ -360,6 +361,9 @@ final class AutoFixStore: ObservableObject {
                 var e = g.engine ?? GameEngine()
                 e.config = (e.config.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 + "\n" } ?? "") + line
                 g.engine = e
+            case .throughSteam:
+                undo.append(Undo(key: "game.launchDirect", before: g.launchDirect.map { $0 ? "1" : "0" }))
+                g.launchDirect = nil
             case .advice:
                 break
             }
@@ -396,6 +400,8 @@ final class AutoFixStore: ObservableObject {
                     var e = g.engine ?? GameEngine(); e.config = u.before; g.engine = e.isEmpty ? nil : e
                 case "settings.swapCoverage":
                     var s = g.settings ?? GameSettings(); s.swapCoverage = u.before; g.settings = s.isEmpty ? nil : s
+                case "game.launchDirect":
+                    g.launchDirect = u.before.map { $0 == "1" }
                 default: break
                 }
             }

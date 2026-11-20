@@ -10,6 +10,28 @@ enum VK {
     static func letter(_ c: Character) -> Int32 { Int32(c.asciiValue ?? 0x41) }   // 'E' -> 0x45
 }
 
+/// Where the on-screen controls send what is pressed: to the running game, or, in the controls sandbox (Settings > Controls > Try it), only to a readout, so nothing
+/// reaches a game. `sandbox` is set only while that screen is open.
+enum ControlOutput {
+    /// Called with what was pressed or released ("W", "Left button", "Wheel up") and whether it went down.
+    nonisolated(unsafe) static var sandbox: ((String, Bool) -> Void)?
+
+    /// The mouse, as the controls send it: a button down or up, or the wheel.
+    static func pointer(_ x: Int32, _ y: Int32, _ flags: UInt32, _ data: UInt32) {
+        guard let report = sandbox else { winios_pointer(x, y, flags, data); return }
+        switch flags {
+        case 0x2: report("Left button", true)
+        case 0x4: report("Left button", false)
+        case 0x8: report("Right button", true)
+        case 0x10: report("Right button", false)
+        case 0x20: report("Middle button", true)
+        case 0x40: report("Middle button", false)
+        case 0x800: report(Int32(bitPattern: data) > 0 ? "Wheel up" : "Wheel down", true); report(Int32(bitPattern: data) > 0 ? "Wheel up" : "Wheel down", false)
+        default: break
+        }
+    }
+}
+
 enum HUDKeys {
     /// What the readout shows, so a press that never reaches the game can be told apart from one the game ignores.
     private(set) static var sent = 0
@@ -24,11 +46,15 @@ enum HUDKeys {
     }
 
     static func down(_ vk: Int32) {
+        if let report = ControlOutput.sandbox { report(name(vk), true); return }
         sent += 1; last = name(vk)
         if sent <= 30 { LogStore.shared.log("[f4-key] \(last) down (#\(sent))") }
         winios_post_key(vk, 1)
     }
-    static func up(_ vk: Int32) { winios_post_key(vk, 0) }
+    static func up(_ vk: Int32) {
+        if let report = ControlOutput.sandbox { report(name(vk), false); return }
+        winios_post_key(vk, 0)
+    }
 
     /// A press with a realistic duration. Sending down and up in the same instant can be missed by games that read the keyboard once per frame.
     static func tap(_ vk: Int32, hold: TimeInterval = 0.07) {
@@ -113,16 +139,10 @@ final class KeyButton: UIButton {
         }
         refresh()
         switch behavior {
-        case .hold(let vk):
-            addAction(UIAction { [extra] _ in extra.forEach { HUDKeys.down($0) }; HUDKeys.down(vk) }, for: .touchDown)
-            addAction(UIAction { [extra] _ in HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) } }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        case .press(let vk):
-            addAction(UIAction { [weak self, extra] _ in self?.pressedAt = CFAbsoluteTimeGetCurrent(); extra.forEach { HUDKeys.down($0) }; HUDKeys.down(vk) }, for: .touchDown)
-            addAction(UIAction { [weak self, extra] _ in
-                let wait = max(0, 0.07 - (CFAbsoluteTimeGetCurrent() - (self?.pressedAt ?? 0)))
-                let up = { HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) } }
-                if wait == 0 { up() } else { DispatchQueue.main.asyncAfter(deadline: .now() + wait) { up() } }
-            }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        case .hold, .press:
+            // The key goes down with the finger and up when it lifts (a .press never sooner than a tap's length). Sliding a finger from one such button to another hands the key over (see touchesMoved).
+            addAction(UIAction { [weak self] _ in self?.pressKey() }, for: .touchDown)
+            addAction(UIAction { [weak self] _ in self?.releaseKey() }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
         case .tap(let vk):
             // The modifiers stay down until after the key is up again (HUDKeys.tap holds it 0.07 s): a game that polls once a frame must see both together.
             addAction(UIAction { [extra] _ in extra.forEach { HUDKeys.down($0) }; HUDKeys.tap(vk); if !extra.isEmpty { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { extra.reversed().forEach { HUDKeys.up($0) } } } }, for: .touchUpInside)
@@ -135,6 +155,53 @@ final class KeyButton: UIButton {
         }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: Hold and press, and sliding between them
+
+    /// The key a button that is held down while touched sends (nil for a tap or a latch).
+    private var heldKey: Int32? {
+        switch behavior { case .hold(let vk), .press(let vk): vk; default: nil }
+    }
+    private var minimumHold: Double { if case .press = behavior { 0.07 } else { 0 } }
+    private var isDown = false
+    /// Another button this finger slid onto: it holds that one's key now, and lifting lets it go.
+    private weak var slidTo: KeyButton?
+
+    private func pressKey() {
+        guard let vk = heldKey, !isDown else { return }
+        isDown = true; pressedAt = CFAbsoluteTimeGetCurrent()
+        extra.forEach { HUDKeys.down($0) }; HUDKeys.down(vk)
+    }
+    private func releaseKey() {
+        guard let vk = heldKey, isDown else { return }
+        isDown = false
+        let extra = extra
+        let up = { HUDKeys.up(vk); extra.reversed().forEach { HUDKeys.up($0) } }
+        let wait = max(0, minimumHold - (CFAbsoluteTimeGetCurrent() - pressedAt))
+        if wait == 0 { up() } else { DispatchQueue.main.asyncAfter(deadline: .now() + wait) { up() } }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        guard SlideAcross.enabled, heldKey != nil, let touch = touches.first, let parent = superview else { return }
+        let p = touch.location(in: parent)
+        let current = slidTo ?? self
+        // A neighbour of the same kind that the finger is well inside (a few points in, so a finger resting on the gap between two buttons does not flicker).
+        guard let target = parent.subviews.compactMap({ $0 as? KeyButton }).first(where: {
+            $0 !== current && $0.heldKey != nil && !$0.isHidden && $0.alpha > 0.01 && $0.isUserInteractionEnabled && $0.frame.insetBy(dx: 4, dy: 4).contains(p)
+        }) else { return }
+        current.releaseKey(); current.isHighlighted = false
+        target.pressKey(); target.isHighlighted = true
+        ControlHaptics.tap()
+        slidTo = target === self ? nil : target
+    }
+    private func finishSlide() {
+        guard let target = slidTo else { return }
+        slidTo = nil
+        target.releaseKey(); target.isHighlighted = false
+    }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { finishSlide(); super.touchesEnded(touches, with: event) }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { finishSlide(); super.touchesCancelled(touches, with: event) }
 
     private func refresh() { backgroundColor = latched ? UIColor.systemGreen.withAlphaComponent(0.8) : (baseColour ?? UIColor(white: 0, alpha: 0.55)) }
 

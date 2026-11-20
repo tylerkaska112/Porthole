@@ -4,7 +4,7 @@ import SwiftUI
 
 /// One number the performance overlay can show.
 enum PerfMetric: String, CaseIterable, Identifiable {
-    case fps, lowFPS, frameTime, cpu, busiestThread, gpuBusy, gpuFrame, memory, freeMemory, gpuMemory, thermal, battery, powerMode, swap
+    case fps, lowFPS, frameTime, inputLag, screenDelay, cpu, busiestThread, gpuBusy, gpuFrame, memory, freeMemory, gpuMemory, thermal, battery, powerMode, swap
 
     var id: String { rawValue }
 
@@ -13,6 +13,8 @@ enum PerfMetric: String, CaseIterable, Identifiable {
         case .fps: "FPS"
         case .lowFPS: "1% low"
         case .frameTime: "Frame time"
+        case .inputLag: "Input lag"
+        case .screenDelay: "Screen delay"
         case .cpu: "CPU"
         case .busiestThread: "Busiest thread"
         case .gpuBusy: "GPU busy"
@@ -32,6 +34,8 @@ enum PerfMetric: String, CaseIterable, Identifiable {
         case .fps: "speedometer"
         case .lowFPS: "arrow.down.right"
         case .frameTime: "timer"
+        case .inputLag: "hand.tap.fill"
+        case .screenDelay: "display"
         case .cpu: "cpu"
         case .busiestThread: "chart.bar.fill"
         case .gpuBusy, .gpuFrame: "square.stack.3d.up.fill"
@@ -94,6 +98,8 @@ final class PerfOverlaySettings: ObservableObject {
     @Published var showGraph: Bool { didSet { save() } }
     /// The full text block the old readout had: input counters, engine memory and swap lines.
     @Published var developerDetails: Bool { didSet { save() } }
+    /// Where the layout in use puts the overlay (not saved: it comes from the layout); nil = in the chosen corner.
+    @Published var placement: OverlayPlacement?
 
     private init() {
         let d = UserDefaults.standard, p = Self.prefix
@@ -129,6 +135,10 @@ final class PerfOverlaySettings: ObservableObject {
 
     /// Whether the engine's slower measurements should run: only while the overlay is on and something shown needs them.
     var wantsDetail: Bool { enabled && (developerDetails || metrics.contains(where: \.needsDetail)) }
+    /// Whether presses should be timed (the controller's read time): only while the overlay shows the input lag.
+    var wantsInputLag: Bool { enabled && metrics.contains(.inputLag) }
+    /// Whether the game's pictures should be watched on their way to the screen: while the overlay shows the input lag or the screen delay.
+    var wantsPresentTiming: Bool { enabled && (metrics.contains(.inputLag) || metrics.contains(.screenDelay)) }
 }
 
 /// The latest numbers and a short history for the graph.
@@ -177,6 +187,12 @@ final class PerfOverlayModel: ObservableObject {
                 out.append(Row(metric: metric, label: "Low", value: String(format: "%.0f", s.lowFPS), tint: nil))
             case .frameTime:
                 out.append(Row(metric: metric, label: "Frame", value: String(format: "%.1f ms", s.frameMs), tint: nil))
+            case .inputLag:
+                // An estimate from what is measured (the game's frames and the delay after the game presents); a dash until both are known.
+                out.append(kept(metric, "Input lag", s.inputLagMs.map { Row(metric: metric, label: "Input lag", value: String(format: "~%.0f ms", $0), tint: $0 > 250 ? Theme.bad : ($0 > 120 ? Theme.warn : nil)) }))
+            case .screenDelay:
+                // From the game asking for a picture to the picture being on the screen: the game's frame queue, frame generation holding a picture back, the screen's refresh.
+                out.append(kept(metric, "Screen delay", s.screenDelayMs.map { Row(metric: metric, label: "Screen delay", value: String(format: "%.0f ms", $0), tint: $0 > 150 ? Theme.bad : ($0 > 70 ? Theme.warn : nil)) }))
             case .cpu:
                 out.append(Row(metric: metric, label: "CPU", value: String(format: "%.0f%%", s.cpuPercent), tint: nil))
             case .busiestThread:
@@ -250,9 +266,23 @@ struct PerfOverlayView: View {
     var body: some View {
         // The room is whatever the host gives: the HUD makes it fill the free part of the screen, and the overlay sits in its corner of that.
         GeometryReader { geo in
-            overlay(room: geo.size)
-                .frame(width: geo.size.width, height: geo.size.height, alignment: settings.corner.alignment)
+            if let at = settings.placement {
+                PlacedAtFraction(at: at, room: geo.size) { overlay(room: geo.size) }
+            } else {
+                overlay(room: geo.size)
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: settings.corner.alignment)
+            }
         }
+    }
+
+    /// The card as the band under the game's picture draws it (an iPad with the picture moved up): centred rows, no developer text, nil when no number is chosen.
+    @MainActor static func bandCard(settings: PerfOverlaySettings, model: PerfOverlayModel) -> PerfCardView? {
+        let rows = model.rows(for: settings)
+        guard !rows.isEmpty || settings.showGraph else { return nil }
+        let head = rows.first { $0.metric == .fps }
+        let others = rows.filter { $0.metric != .fps }.map { PerfCardRow(id: $0.id, label: $0.label, value: $0.value, symbol: $0.metric.symbol, tint: $0.tint) }
+        return PerfCardView(fps: head == nil ? nil : model.sample.fps, fpsTint: head?.tint, rows: others, history: model.fpsHistory, showGraph: settings.showGraph, asLine: false,
+                            fontSize: settings.size.font, opacity: settings.opacity, centred: true)
     }
 
     private func overlay(room: CGSize) -> some View {

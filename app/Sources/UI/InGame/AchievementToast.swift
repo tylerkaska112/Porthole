@@ -75,23 +75,7 @@ struct AchievementToastView: View {
 
     private func card(_ toast: AchievementToastCenter.Toast) -> some View {
         let item = toast.achievement
-        return HStack(spacing: 12) {
-            AsyncImage(url: toast.appID == 0 ? nil : item.iconURL(app: toast.appID)) { phase in
-                if let image = phase.image { image.resizable().scaledToFill() }
-                else { Color.white.opacity(0.12).overlay { Image(systemName: "trophy.fill").foregroundStyle(Color.yellow) } }
-            }
-            .frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Achievement unlocked").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundStyle(Color.yellow)
-                Text(item.name).font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(.white).lineLimit(1)
-                if !item.detail.isEmpty { Text(item.detail).font(.system(size: 12)).foregroundStyle(.white.opacity(0.8)).lineLimit(2) }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: 440, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.82)))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.yellow.opacity(0.55), lineWidth: 1))
-        .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
+        return AchievementToastCard(name: item.name, detail: item.detail, icon: toast.appID == 0 ? nil : item.iconURL(app: toast.appID), lifetime: 5.5)
+            .frame(maxWidth: 440, alignment: .leading)
     }
 }

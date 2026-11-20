@@ -109,6 +109,7 @@ private struct FocusTargetModifier: ViewModifier {
         let active = scope?.focused == id
         content
             .id(id)
+            .coachTarget(String(describing: id.base))        // a tutorial can point at any focus target by its id (a probe is added only while one runs)
             .focusGlow(active && glow, radius: radius, scale: scale)
             .onChange(of: active) { _, now in
                 guard now else { return }
@@ -164,17 +165,73 @@ private struct NavBackModifier: ViewModifier {
 }
 
 /// A scroll view that follows the focus: when the D-pad moves to something out of sight, it scrolls it into view.
+///
+/// A screen that shows a page and the pages opened inside it in one scroll view (Settings) passes `scrollScope` (what the person is on: a Settings page) and `scrollLevel` (which level of it is showing).
+/// A level you open starts at its top, always. A level you go BACK to is shown where you left it. (The scroll view remembers the path you came down: a level on that path is one you are going back to.)
+/// Moving to another scope starts over, at the top.
 struct FocusScroll<Content: View>: View {
     var axes: Axis.Set = .vertical
+    var scrollScope: AnyHashable? = nil
+    var scrollLevel: AnyHashable? = nil
+    @ViewBuilder var content: Content
+    @State private var offsets: [AnyHashable: CGFloat] = [:]
+    @State private var trail: [AnyHashable]
+    @State private var lastScope: AnyHashable?
+
+    init(axes: Axis.Set = .vertical, scrollScope: AnyHashable? = nil, scrollLevel: AnyHashable? = nil, @ViewBuilder content: () -> Content) {
+        self.axes = axes; self.scrollScope = scrollScope; self.scrollLevel = scrollLevel; self.content = content()
+        self._trail = State(initialValue: scrollLevel.map { [$0] } ?? [])
+        self._lastScope = State(initialValue: scrollScope)
+    }
+
+    var body: some View {
+        // Read before the path is updated below: a level that is already on the path is one the person is going back to.
+        let goingBack = scrollLevel.map { trail.contains($0) } ?? false
+        FocusScrollBody(axes: axes, level: scrollLevel, restore: goingBack, offsets: $offsets) { content }
+            .id(scrollLevel)                       // a new level is a new scroll view, so it never inherits the offset of the one it replaces
+            .onChange(of: scrollLevel) { _, new in
+                guard let new else { return }
+                if scrollScope != lastScope { trail = [new]; offsets = [:]; lastScope = scrollScope }      // another page: start over
+                else if let i = trail.firstIndex(of: new) { trail = Array(trail[...i]) }                      // back: forget the levels above it
+                else { trail.append(new) }                                                                    // forward: one level deeper
+            }
+    }
+}
+
+private struct FocusScrollBody<Content: View>: View {
+    let axes: Axis.Set
+    let level: AnyHashable?
+    @Binding var offsets: [AnyHashable: CGFloat]
     @ViewBuilder var content: Content
     @Environment(\.focusScope) private var scope
+    @State private var position: ScrollPosition
+    @State private var offset: CGFloat
+
+    init(axes: Axis.Set, level: AnyHashable?, restore: Bool, offsets: Binding<[AnyHashable: CGFloat]>, @ViewBuilder content: () -> Content) {
+        self.axes = axes; self.level = level; self._offsets = offsets; self.content = content()
+        let start = restore ? (level.flatMap { offsets.wrappedValue[$0] } ?? 0) : 0
+        self._position = State(initialValue: ScrollPosition(y: start))
+        self._offset = State(initialValue: start)
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(axes, showsIndicators: false) { content.background(PointerScroll()) }
+            scrollView
                 .onChange(of: scope?.scrollTick) { _, _ in
                     if let id = scope?.scrollRequest { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) } }
                 }
+        }
+    }
+
+    @ViewBuilder private var scrollView: some View {
+        let base = ScrollView(axes, showsIndicators: false) { content.background(PointerScroll()) }
+        if let level {
+            base
+                .scrollPosition($position)
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in offset = y }
+                .onDisappear { offsets[level] = max(0, offset) }
+        } else {
+            base
         }
     }
 }
@@ -193,6 +250,14 @@ final class ControllerInput {
     @ObservationIgnored private var repeatTask: Task<Void, Never>?
     /// Controllers whose buttons are wired up, so one that announces itself twice (or becomes current later) is not wired twice.
     @ObservationIgnored private var wired: Set<ObjectIdentifier> = []
+    /// A page that shows what the controller and keyboard are doing (Settings > Controls > Test controller) takes their input for itself: while it is open, nothing a stick, button or key
+    /// does moves around Porthole or leaves the page. Counted, so two such pages never undo each other.
+    @ObservationIgnored private var captures = 0
+    var isCaptured: Bool { captures > 0 }
+    func capture(_ on: Bool) {
+        captures = max(0, captures + (on ? 1 : -1))
+        releaseAll()        // a direction held while the page opened or closed must not keep repeating
+    }
 
     func start() {
         guard !started else { return }
@@ -226,7 +291,10 @@ final class ControllerInput {
         GCController.startWirelessControllerDiscovery {}
     }
 
-    private func send(_ command: NavCommand) { NavHub.shared.dispatch(command) }
+    private func send(_ command: NavCommand) {
+        guard captures == 0 else { return }
+        NavHub.shared.dispatch(command)
+    }
 
     /// Looks at the connected controllers again: which kind the person is using (the one used last, else the first).
     private func updateKind() {
@@ -260,7 +328,12 @@ final class ControllerInput {
         press(pad.buttonA, .select); press(pad.buttonB, .back); press(pad.buttonX, .secondary); press(pad.buttonY, .tertiary)
         press(pad.leftShoulder, .previousSection); press(pad.rightShoulder, .nextSection); press(pad.buttonMenu, .menu)
         pad.dpad.valueChangedHandler = { [weak self] _, x, y in MainActor.assumeIsolated { self?.step(self?.repeater.updateDPad(x: x, y: y, now: Self.now) ?? []) } }
-        pad.leftThumbstick.valueChangedHandler = { [weak self] _, x, y in MainActor.assumeIsolated { self?.step(self?.repeater.updateStick(x: x, y: y, now: Self.now) ?? []) } }
+        // The same deadzone as in games: a drifting stick must not walk the selection around the menus by itself.
+        let zoneKey = StickDeadzone.key(vendor: controller.vendorName, category: controller.productCategory)
+        pad.leftThumbstick.valueChangedHandler = { [weak self] _, x, y in
+            let stick = StickDeadzone.Store.shared.apply(key: zoneKey, right: false, x: x, y: y)
+            MainActor.assumeIsolated { self?.step(self?.repeater.updateStick(x: stick.x, y: stick.y, now: Self.now) ?? []) }
+        }
     }
 
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
@@ -294,5 +367,13 @@ final class ControllerInput {
         default: command = nil
         }
         if let command { send(command) }
+    }
+}
+
+extension View {
+    /// A page that opens from a list with a search box: the keyboard the search raised goes away when the page appears, instead of staying over it.
+    /// (A sheet or a page opened over a field that still has the cursor does not take the keyboard with it.)
+    func releasesKeyboardOnAppear() -> some View {
+        onAppear { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
     }
 }

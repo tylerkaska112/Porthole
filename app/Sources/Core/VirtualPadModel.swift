@@ -90,6 +90,11 @@ enum VirtualPadMath {
 }
 
 /// Where each control of the on-screen controller sits, for a screen of this size.
+/// Where the on-screen controller's size and opacity are kept (the in-game menu and Settings > Controls both use them).
+enum VirtualPadDefaults {
+    static let scaleKey = "f4.vpad.scale", alphaKey = "f4.vpad.alpha"
+}
+
 enum VirtualPadLayout {
     enum Item: Hashable, CaseIterable { case leftStick, rightStick, dpad, face, leftBumper, rightBumper, leftTrigger, rightTrigger, back, start }
 
@@ -106,55 +111,47 @@ enum VirtualPadLayout {
     /// The control sizes belong to a screen up to this size: on an iPad they are those of a big phone, not twice the size.
     static let sizeBasis: CGFloat = 470
 
-    /// The arrangements to choose from. A layout leaves out the controls it does not need, so the ones it has can be bigger.
+    /// The arrangements of the on-screen controller. Every controller type has the same ones (the type only changes the names and colours on the buttons). Earlier builds had eight; a name stored by one
+    /// of them is read as Porthole.
     enum Preset: String, CaseIterable, Identifiable {
-        case standard, xbox, playstation, switchPad, retro, mirrored, racing, minimal
+        /// The direction pad over the left stick, the face buttons over the right, a trigger over a bumper beside each, View and Menu in the middle.
+        case porthole
+        /// The sticks in the outer corners, the direction pad and the face buttons beside them, a trigger over a bumper above each stick, View and Menu in the middle: the middle of the screen is left open.
+        case cornerSticks
         var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .standard: "Standard"
-            case .xbox: "Xbox"
-            case .playstation: "PlayStation"
-            case .switchPad: "Nintendo Switch"
-            case .mirrored: "Mirrored"
-            case .retro: "Retro"
-            case .racing: "Racing"
-            case .minimal: "Minimal"
-            }
-        }
+        var title: String { self == .porthole ? "Porthole" : "Corner sticks" }
         var detail: String {
             switch self {
-            case .standard: "Both sticks, the direction pad, A B X Y, bumpers, triggers, View and Menu, as on an Xbox controller"
-            case .xbox: "The left stick high with the direction pad beside it, A B X Y high with the right stick beside them: an Xbox controller"
-            case .playstation: "The direction pad on the left, both sticks side by side in the middle, A B X Y on the right, as on a PlayStation controller"
-            case .switchPad: "A stick over the direction pad on the left, A B X Y over a stick on the right: the Switch held as a handheld"
-            case .mirrored: "The standard layout the other way round, for a left-handed grip"
-            case .retro: "A big direction pad and big A B X Y, bumpers, View and Menu: for 2D games, and the look of a Super Nintendo pad"
-            case .racing: "The left stick to steer, big pedals for the triggers, face buttons, bumpers to change gear"
-            case .minimal: "A left stick, big A B X Y, bumpers, View and Menu: for simple games, with the most room to see"
+            case .porthole: "The direction pad over the left stick, the face buttons over the right stick, a trigger over a bumper beside each, View and Menu in the middle"
+            case .cornerSticks: "A stick in each outer corner with the direction pad and the face buttons beside them, and a trigger over a bumper above each stick"
             }
         }
         /// The controls this layout has.
-        var items: Set<Item> {
-            switch self {
-            case .standard, .xbox, .playstation, .switchPad, .mirrored: Set(Item.allCases)
-            case .retro: [.dpad, .face, .leftBumper, .rightBumper, .back, .start]
-            case .racing: [.leftStick, .face, .leftTrigger, .rightTrigger, .leftBumper, .rightBumper, .back, .start]
-            case .minimal: [.leftStick, .face, .leftBumper, .rightBumper, .back, .start]
-            }
-        }
+        var items: Set<Item> { Set(Item.allCases) }
     }
 
     /// The arrangement chosen last, for a game that has none of its own.
     static let lastKey = "f4.vpad.preset"
-    /// The arrangement a game uses: its own, else the one chosen last, else the standard.
-    static func preset(game: String?, last: String?) -> Preset { game.flatMap(Preset.init(rawValue:)) ?? last.flatMap(Preset.init(rawValue:)) ?? .standard }
+    /// The arrangement a game uses: its own choice, else the one chosen last, else Porthole (a name an earlier build stored that no longer exists reads as Porthole).
+    static func preset(game: String?, last: String?) -> Preset { game.flatMap(Preset.init(rawValue:)) ?? last.flatMap(Preset.init(rawValue:)) ?? .porthole }
+
+    /// The free room in the middle of an arrangement, between its two sides and above View and Menu: where the performance overlay sits on an iPad. `top` is the top of the controller's band (the bottom
+    /// of the game picture); nil when the arrangement has no such room.
+    static func centreRoom(frames f: [Item: CGRect], top: CGFloat, gap: CGFloat = 12) -> CGRect? {
+        guard let lt = f[.leftTrigger], let rt = f[.rightTrigger], let back = f[.back], let start = f[.start] else { return nil }
+        // The room is between the outermost edges of what is on each side: the triggers, and the direction pad and face buttons where they sit beside the sticks.
+        let x0 = max(lt.maxX, f[.dpad]?.maxX ?? 0) + gap, x1 = min(rt.minX, f[.face]?.minX ?? .greatestFiniteMagnitude) - gap
+        let y0 = top + gap, y1 = min(back.minY, start.minY) - gap
+        guard x1 - x0 > 80, y1 - y0 > 40 else { return nil }
+        return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+    }
 
     /// The frames, with the size scaled down (never up) until all of them fit the screen without touching each other.
-    static func frames(in size: CGSize, insets: Insets, scale: CGFloat, preset: Preset = .standard) -> [Item: CGRect] {
+    /// `wide`: an iPad, where the controls are drawn bigger and sit further in from the edges (the Porthole arrangement).
+    static func frames(in size: CGSize, insets: Insets, scale: CGFloat, preset: Preset = .porthole, wide: Bool = false) -> [Item: CGRect] {
         var s = max(smallest, min(1.5, scale.isFinite ? scale : 1))
         while true {
-            let f = place(size: size, insets: insets, scale: s, preset: preset)
+            let f = place(size: size, insets: insets, scale: s, preset: preset, wide: wide)
             if s <= smallest || fits(f, in: size, insets: insets) { return f }
             s = max(smallest, s * 0.95)
         }
@@ -170,96 +167,74 @@ enum VirtualPadLayout {
         return true
     }
 
-    private static func place(size: CGSize, insets: Insets, scale: CGFloat, preset: Preset) -> [Item: CGRect] {
-        let u = min(min(size.width, size.height), sizeBasis) * scale
-        let m = 0.035 * u + 8                                     // margin from the edges and between controls
-        let left = max(insets.left, 0) + m
-        let right = size.width - max(insets.right, menuEdge) - m * 0.6
-        let bottom = size.height - max(insets.bottom, 8) - m
-        let top = max(insets.top, 0) + m * 0.8
-        let bw = 0.20 * u, bh = 0.08 * u                          // a bumper or a trigger
-        let sw = 0.14 * u, sh = 0.075 * u, mid = size.width / 2     // View and Menu
-        var out: [Item: CGRect] = [:]
+    /// The size basis on an iPad for the Porthole arrangement: its controls are those of a big phone and a half.
+    static let wideBasis: CGFloat = 560
 
-        func bumpers() {
-            out[.leftBumper] = CGRect(x: left, y: top + (out[.leftTrigger] != nil ? bh + m * 0.4 : 0), width: bw, height: bh)
-            out[.rightBumper] = CGRect(x: right - bw, y: top + (out[.rightTrigger] != nil ? bh + m * 0.4 : 0), width: bw, height: bh)
-        }
-        func centre() {
-            out[.back] = CGRect(x: mid - sw - m * 0.4, y: top, width: sw, height: sh)
-            out[.start] = CGRect(x: mid + m * 0.4, y: top, width: sw, height: sh)
-        }
-
+    private static func place(size: CGSize, insets: Insets, scale: CGFloat, preset: Preset, wide: Bool) -> [Item: CGRect] {
         switch preset {
-        case .standard, .mirrored:
-            let stick = 0.22 * u                                  // a stick's base (diameter)
-            let face = 0.33 * u                                   // the diamond of face buttons (overall diameter)
-            let dpad = 0.22 * u
-            // Bottom row: left stick in the corner, the direction pad beside it; the diamond in the corner on the right, the right stick beside that.
-            out[.leftStick] = CGRect(x: left, y: bottom - stick, width: stick, height: stick)
-            out[.dpad] = CGRect(x: left + stick + m, y: bottom - dpad, width: dpad, height: dpad)
-            out[.face] = CGRect(x: right - face, y: bottom - face, width: face, height: face)
-            out[.rightStick] = CGRect(x: right - face - m - stick, y: bottom - stick, width: stick, height: stick)
-            // Shoulders: the trigger above the bumper in each top corner.
-            out[.leftTrigger] = CGRect(x: left, y: top, width: bw, height: bh)
-            out[.rightTrigger] = CGRect(x: right - bw, y: top, width: bw, height: bh)
-            bumpers(); centre()
-            if preset == .mirrored {
-                // The same, the other way round, across the middle of the room the layout uses (so the menu's strip stays clear).
-                let flip = left + right
-                for (item, r) in out { out[item] = CGRect(x: flip - r.maxX, y: r.minY, width: r.width, height: r.height) }
-            }
-        case .playstation:
-            let stick = 0.22 * u, face = 0.33 * u, dpad = 0.22 * u
-            out[.dpad] = CGRect(x: left, y: bottom - dpad, width: dpad, height: dpad)
-            out[.face] = CGRect(x: right - face, y: bottom - face, width: face, height: face)
-            // The sticks side by side in the middle of the room between the pad and the diamond.
-            let room = (right - face - m) - (left + dpad + m)
-            let start = left + dpad + m + max(0, (room - (2 * stick + m)) / 2)
-            out[.leftStick] = CGRect(x: start, y: bottom - stick, width: stick, height: stick)
-            out[.rightStick] = CGRect(x: start + stick + m, y: bottom - stick, width: stick, height: stick)
-            out[.leftTrigger] = CGRect(x: left, y: top, width: bw, height: bh)
-            out[.rightTrigger] = CGRect(x: right - bw, y: top, width: bw, height: bh)
-            bumpers(); centre()
-        case .xbox:
-            // Offset, as on the controller: the left stick and the diamond sit higher, the direction pad and the right stick lower and towards the middle.
-            let stick = 0.22 * u, face = 0.33 * u, dpad = 0.22 * u, stagger = 0.16 * u
-            out[.leftStick] = CGRect(x: left, y: bottom - stick - stagger, width: stick, height: stick)
-            out[.dpad] = CGRect(x: left + stick + m, y: bottom - dpad, width: dpad, height: dpad)
-            out[.rightStick] = CGRect(x: right - face - m - stick, y: bottom - stick, width: stick, height: stick)
-            out[.face] = CGRect(x: right - face, y: bottom - face - stagger, width: face, height: face)
-            out[.leftTrigger] = CGRect(x: left, y: top, width: bw, height: bh)
-            out[.rightTrigger] = CGRect(x: right - bw, y: top, width: bw, height: bh)
-            bumpers(); centre()
-        case .switchPad:
-            // Two columns, as on the Switch held as a handheld: a stick over the direction pad on the left, the diamond over a stick on the right.
-            let stick = 0.22 * u, face = 0.33 * u, dpad = 0.22 * u
-            out[.dpad] = CGRect(x: left, y: bottom - dpad, width: dpad, height: dpad)
-            out[.leftStick] = CGRect(x: left, y: bottom - dpad - m - stick, width: stick, height: stick)
-            out[.rightStick] = CGRect(x: right - face / 2 - stick / 2, y: bottom - stick, width: stick, height: stick)
-            out[.face] = CGRect(x: right - face, y: bottom - stick - m - face, width: face, height: face)
-            out[.leftTrigger] = CGRect(x: left, y: top, width: bw, height: bh)
-            out[.rightTrigger] = CGRect(x: right - bw, y: top, width: bw, height: bh)
-            bumpers(); centre()
-        case .retro:
-            let dpad = 0.30 * u, face = 0.40 * u
-            out[.dpad] = CGRect(x: left, y: bottom - dpad, width: dpad, height: dpad)
-            out[.face] = CGRect(x: right - face, y: bottom - face, width: face, height: face)
-            bumpers(); centre()
-        case .racing:
-            let stick = 0.27 * u, face = 0.30 * u
-            let pw = 0.115 * u, ph = 0.32 * u                      // the pedals: the right trigger (gas) at the edge, the left (brake) beside it
-            out[.leftStick] = CGRect(x: left, y: bottom - stick, width: stick, height: stick)
-            out[.rightTrigger] = CGRect(x: right - pw, y: bottom - ph, width: pw, height: ph)
-            out[.leftTrigger] = CGRect(x: right - 2 * pw - m * 0.6, y: bottom - ph, width: pw, height: ph)
-            out[.face] = CGRect(x: right - 2 * pw - m * 0.6 - m - face, y: bottom - face, width: face, height: face)
-            bumpers(); centre()
-        case .minimal:
-            let stick = 0.26 * u, face = 0.38 * u
-            out[.leftStick] = CGRect(x: left, y: bottom - stick, width: stick, height: stick)
-            out[.face] = CGRect(x: right - face, y: bottom - face, width: face, height: face)
-            bumpers(); centre()
+        case .porthole: return placePorthole(size: size, insets: insets, scale: scale, wide: wide)
+        case .cornerSticks: return placeCornerSticks(size: size, insets: insets, scale: scale, wide: wide)
         }
+    }
+
+    /// The sticks in the outer corners (drawn by the person for an iPad, and the same on a phone): beside each stick, towards the middle, the direction pad on the left and the face buttons on the
+    /// right, their middles level with the stick's; above each stick a bumper with a trigger over it, both as wide as a little less than the stick and centred on it; View and Menu small in the middle at
+    /// the sticks' bottom. The middle is empty, which is where the performance overlay goes on an iPad.
+    private static func placeCornerSticks(size: CGSize, insets: Insets, scale: CGFloat, wide: Bool) -> [Item: CGRect] {
+        let u = min(min(size.width, size.height), wide ? wideBasis : sizeBasis) * scale
+        let mid = size.width / 2
+        var out: [Item: CGRect] = [:]
+        let stick = 0.236 * u, dpad = 0.27 * u, face = 0.30 * u
+        let tw = 0.2 * u, th = 0.15 * u, bumperH = 0.082 * u
+        // The same margin from each edge, the widest the notch or the menu's strip needs.
+        let edge = max(insets.left, insets.right, menuEdge) + (wide ? 0.02 * u : 0.012 * u)
+        let lx = edge, rx = size.width - edge
+        let base = size.height - max(insets.bottom + 0.02 * u, wide ? 0.11 * u : 0.085 * u)
+        let midY = base - stick / 2
+        let beside = 0.09 * u
+        let left = CGRect(x: lx, y: base - stick, width: stick, height: stick), right = CGRect(x: rx - stick, y: base - stick, width: stick, height: stick)
+        out[.leftStick] = left; out[.rightStick] = right
+        out[.dpad] = CGRect(x: left.maxX + beside, y: midY - dpad / 2, width: dpad, height: dpad)
+        out[.face] = CGRect(x: right.minX - beside - face, y: midY - face / 2, width: face, height: face)
+        let above = 0.07 * u, between = 0.018 * u
+        for (stickRect, bumper, trigger) in [(left, Item.leftBumper, Item.leftTrigger), (right, .rightBumper, .rightTrigger)] {
+            let bumperTop = stickRect.minY - above - bumperH
+            out[bumper] = CGRect(x: stickRect.midX - tw / 2, y: bumperTop, width: tw, height: bumperH)
+            out[trigger] = CGRect(x: stickRect.midX - tw / 2, y: bumperTop - between - th, width: tw, height: th)
+        }
+        let cw = 0.117 * u, ch = 0.058 * u, gap = 0.078 * u
+        out[.back] = CGRect(x: mid - gap / 2 - cw, y: base - ch, width: cw, height: ch)
+        out[.start] = CGRect(x: mid + gap / 2, y: base - ch, width: cw, height: ch)
+        return out
+    }
+
+    private static func placePorthole(size: CGSize, insets: Insets, scale: CGFloat, wide: Bool) -> [Item: CGRect] {
+        let u = min(min(size.width, size.height), wide ? wideBasis : sizeBasis) * scale
+        let mid = size.width / 2
+        var out: [Item: CGRect] = [:]
+        // One arrangement for every controller (drawn by the person, phone and iPad alike): on each side the direction pad / the face buttons over a stick, and beside the stick a
+        // trigger over a bumper; View and Menu small in the middle at the bumpers' height.
+        let stick = 0.244 * u, dpad = 0.24 * u, face = 0.31 * u
+        let tw = 0.181 * u, th = 0.14 * u, bumperH = 0.075 * u
+        // Mirror-image left and right: the same margin from each edge (the widest the notch or the menu's strip needs, so it fits whichever way the phone is turned), and the pad over its
+        // stick centred like the face buttons over theirs.
+        let across = wide ? 0.086 * u : 0.024 * u + 4
+        let inset = max(insets.left, insets.right, menuEdge)
+        let lx = inset + across
+        let rx = size.width - inset - across
+        let base = size.height - max(insets.bottom + 0.02 * u, wide ? 0.086 * u : 0.085 * u)
+        let cL = lx + face / 2, cR = rx - face / 2                       // the middle of each column
+        out[.leftStick] = CGRect(x: cL - stick / 2, y: base - stick, width: stick, height: stick)
+        out[.dpad] = CGRect(x: cL - dpad / 2, y: base - stick - 0.054 * u - dpad, width: dpad, height: dpad)
+        let rStick = CGRect(x: cR - stick / 2, y: base - stick, width: stick, height: stick)
+        out[.rightStick] = rStick
+        out[.face] = CGRect(x: rx - face, y: rStick.minY - 0.03 * u - face, width: face, height: face)
+        let lcol = cL + stick / 2 + 0.067 * u, rcol = cR - stick / 2 - 0.067 * u - tw
+        for (item, x) in [(Item.leftBumper, lcol), (.rightBumper, rcol)] { out[item] = CGRect(x: x, y: base - bumperH, width: tw, height: bumperH) }
+        for (item, x) in [(Item.leftTrigger, lcol), (.rightTrigger, rcol)] { out[item] = CGRect(x: x, y: base - bumperH - 0.065 * u - th, width: tw, height: th) }
+        let cw = 0.117 * u, ch = 0.058 * u, gap = 0.078 * u
+        out[.back] = CGRect(x: mid - gap / 2 - cw, y: base - bumperH, width: cw, height: ch)
+        out[.start] = CGRect(x: mid + gap / 2, y: base - bumperH, width: cw, height: ch)
         return out
     }
 }
@@ -306,16 +281,6 @@ enum VirtualPadStyle: String, CaseIterable, Identifiable {
             }
         }
         return kind.glyph(xboxName)
-    }
-
-    /// The arrangement of the controller this style imitates: choosing a style brings its own shape, not just its labels and colours. The Super Nintendo's pad has no sticks.
-    var nativePreset: VirtualPadLayout.Preset {
-        switch self {
-        case .xbox: .xbox
-        case .playstation: .playstation
-        case .nintendo: .switchPad
-        case .classic: .retro
-        }
     }
 
     /// A face button's mark: letters, or one of the PlayStation's four shapes (drawn, not typed, so they are the same on every device).

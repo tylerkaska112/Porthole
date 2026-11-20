@@ -1,0 +1,18 @@
+name: Bug report
+description: Something in Porthole does not work
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "What you did, what you expected, what you got." }
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes: { label: Porthole version, description: "Settings > About" }
+    validations: { required: true }
+  - type: input
+    id: device
+    attributes: { label: Device and iOS version, placeholder: "iPad Pro M4, iOS 27.0" }
+    validations: { required: true }
+  - type: textarea
+    id: log
+    attributes: { label: Log, description: "Settings > Advanced > share the log. Remove anything private first." }

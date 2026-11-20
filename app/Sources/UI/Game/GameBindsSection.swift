@@ -18,7 +18,8 @@ struct GameBindsSection: View {
         if let g = game {
             let sets = g.bindSets ?? []
             VStack(alignment: .leading, spacing: 18) {
-                SettingsGroup(title: "In use") {
+                // One group: which set is in use, the sets, and the two ways to add one (what is in use is also drawn at the top of the page).
+                SettingsGroup(title: "Binds and layouts") {
                     ChoiceRow(id: "bs-active", symbol: "checkmark.circle.fill", title: "Bind set in use",
                               info: "Only one set is used at a time. Standard leaves this game's own Controls and Engine settings exactly as they are. A set with controller binds switches the controller to keyboard and mouse for this game; a set with a touch layout replaces the on-screen controls. Applies the next time the game starts.",
                               options: [(UUID?.none, "Standard")] + sets.map { (Optional($0.id), $0.name) },
@@ -26,8 +27,6 @@ struct GameBindsSection: View {
                     if let active = g.activeBindSet {
                         Text("\(active.name): \(active.summary.lowercased()).").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 6)
                     }
-                }
-                SettingsGroup(title: "Your sets") {
                     ForEach(sets) { set in
                         ActionRow(id: "bs-\(set.id)", symbol: set.id == g.activeBindSetID ? "checkmark.circle.fill" : "keyboard", title: set.name, subtitle: set.summary,
                                   detail: set.id == g.activeBindSetID ? "In use" : nil) { editing = set.id }
@@ -93,6 +92,7 @@ struct BindSetEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scope = FocusScope()
     @State private var editingTouch = false
+    @State private var pickingStarter = false
     @State private var confirmDelete = false
     @State private var confirmReplace: TouchLayout?
     @State private var share: URL?
@@ -187,14 +187,15 @@ struct BindSetEditor: View {
     @ViewBuilder private func touchGroup(_ s: BindSet) -> some View {
         SettingsGroup(title: "Touch controls") {
             ToggleRow(id: "be-touch", symbol: "hand.tap.fill", title: "Include a touch layout",
-                      info: "With this on, using the set replaces the on-screen controls with this layout. Off keeps the game's normal Controls choice.",
-                      isOn: Binding(get: { s.touch != nil }, set: { on in change { $0.touch = on ? ($0.touch ?? TouchLayout.mouseAndKeys) : nil } }))
+                      info: "With this on, using the set replaces the on-screen controls with this layout. Off keeps the default controls (Settings > Controls).",
+                      isOn: Binding(get: { s.touch != nil }, set: { on in change { $0.touch = on ? ($0.touch ?? ShippedLayouts.universal.layout) : nil } }))
             if let t = s.touch {
                 ActionRow(id: "be-edit", symbol: "square.and.pencil", title: "Edit the layout", subtitle: "\(t.controls.count) control\(t.controls.count == 1 ? "" : "s")" + (t.look ? ", drag to look" : ""), chevron: true) { editingTouch = true }
-                ActionRow(id: "be-from1", symbol: "rectangle.on.rectangle", title: "Start over from: mouse and keys", chevron: false) { replace(with: .mouseAndKeys, current: t) }
-                ActionRow(id: "be-from2", symbol: "scope", title: "Start over from: first person", chevron: false) { replace(with: .firstPerson, current: t) }
-                ActionRow(id: "be-from3", symbol: "rectangle.dashed", title: "Start over from: empty", chevron: false) { replace(with: TouchLayout(), current: t) }
+                ActionRow(id: "be-from", symbol: "rectangle.on.rectangle", title: "Start over from a layout\u{2026}", subtitle: "Universal, Gamepad, Action, Point and click, Platformer or an empty screen", chevron: true) { pickingStarter = true }
             }
+        }
+        .sheet(isPresented: $pickingStarter) {
+            StarterLayoutPicker { layout, _ in replace(with: layout, current: s.touch ?? TouchLayout()) }.preferredColorScheme(Theme.scheme)
         }
     }
 
@@ -427,7 +428,7 @@ struct TouchLayoutEditor: View {
                     Slider(value: Binding(get: { c.size }, set: { v in update(id) { $0.size = v } }), in: TouchLayout.sizeRange)
                 }
             }
-            .padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous)).padding(.horizontal, 16)
+            .padding(12).background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous)).padding(.horizontal, 16)
         } else {
             Text("Drag a control to move it. Tap one to change it. Add more with Add.").font(.footnote).foregroundStyle(Theme.textDim).padding(.horizontal, 16)
         }

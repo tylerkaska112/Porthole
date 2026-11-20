@@ -17,6 +17,8 @@ struct EpicInstalledGame: Codable {
     var prereqArgs: String
     /// The game's own prerequisite installer was run from the game's page (it runs only when asked, never by itself).
     var prereqDone: Bool?
+    /// The anti-cheat the game's files show (EpicAntiCheat), "" once looked at and none was found; nil for an install from before it was looked for.
+    var antiCheat: String?
 }
 
 @MainActor final class EpicInstaller: ObservableObject {
@@ -25,6 +27,8 @@ struct EpicInstalledGame: Codable {
     struct Install: Equatable {
         var state: State
         var progress = SteamDownloadProgress()
+        /// The anti-cheat the game's manifest lists, known as soon as the manifest is read (before the download), so the page can say so while the download runs.
+        var antiCheat: String?
         /// Queued, running, paused or failed (not a finished install).
         var isDownload: Bool { if case .installed = state { return false }; return true }
     }
@@ -61,9 +65,31 @@ struct EpicInstalledGame: Codable {
                 for id in pending.keys { installs[id] = Install(state: .paused) }
                 attachBackground()
                 ready = true
+                scanForAntiCheat()
             } catch { self.error = "Could not read Epic installs: " + ErrorText.plain(error) }
         }
     }
+    /// Games installed before anti-cheat was looked for: read their folders once (off the main actor) and remember the answer.
+    private func scanForAntiCheat() {
+        let todo = installed.values.filter { $0.antiCheat == nil }.map { ($0.appName, $0.installDir) }
+        guard !todo.isEmpty else { return }
+        Task {
+            for (name, dir) in todo {
+                let found = await worker.antiCheat(inFolder: dir)
+                guard installed[name] != nil else { continue }
+                installed[name]?.antiCheat = found ?? ""
+                if let found { LogStore.shared.log("[epic-install] \(name): \(found) found in the game's files") }
+            }
+            persist()
+        }
+    }
+
+    /// The anti-cheat this game ships, if any: from the record, or from the manifest while it downloads.
+    func antiCheat(_ appName: String) -> String? {
+        let name = installed[appName]?.antiCheat ?? installs[appName]?.antiCheat
+        return (name?.isEmpty == false) ? name : nil
+    }
+
     private func attachBackground() {
         background.attach(active: { [weak self] in self?.hasActiveDownload == true },
                           pause: { [weak self] in self?.pauseForBackground() },
@@ -258,7 +284,9 @@ struct EpicInstalledGame: Codable {
                     throw EpicContentError.invalid("Refresh your Epic library, then try installing again.")
                 }
                 let token = try await EpicAuth.shared.validAccessToken()
-                let record = try await worker.run(job, catalog: catalog, token: token) { progress in
+                let record = try await worker.run(job, catalog: catalog, token: token, antiCheat: { name in
+                    await MainActor.run { self.installs[id]?.antiCheat = name }
+                }) { progress in
                     await MainActor.run {
                         guard self.active?.id == id, self.installs[id]?.state == .active else { return }
                         // The worker reports after every piece of every file (hundreds a second); each report redraws every screen that shows Epic games.
@@ -337,10 +365,29 @@ private actor EpicInstallWorker {
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
     func run(_ job: EpicInstaller.Pending, catalog: String, token: String,
+             antiCheat: @escaping @Sendable (String?) async -> Void,
              progress: @escaping @Sendable (SteamDownloadProgress) async -> Void) async throws -> EpicInstalledGame {
         let (manifest, base) = try await EpicManifest.fetch(namespace: job.game.namespace, catalogItemID: catalog,
                                                          appName: job.game.appName, token: token)
-        return try await assemble(job, manifest: manifest, base: base, progress: progress)
+        // Known before a byte of the game is downloaded: say so while it downloads.
+        let found = EpicAntiCheat.detect(paths: manifest.files.map(\.filename))
+        if let found { LogStore.shared.log("[epic-install] \(job.game.appName): \(found) is in the game's files") }
+        await antiCheat(found)
+        var record = try await assemble(job, manifest: manifest, base: base, progress: progress)
+        record.antiCheat = found ?? ""
+        return record
+    }
+
+    /// The anti-cheat in an installed game's folder (a listing of its files, capped), for games installed before the manifest was checked.
+    func antiCheat(inFolder relative: String) -> String? {
+        guard let url = try? folder(relative), let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return nil }
+        var paths: [String] = []
+        let base = url.path.count + 1
+        for case let file as URL in walker {
+            paths.append(String(file.path.dropFirst(min(base, file.path.count))))
+            if paths.count >= 60_000 { break }
+        }
+        return EpicAntiCheat.detect(paths: paths)
     }
     func assemble(_ job: EpicInstaller.Pending, manifest: EpicManifest, base: URL,
                   fetch: @escaping @Sendable (URL, EpicManifest.Chunk) async throws -> Data = { url, chunk in

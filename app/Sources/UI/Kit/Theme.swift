@@ -146,7 +146,7 @@ struct PanelStyle: ViewModifier {
     var radius: CGFloat = 18
     func body(content: Content) -> some View {
         content
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(
                 LinearGradient(colors: [Theme.line.opacity(1.4), Theme.line.opacity(0.4)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
     }
@@ -178,5 +178,41 @@ struct StatusChip: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(Theme.panel, in: Capsule())
+    }
+}
+
+
+// MARK: Shaded glass
+
+private struct ShadedGlassKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    /// True below a screen whose picture can be light (a game's page): its glass surfaces are drawn darker so words on them stay readable.
+    var shadedGlass: Bool {
+        get { self[ShadedGlassKey.self] }
+        set { self[ShadedGlassKey.self] = newValue }
+    }
+}
+extension View {
+    /// Darker glass surfaces for this view and everything in it (the ones that use `GlassFill`).
+    func shadedGlass(_ on: Bool = true) -> some View { environment(\.shadedGlass, on) }
+}
+
+/// The glass surface colours (`Theme.panel`, `Theme.panelHigh`, `Theme.line`) that turn darker where `.shadedGlass()` is set.
+struct GlassFill: ShapeStyle {
+    enum Kind { case panel, high, line }
+    let kind: Kind
+    static var panel: GlassFill { GlassFill(kind: .panel) }
+    static var high: GlassFill { GlassFill(kind: .high) }
+    static var line: GlassFill { GlassFill(kind: .line) }
+
+    func resolve(in environment: EnvironmentValues) -> Color {
+        if environment.shadedGlass {
+            switch kind {
+            case .panel: return Color(red: 0.02, green: 0.03, blue: 0.06).opacity(0.5)
+            case .high: return Color(red: 0.02, green: 0.03, blue: 0.06).opacity(0.62)
+            case .line: return Color.white.opacity(0.2)
+            }
+        }
+        switch kind { case .panel: return Theme.panel; case .high: return Theme.panelHigh; case .line: return Theme.line }
     }
 }

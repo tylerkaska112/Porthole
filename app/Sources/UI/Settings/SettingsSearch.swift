@@ -50,14 +50,27 @@ enum SettingsIndex {
             row("Precise shader math", .performance, nil, "graphics lighting"),
             row("Swap", .performance, nil, "memory file out of memory jetsam crash"),
             row("Video memory", .performance, nil, "vram gpu"),
-            row("Look sensitivity", .controls, nil, "mouse aim camera first person"),
+            row("Look sensitivity", .controls, .controlsTouch, "mouse aim camera first person"),
             row("Audio buffer", .sound, nil, "sound crackle latency technical option"),
             row("Keep other apps' sound playing", .sound, nil, "music youtube video podcast spotify mix together second screen split view picture in picture"),
             row("Keep compiled pipelines between runs", .advanced, nil, "shader cache stutter pipeline archive pso first run"),
             row("Keep a game running in the background", .performance, nil, "background switch apps lock screen loading minutes keep alive"),
             row("Game volume", .sound, nil, "sound loud quiet gain boost audio"),
             row("Bring sound back after a call", .sound, nil, "sound audio interruption siri alarm phone resume silent technical option"),
-            row("Connected controller", .controls, nil, "gamepad pad xbox playstation"),
+            row("Default controls", .controls, nil, "layout gamepad mouse and keys first person every game start touch"),
+            row("Controller", .controls, .controlsController, "gamepad pad xbox playstation rumble"),
+            row("Keyboard and mouse", .controls, .controlsKeyboard, "keys pointer scroll speed"),
+            row("Touch screen", .controls, .controlsTouch, "look slide keyboard fingers"),
+            row("Left-handed", .controls, .controlsTouch, "left hand mirror flip layout swap sides touch controls southpaw"),
+            row("Button size", .controls, .controlsTouch, "on-screen buttons bigger smaller larger size touch layout ipad small hands scale"),
+            row("Test and troubleshoot", .controls, .controlsTests, "check controller keyboard mouse sticks drift not working problem"),
+            row("Connected controller", .controls, .controlsController, "gamepad pad xbox playstation"),
+            row("Test controller", .controls, .controlsTestPad, "gamepad pad sticks buttons triggers press visual check working"),
+            row("Sticks and drift", .controls, .controlsSticks, "joystick drifting deadzone dead zone analog stick moves by itself check"),
+            row("Stick drift", .controls, .controlsSticks, "joystick drifting deadzone dead zone analog stick moves by itself"),
+            row("Stick deadzone", .controls, .controlsSticks, "joystick drift dead zone analog threshold"),
+            row("3D controller follows motion", .controls, .controlsController, "gyro gyroscope motion sensors 3d dualsense turn"),
+            row("Test keyboard and mouse", .controls, .controlsTestKeys, "keys pressed trackpad wheel buttons check working visual"),
             row("Back up saves", .saves, nil, "backup restore save files"),
             row("Back up after each game", .saves, nil, "automatic backup"),
             row("Clear temporary files", .storage, nil, "cache free space delete"),
@@ -96,27 +109,27 @@ enum SettingsIndex {
             row("Look for known problems", .fixing, nil, "autofix automatic fix suggestions"),
             row("Ask me before changing a game", .fixing, nil, "autofix apply undo"),
             row("What was changed", .fixing, nil, "autofix history undo"),
-            row("Controller rumble", .controls, nil, "vibration haptics motors gamepad"),
-            row("Test controller rumble", .controls, nil, "vibration buzz"),
-            row("Open the menu with the controller", .controls, nil, "pad menu button chord"),
-            row("Controller as keyboard and mouse", .controls, nil, "pad kbm pointer"),
-            row("Pointer for the controller", .controls, nil, "pad cursor stick mouse"),
-            row("Hide on-screen controls when a controller is used", .controls, nil, "touch controls hide"),
-            row("Mouse speed", .controls, nil, "mouse sensitivity camera"),
-            row("Always use the mouse to look", .controls, nil, "mouse look relative camera"),
-            row("Scroll direction", .controls, nil, "wheel scroll reversed natural"),
-            row("Hold a key to repeat it", .controls, nil, "key repeat keyboard"),
-            row("Keyboard layout for typing", .controls, nil, "keys letters layout"),
-            row("Keys for Porthole", .controls, nil, "menu key lock pointer shortcut ctrl alt"),
-            row("Fewer keys on the on-screen keyboard", .controls, nil, "keyboard function row compact"),
-            row("Send controllers to games", .controls, nil, "xinput controller technical option"),
-            row("Controller type for player 1", .controls, nil, "xbox playstation pad mode technical option"),
+            row("Controller rumble", .controls, .controlsController, "vibration haptics motors gamepad"),
+            row("Test controller rumble", .controls, .controlsController, "vibration buzz"),
+            row("Open the menu with the controller", .controls, .controlsController, "pad menu button chord"),
+            row("Controller as keyboard and mouse", .controls, .controlsController, "pad kbm pointer"),
+            row("Pointer for the controller", .controls, .controlsController, "pad cursor stick mouse"),
+            row("Hide on-screen controls when a controller is used", .controls, .controlsController, "touch controls hide"),
+            row("Mouse speed", .controls, .controlsKeyboard, "mouse sensitivity camera"),
+            row("Always use the mouse to look", .controls, .controlsKeyboard, "mouse look relative camera"),
+            row("Scroll direction", .controls, .controlsKeyboard, "wheel scroll reversed natural"),
+            row("Hold a key to repeat it", .controls, .controlsKeyboard, "key repeat keyboard"),
+            row("Keyboard layout for typing", .controls, .controlsKeyboard, "keys letters layout"),
+            row("Keys for Porthole", .controls, .controlsKeyboard, "menu key lock pointer shortcut ctrl alt"),
+            row("Fewer keys on the on-screen keyboard", .controls, .controlsTouch, "keyboard function row compact"),
+            row("Send controllers to games", .controls, .controlsController, "xinput controller technical option"),
+            row("Controller type for player 1", .controls, .controlsController, "xbox playstation pad mode technical option"),
             row("Show compatibility badges", .reports, nil, "reports ratings"),
             row("Ask me how a game ran", .reports, nil, "survey prompt"),
             row("My reports", .reports, nil, "delete sent"),
             row("Forget my reporting identity", .reports, nil, "privacy key"),
             row("Setup guide", .guides, nil, "first run walk-through"),
-            row("Tips and guides", .guides, nil, "help explanations"),
+            row("Tutorials and tips", .guides, nil, "help explanations tutorial walkthrough how to teach show me"),
             row("Version", .about, nil, "about build number"),
             row("Licences and credits", .about, nil, "open source source code gpl credits madeira iridium stikdebug idevice"),
             row("Bundle", .about, nil, "bundle id identifier technical option"),
@@ -149,7 +162,7 @@ extension SettingsPage {
     /// Extra words that find the page itself.
     var keywords: String {
         switch self {
-        case .display: "screen resolution picture size"
+        case .display: "screen resolution picture size landscape portrait rotate rotation orientation lock lying"
         case .performance: "speed power battery memory swap shader fps"
         case .sound: "audio volume music speaker"
         case .controls: "controller gamepad keyboard mouse touch trackpad rumble input keys look sensitivity"
@@ -164,6 +177,7 @@ extension SettingsPage {
         case .reports: "compatibility badges"
         case .fixing: "autofix automatic fixes known problems"
         case .guides: "setup tips help walk-through first run"
+        case .community: "social twitter x tiktok discord github website follow share friend links"
         case .about: "version build credits licences source"
         case .report: "bug problem log"
         }

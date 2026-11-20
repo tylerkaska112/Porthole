@@ -1,0 +1,2157 @@
+diff --git a/README.md b/README.md
+index b85df65..14a2e21 100644
+--- a/README.md
++++ b/README.md
+@@ -246,7 +246,8 @@ Switches that turn a behaviour off (all default on): `MADEIRA_DOCK_CEG=0`,
+ `MADEIRA_DOCK_CEG_SCM=0`, `MADEIRA_DOCK_CEG_SERVICE_INSTALL=0`, `MADEIRA_DOCK_CONTENT_WAIT=0`,
+ `MADEIRA_DOCK_CONFIG_WAIT=0`, `MADEIRA_DOCK_SESSION_WAIT=0`, `MADEIRA_DOCK_LIST_ENTITLEMENT=0`,
+ `MADEIRA_DOCK_CLIENT_202601=0`, `MADEIRA_DOCK_HANDOFF_DIAGNOSTICS=0`,
+-`MADEIRA_DOCK_INSTALL_SCM=0`, `MADEIRA_DOCK_OFFLINE_LOGON=0` (no offline start, and no
++`MADEIRA_DOCK_INSTALL_SCM=0`, `MADEIRA_DOCK_FRIENDS=0`, `MADEIRA_DOCK_FRIENDS_ONLINE=0` (see
++"Friends"), `MADEIRA_DOCK_OFFLINE_LOGON=0` (no offline start, and no
+ `session-offline-*` question), `MADEIRA_DOCK_KEEP_ALIVE=0` (no hold after the running report
+ ends; a `;`-separated list of image names instead adds those programs to the game's tree). The
+ three waits only ask Valve's client again for a bounded time when it answers "content is still
+@@ -313,6 +314,104 @@ python3 tools/check-privacy.py [--history|--self-test]
+ Never commit tokens, passwords, Steam login caches, account names, real SteamIDs, personal paths,
+ logs, Valve binaries, games or build output.
+ 
++## Friends
++
++While a launched game runs, Dock can list the account's friends and pass Join
++or Invite requests to Valve's client, so a player without Steam's overlay can
++still play with friends. It calls the client's own friends methods and sends
++messages through the client's own shared connection, all pinned per build like
++every other method (currently the January build only; other builds report
++`friends-available=0` and launch as before).
++
++Friends are **opt-in**: they run only when the app passes a status in
++`MADEIRA_DOCK_PERSONA_STATE` (1 Online, 3 Away, 7 Invisible; see **Status**).
++Without it, or with 0 (Offline, Madeira's default), Dock reports
++`friends-available=0` and does nothing else for friends: no messages of its
++own to Steam, no feed, no commands, exactly as before Friends existed. The
++messages below are ones Dock builds itself (as desktop Steam's Friends window
++does), unlike the rest of Dock, which only calls the client's own methods; they
++touch no DRM, ticket or ownership path. `MADEIRA_DOCK_FRIENDS=0` turns friends
++off even with a status.
++
++- **Friends sign-in:** with a web-based UI, Valve's client leaves signing in
++  to Friends to desktop Steam's Friends window, which this headless session
++  does not run. Dock sends the two messages that window sends, through the
++  client's own shared connection (`IClientSharedConnection`): 2 seconds after
++  start `ClientChangeStatus` (the status the app chose, see **Status**), then the
++  `Chat.RequestFriendPersonaStates` service call, which subscribes the session
++  to friends' status. A failed send is tried again every 5 seconds, five tries
++  in all, and both are sent again when the client logs on again after a
++  dropped connection. `ClientRequestFriendData` goes only for friends whose name
++  has not loaded (at most once a minute): asking it for loaded friends resets
++  their status to offline. Friends then see the account with that status, and
++  the session receives friends' status and its own lobby. Reported as
++  `friends-signin-available`, `friends-signin`, `friends-subscribed`,
++  `friends-requested`, and `friends-persona-flags` / `friends-persona-updates`
++  (the kinds and count of friends' status changes).
++  `MADEIRA_DOCK_FRIENDS_ONLINE=0` sends none of these messages and reports
++  `friends-signin-available=0`.
++
++- **List:** every 3 seconds, `C:\madeira-friends.bin` (magic `MFRND001`) is
++  replaced atomically, so the app treats a feed much older than that as left
++  behind by a host that did not end cleanly. Dock goes through the client's
++  list (its first 2000 entries) once, calling each method at most once per
++  friend: SteamID and status for each, the game only for a friend who appears
++  online, the rich presence `connect` only for one in this game without a
++  lobby, and the name only for the friends written. It holds at most 250
++  friends (online or not); past 250, friends who invited this player, then
++  joinable, same-game, in-game and online ones are kept before offline ones,
++  in the client's order within each. Per friend: SteamID, persona
++  state, the App ID they play, flags (in game, same app, joinable, invited
++  this player, can invite; a friend who appears offline, invisible included, shows no
++  game, as in desktop Steam) and a name
++  of at most 63 bytes of valid UTF-8 without ASCII control characters. Lobby IDs,
++  server addresses and connect strings are not exported.
++- **Commands:** the app writes `C:\madeira-friends-cmd.bin` (magic
++  `MFCMD001`, exactly 21 bytes: operation, SteamID, sequence). Dock accepts
++  any non-zero sequence, but the report prints it as a signed 32-bit number,
++  so only 1 to 2^31-1 come back correctly: senders must stay in that range.
++  Dock takes it by renaming it to
++  `C:\madeira-friends-cmd.taken` (so a command written meanwhile waits for the
++  next poll instead of being deleted unread), reads and deletes that, checks
++  that the SteamID is an individual account on the
++  friends list, and reports `friends-cmd-seq` and `friends-cmd-result`
++  (1 done, 2 not joinable, 3 not a friend, 4 the client refused, 5 malformed).
++  A malformed command gets `friends-cmd-result=5` with no `friends-cmd-seq`
++  line, so a sender cannot match it to its command and sees a timeout. A
++  command with the same sequence as the previous one is ignored and gets no
++  result line, so the same command never runs twice; use a new sequence for
++  every command.
++  With friends off, Dock does not read commands. Operation 3 changes the account's status: the id field
++  carries 1 Online, 3 Away or 7 Invisible (nothing else is accepted) and Dock
++  sends it through the client's shared connection.
++- **Status:** the app starts the session with `MADEIRA_DOCK_PERSONA_STATE`
++  (0 Offline, 1 Online, 3 Away, 7 Invisible). Offline, like no value at all,
++  turns the whole feature off for that session, so it cannot be changed from
++  inside the game; the other three can be changed with operation 3.
++- **Join** asks the client to deliver the friend's lobby (or their rich
++  presence `connect` value, printable ASCII, at most 255 bytes) to the running
++  game through `NotifyLobbyJoinRequested` / `NotifyRichPresenceJoinRequested`,
++  the client's own path for an accepted invite. The game decides
++  whether to join. **Invite** works while the game runs and the account has something to
++  join, as in desktop Steam. In a lobby of this game, Dock sends the lobby
++  invite that the friends menu's "Invite to lobby" sends
++  (`ClientMMSInviteToLobby`, through the shared connection); the friend's game
++  joins through its lobby join callback. Otherwise it calls `InviteUserToGame`
++  with the game's rich presence `connect`, else `+connect_lobby <lobby>`. With
++  neither, no invite is sent (result 2). The feed sets the can-invite flag on
++  every friend while one of these exists, so the app shows Invite only then.
++  `friends-invite-connect` reports which (3 lobby invite, 1 connect, 2
++  connect_lobby, 0 none) and `friends-own-game` what the client knows of the
++  account's own game (0 nothing ... 4 this app with a lobby). How to test each
++  kind: [docs/INVITE_TESTING.md](docs/INVITE_TESTING.md).
++- **Incoming invites:** a lobby invite from a friend (`LobbyInvite_t`) for
++  this game is kept (the newest per friend, at most 16) and flags that friend
++  as having invited this player; Join on that friend joins the invited lobby.
++  Reported as `friends-invite-received` (1 kept, 0 not kept: another game's, or
++  without a valid sender or lobby).
++- SteamIDs and names go only to the feed file; the report and logs carry
++  counts and result codes.
++
+ ## Repository layout
+ 
+ | Path | Contents |
+@@ -322,6 +421,7 @@ logs, Valve binaries, games or build output.
+ | `src/launch.c` | Install-folder check, CEG request, discovery values, `LaunchApp`, the game-running loop. |
+ | `src/auth.c` | The one-use sign-in transfer: parse, consume, clear. |
+ | `src/client_layout.c` | The supported client builds and their method addresses. |
++| `src/friends.c`, `src/friends_format.c` | Friends list feed and Join/Invite commands; the bounded file formats. |
+ | `src/scm.c` | Wine's service manager and Valve's service installer. |
+ | `src/probe.c`, `src/validation.c` | The bootstrap test and the pure decision functions the tests cover. |
+ | `tests/`, `tools/` | Unit tests; build, check, privacy and layout scripts. |
+diff --git a/docs/CLIENT_LAYOUTS.md b/docs/CLIENT_LAYOUTS.md
+index 64f991c..751820a 100644
+--- a/docs/CLIENT_LAYOUTS.md
++++ b/docs/CLIENT_LAYOUTS.md
+@@ -125,3 +125,114 @@ signed-negative cleanup test: slots 5 and 214 take only `this` and read back a
+ and reads back a 4-byte result. Neighbouring slots 216
+ `ValidateOfflineLogonTicket` and 217 `BGetOfflineLogonTicket` are not called:
+ Dock never handles the ticket itself.
++
++## Friends research (January build)
++
++Static inspection on 2026-10-29, on the January build only; `src/friends.c` now
++calls the slots below. The CDN still serves manifest
++version 1769731672 and the same `bins_win32` archive (SHA-256 matches the
++manifest); its steamclient64.dll has the pinned January fingerprint, and
++`tools/check-client-layout.py` passes on it. The September DLL is no longer
++served, so **friends support is for the January adapter only**; on
++September (or any other build) the friends feature reports unavailable and
++the launch proceeds as before.
++
++Accessor: CSteamClient slot **13** (`0x943510`). Its instructions are
++identical to slot 8 (GetIClientUser, pinned) except the field it returns:
++`ClientInterfaces_t+0x20` instead of `+0x18`. The constructor caller at
++`0x9ed414` stores the object built at `0x728730`, which installs vtable
++`IClientFriendsMap` (RVA `0x12bbed8`), into `+0x20`; the same caller stores
++the IClientUserMap object into `+0x18` (`0x9ed5fc`), cross-checking slot 8.
++
++IClientFriendsMap slots, each named by its wrapper's RIP-relative LEA:
++
++| Slot | RVA | Method |
++| ---: | --- | --- |
++| 4 | 0x768a20 | GetPersonaState (IPC 0x534bc194) |
++| 5 | 0x848460 | SetPersonaState (IPC 0xe333cf87); pinned, not called |
++| 7 | 0x752d60 | GetFriendCount |
++| 10 | 0x7526f0 | GetFriendByIndex |
++| 12 | 0x754910 | GetFriendRelationship |
++| 13 | 0x7542b0 | GetFriendPersonaState |
++| 14 | 0x753c20 | GetFriendPersonaName |
++| 23 | 0x753250 | GetFriendGamePlayed (IPC 0xe0ce182e) |
++| 25 | 0x753580 | GetFriendGameServer |
++| 32 | 0x82e020 | RequestUserInformation (IPC 0xbc9a7cbb); pinned, not called |
++| 93 | 0x754aa0 | GetFriendRichPresence |
++| 96 | 0x82b830 | RequestFriendRichPresence |
++| 194 | 0x81f0a0 | NotifyLobbyJoinRequested (IPC 0x0e74cb2a) |
++| 195 | 0x81f4f0 | NotifyRichPresenceJoinRequested |
++| 215 | 0x812f10 | InviteUserToGame (IPC 0x481f046d) |
++
++Not to be called: 188/190 ActivateGameOverlayInviteDialog* (overlay UI).
++
++Full wrapper review (Phase 1; each serializes the pipe, the function ID, its
++arguments, then a fencepost, and checks response byte 11):
++
++| Slot | Arguments after `this` | Returns |
++| ---: | --- | --- |
++| 7 | int32 flags | int32 |
++| 10 | hidden `uint64 *` result (rdx), int32 index, int32 flags | CSteamID through rdx |
++| 13 | uint64 SteamID | int32 |
++| 14 | uint64 SteamID | string (copied at once) |
++| 23 | uint64 SteamID, `FriendGameInfo_t *` | bool, then 24 bytes into the pointer |
++| 93 | uint32 AppID, uint64 SteamID, string key | string or NULL |
++| 215 | uint32 AppID, uint64 SteamID, string connect | bool |
++| 194 | uint32 AppID, uint64, uint64 | bool |
++| 195 | uint32 AppID, uint64 SteamID, string connect | bool |
++
++Slot 4 is not in that review: `src/friends.c` calls it with no arguments after
++`this` and reads an int32.
++
++Slot 194's two IDs are serialized and forwarded by the server dispatcher
++(`0x798d29`) in the same order; Dock passes lobby then friend, following the
++reference and `GameLobbyJoinRequested_t`. Joining a friend's lobby this way has
++worked on a device (`docs/HANDOFF.md`).
++
++Earlier entry-register notes (first instructions only): GetFriendGamePlayed takes rdx (8-byte SteamID) and r8 (out pointer);
++InviteUserToGame takes edx (4 bytes), r8 and r9; NotifyLobbyJoinRequested
++takes edx (4 bytes, AppID), r8 and r9 (lobby and friend SteamIDs). The wrapper
++review above replaces these notes for the slots it lists, and
++`tools/check-client-layout.py` checks the pinned slots, names and IPC IDs.
++
++Consequences:
++- Joining a running game: NotifyLobbyJoinRequested / NotifyRichPresenceJoin
++  Requested are the client's own path for an accepted invite (they post the
++  game's GameLobbyJoinRequested / GameRichPresenceJoinRequested), so no game
++  restart is needed for games that listen to those callbacks.
++- Joining at start: the host already passes MADEIRA_STEAM_HOST_ARGUMENTS to
++  LaunchApp's pszUserArgs (bounded), so `+connect_lobby <id>` needs no new
++  launch path. Untested live.
++- Host lifetime: the launch loop polls callbacks every 50 ms until 3 s after
++  the game exits, and the friends feed and commands run in that loop.
++
++## Friends sign-in (January build, 2026-10-30)
++
++| Where | RVA | What |
++| --- | --- | --- |
++| CSteamClient slot 69 | 0x9447d0 | GetIClientSharedConnection(user, pipe): same shape as slot 13, returns `ClientInterfaces_t+0x118`, where the bundle constructor (`0x9ed519`) stores the object built at `0x729cc0` (vtable IClientSharedConnectionMap) |
++| IClientSharedConnectionMap 0 | 0x70a0b0 | AllocateSharedConnection() -> uint32 handle (IPC 0x309e429d) |
++| IClientSharedConnectionMap 2 | 0x832cb0 | SendMessage(uint32 handle, const void *data, uint32 size) -> bool (IPC 0x8ad70af2) |
++
++Other slots, not called: 1 ReleaseSharedConnection, 3
++SendMessageAndAwaitResponse, 4 RegisterEMsgHandler, 5
++RegisterServiceMethodHandler, 6 BPopReceivedMessage, 7 InitiateConnection.
++
++A message is `uint32 EMsg | 0x80000000`, `uint32` header length, a
++CMsgProtoBufHeader (empty, or `routing_appid` field 3), then the body; the
++client fills SteamID and session as for the web UI. Field numbers come from
++the Friends window's own message definitions: CMsgClientChangeStatus 1
++persona_state, 5 persona_set_by_user, 7 need_persona_response, 8
++is_client_idle; CMsgClientRequestFriendData 1 persona_state_requested, 2
++friends (fixed64); CMsgClientMMSInviteToLobby 2 steam_id_lobby, 3
++steam_id_user_invited (fixed64). Builders: `src/friends_format.c`, byte-checked
++in `tests/test-friends_format.c`.
++
++Why it is needed: `SetPersonaStateInternal` (`0x9e61d0`) returns early in
++web-UI mode (`0x68f550` true) after posting `SetPersonaStateInternal_t`; the
++status sender `0x590850` needs logon state 4 and drops an unchanged status
++(`0x1d`). Logon setup (`0x9dab1d`) reads `PersonaStateDesired` and
++`AutoSignIntoFriends`.
++
++Service calls use EMsg 151 with header field 12 target_job_name; Dock sends
++`Chat.RequestFriendPersonaStates#1` this way (no response is read).
+diff --git a/docs/HANDOFF.md b/docs/HANDOFF.md
+index a92dbf4..e722387 100644
+--- a/docs/HANDOFF.md
++++ b/docs/HANDOFF.md
+@@ -508,3 +508,166 @@ start after 500 ms by default; MADEIRA_DOCK_LICENCE_WAIT_MS accepts 0..30000.
+ The existing strict integer parser rejects signs, spaces and overflow. Positive
+ ownership from Valve remains required. Native sanitizer checks pass; this
+ combined change has not been tested with a live client or a device.
++
++## Friends, invites and join (2026-10-29)
++
++New optional `src/friends.c` (Windows) and `src/friends_format.c` (portable,
++tested in `tests/test-friends_format.c`). After LaunchApp is submitted the host
++gets IClientFriends through CSteamClient slot 13, checks nine pinned friends
++slots, and in the launch loop writes `C:\madeira-friends.bin` every 3 s and
++reads `C:\madeira-friends-cmd.bin` every 0.5 s. Feed and commands are
++deleted at host start and exit. September layout has zero friends pins:
++`friends-available=0`, launch unchanged. `tools/check-client-layout.py` now
++also checks the friends slots, names and IPC IDs (passes on the January DLL
++from Valve's CDN). Cross-compile (x86-64, i686) and native ASan/UBSan tests
++pass.
++
++Not yet proven at runtime: friend list contents, GetFriendByIndex hidden
++return, the lobby/friend argument order of NotifyLobbyJoinRequested (taken
++from the reference and the public callback; the server passes both through
++in order), and whether games react to the join notifications. Invites carry
++an empty connect string. Not done: the app side (Madeira reads nothing yet),
++join at launch (`MADEIRA_STEAM_HOST_ARGUMENTS` with `+connect_lobby`),
++incoming invites. Needs a live client and a second account to verify.
++
++## Friends sign-in, lobby invites (2026-10-30)
++
++Device test (iPad, January client, second account) found the headless
++session offline to friends, every friend offline, and no record of its own
++game or lobby, so invites had no Join button. Cause: `SetPersonaStateInternal`
++(`0x9e61d0`) checks `0x68f550` (web-UI mode) and then only posts
++`SetPersonaStateInternal_t` (`0xfde9b`) for desktop Steam's Friends window;
++the window signs in. The Friends window's script (`steamui_websrc_all`,
++`chunk~2dcc5aaf7.js`) sends on logon `ClientChangeStatus` (EMsg 716:
++persona_state, persona_set_by_user false, need_persona_response true,
++is_client_idle false) and `ClientRequestFriendData` (EMsg 815, flags 1106,
++friend IDs), through `SteamClient.SharedConnection.SendMsg`, which SteamUI
++maps to IClientSharedConnection. Dock now does the same (CSteamClient slot 69,
++IClientSharedConnectionMap slots 0/2; see CLIENT_LAYOUTS.md). The earlier
++Offline/Online toggle and per-friend RequestUserInformation calls are gone;
++those pins remain but are not called.
++
++Result on the iPad: `friends-signin=1`, `friends-requested=12`,
++`friends-online` 1, `friends-own-game=4`. The friend saw the account Online
++and In-Game. Invites with `+connect_lobby` (InviteUserToGame) showed a Join
++button but the game did not join; the friends menu's "Invite to lobby"
++(EMsg 6621 `ClientMMSInviteToLobby`: header routing_appid, steam_id_lobby,
++steam_id_user_invited), now sent whenever the own lobby is known
++(`friends-invite-connect=3`), joined the friend into the lobby.
++
++Not yet tested: Join from Madeira into a friend's lobby, incoming invites
++(the session now receives friends' data; callback IDs are still logged), and
++the Madeira Friends sheet. The app's Web API presence code (it got a
++refresh token revoked) has since been removed.
++
++## Friends' status subscription, Friends page (2026-10-30, later)
++
++Friends' status stopped arriving although Steam showed the friend online
++elsewhere. `PersonaStateChange_t` flags showed friends' updates carrying only
++name, relationship and name-first-set bits. The Friends window, once the
++friends list is in, calls `Chat.RequestFriendPersonaStates#1` (EMsg 151,
++header target_job_name, empty body); Dock now sends it after
++ClientChangeStatus (`friends-subscribed`). Status then arrived, but Dock's
++once-a-minute ClientRequestFriendData for every friend reset all friends to
++offline (the update carried the went-offline bit). The window sends that
++request only for friends whose name is not loaded; Dock now does the same
++(normally none). The earlier "online" sightings were status changes that
++happened to arrive. Callback 503 (LobbyInvite_t) arrives on Dock's pipe once
++the session is signed in to Friends, so incoming lobby invites need no
++shared-connection receive path (see below).
++
++Madeira: the in-game Session menu has a Friends page (DockFriends.swift):
++friends sorted joinable / this game / other game / online / offline, Join for
++joinable friends, Invite for online friends (later narrowed, see "Status and
++Invite rules" below), the result per row. On the iPad,
++with a friend's Steam under Sikarugir: the friend showed online, Join entered
++the friend's lobby and Invite brought the friend into this lobby.
++
++## Incoming invites (2026-10-30)
++
++Dock keeps each LobbyInvite_t (503: inviter, lobby, CGameID) for the session's
++App ID, newest per friend, at most 16, and sets feed flag 8 (invited) on the
++inviter; Join on that friend calls NotifyLobbyJoinRequested with the invited
++lobby and forgets the invite. The Friends page lists inviters first with
++"Invited you to play" and Accept. On the iPad the friend's invite appeared and
++Accept joined the friend's lobby. Invites from game invites with a connect
++string (GameRichPresenceJoinRequested, chat messages) are not handled.
++
++Follow-up: an invisible friend who invited showed as in game (the client
++still knows the game); the feed now sets game flags only for friends shown
++online, and Join without an invite refuses friends shown offline. The app's
++Join result reads "Sent to the game" (the game decides whether it gets in)
++and results clear after 5 s. Dock's report uses CRLF; the app splits on any
++newline. Accepting an invite to a lobby the friend has left put the player in
++the friend's new lobby: Dock passes the invited lobby and the friend, so the
++game or the client followed the friend.
++
++## Status and Invite rules (2026-10-30)
++
++The app now picks the status (Settings › Steam › Status) and passes it as
++`MADEIRA_DOCK_PERSONA_STATE`: 0 Offline, 1 Online, 3 Away, 7 Invisible. Offline
++turns friends off for the session. Command operation 3 changes between the other
++three during play, from the Friends page. Invite is now offered only while this
++player has a lobby or a rich presence `connect` to invite with (feed flag 16),
++and to online friends; with neither, no invite is sent (result 2).
++
++## Sign-in retries, reconnect, report size (2026-10-31)
++
++A failed `ClientChangeStatus` or subscription send is tried again every 5 s,
++five tries in all. On `SteamServersConnected_t` (101) Dock announces the status
++and subscribes again. The friends count lines in the report are written at
++growing intervals, from 15 s up to 10 min. The app reads a report of up to 1 MiB
++(it was 32 KB).
++
++## Friends off: no polling (2026-11-05)
++
++With friends off (`MADEIRA_DOCK_PERSONA_STATE=0`, `MADEIRA_DOCK_FRIENDS=0`, or a
++client build without the pins), `sh_friends_poll` and `sh_friends_end` return
++at once, so Dock no longer opens the command file every 500 ms or answers
++`friends-cmd-result=6`. `sh_friends_init` still removes files left by an
++earlier session. Tested by the owner with the Offline status: it works (see
++"Friends test status"). `MADEIRA_DOCK_FRIENDS=0` and a build without the pins
++have no recorded result.
++
++## Friends test status (2026-11-05)
++
++Tested by the owner: sending an invite, joining a friend without an invite,
++receiving an invite, joining with an invite, being joined without sending an
++invite, and friends off through the Offline status. The game, the invite kind and
++the report values of these runs were not recorded here.
++
++Earlier results above: the lobby invite (`friends-invite-connect=3`) works, with
++one game. `+connect_lobby` gave the friend a Join button but the game did not
++join; a signed-in session that knows its lobby now sends the lobby invite
++instead. No recorded result for the connect-string invite (1).
++
++## Review fixes (2026-11-06)
++
++From the review of PR #10 and Madeira PR #572:
++
++- **Opt-in.** Friends run only with an explicit `MADEIRA_DOCK_PERSONA_STATE`
++  of 1, 3 or 7 (`sh_friend_status_choice`). Without the variable, or with 0,
++  Dock reports `friends-available=0` and sends Steam nothing of its own, the
++  same as before Friends. The old fallback to the account's stored status (or
++  Online) is gone, so a Madeira build that does not pass a status, or a user
++  who never chose one, never signs in to Friends. Madeira's Settings › Steam ›
++  Status is Offline by default.
++- **One call per friend per kind.** `write_feed` had a separate counting pass
++  that asked each friend's name twice and game up to twice; it is now one pass
++  (SteamID and status for everyone, the game only for friends shown online,
++  `connect` only for same-game friends without a lobby, names only for the
++  friends written). `friends-playing` now counts friends shown online who
++  play a game, and `friends-named` the written friends that have a name.
++- **Cap order.** Past 250, invited, joinable, same-game, in-game and online
++  friends are kept before offline ones (`sh_friend_rank`, `sh_friends_pick`),
++  out of the client's first 2000 entries.
++- **Commands are taken by rename** (`C:\madeira-friends-cmd.taken`), so a
++  command written between reading and deleting is no longer lost.
++- The app side (Madeira) masks its sequence to 31 bits, matches only report
++  lines written after its command, ignores a feed older than 15 s and removes
++  the feed and command files at session end.
++
++Checked on the host: `tools/check.sh` (all five suites, ASan and UBSan,
++including the new status and cap cases) and both cross-builds with `-Werror`.
++Not yet checked on a device or with live Steam: these changes have not been
++through a Friends session; `tools/check-client-layout.py` needs the Valve DLL.
+diff --git a/docs/INVITE_TESTING.md b/docs/INVITE_TESTING.md
+new file mode 100644
+index 0000000..b42127e
+--- /dev/null
++++ b/docs/INVITE_TESTING.md
+@@ -0,0 +1,40 @@
++# Testing invites
++
++Status (details in `docs/HANDOFF.md`): the **lobby invite**
++(`friends-invite-connect=3`) works and a friend accepted it. Sending an invite,
++receiving one and joining with it, joining a friend without an invite, and being
++joined without sending one have all been tested. **`+connect_lobby`** (2) was
++tried before the lobby invite existed: the friend got a Join button but the game
++did not join. The **connect string** (1) and the Invite button's visibility
++rules have no recorded result.
++
++## Setup
++
++Two Steam accounts that are friends, both owning the game under test. Account A
++runs the game through Madeira Dock; account B runs desktop Steam (or a second
++Dock session). Read A's `C:\madeira-dock.txt` after each step. Reports carry
++numbers only; keep SteamIDs and names out of anything you save.
++
++## Cases
++
++| Kind | Game needs | A does | Expect on A |
++|---|---|---|---|
++| Lobby invite | Lobby matchmaking | Create a lobby, open Friends, press Invite on B | Invite shown; `friends-own-game=4`, `friends-invite-connect=3`, `friends-cmd-result=1`. B gets a Steam invite and joining enters A's lobby |
++| Connect string | Sets rich presence `connect` | Be in the game session that sets it, press Invite | `friends-invite-connect=1`, result 1. B's invite carries the connect string; accepting launches or joins with it |
++| `+connect_lobby` | A lobby but no `connect` and no shared connection | As lobby invite, with friends sign-in off (set `MADEIRA_DOCK_FRIENDS_ONLINE=0` yourself; the app never does) | If the client knows the lobby (`friends-own-game=4`): `friends-invite-connect=2`, result 1. A session not signed in to Friends may not know it and sees friends as offline: then no Invite button, and a forced command returns result 2 (`friends-invite-connect=0`) |
++| Nothing to join | Any | Main menu, no lobby, no `connect` | No Invite button; a forced command returns result 2 (`friends-invite-connect=0`) |
++| Leaving | Lobby game | Leave the lobby | Invite disappears within about 6 s (the feed and the Friends page each refresh every 3 s) |
++| Offline | Any | Choose Offline before launch | No Friends page; `friends-available=0` is the only friends report |
++
++## Accept side
++
++For each invite kind, accept on B and check the game joins. Also have B invite A
++(Accept in the Friends page: `friends-cmd-result=1`, the game decides whether it
++joins). Games that ignore lobby join callbacks, or that use
++only `connect`, may behave differently: record the game's App ID and the
++`friends-invite-connect` value, not the game's name, in `docs/HANDOFF.md`.
++
++## Also check
++
++Status changes from the Friends page (Online, Away, Invisible) show on B within
++a few seconds, and an invite can still be sent after each change.
+diff --git a/src/client_layout.c b/src/client_layout.c
+index aa24808..833f39e 100644
+--- a/src/client_layout.c
++++ b/src/client_layout.c
+@@ -13,7 +13,8 @@ static const struct dock_client_layout layouts[] = {
+         0x8412f0, 0x736110, 0x729a20, 0x72ee00, 0x859860, 0x869f80,
+         0x7324e0, 0x735670, 0x792860, 0x83f0f0, 0x758760,
+         0x84e8b0,
+-        0x77e460, 0x73cbb0, 0x8415d0
++        0x77e460, 0x73cbb0, 0x8415d0,
++        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+     },
+     {
+         "71b391fe9f3e2006cbc81a5c75eef3eb4186012deabfdb2c8b7e8d4850ecf640", 202601,
+@@ -21,7 +22,11 @@ static const struct dock_client_layout layouts[] = {
+         0x81d7f0, 0x719dc0, 0x70d170, 0x712af0, 0x8352d0, 0x8459b0,
+         0x716040, 0x719320, 0x775440, 0x81b840, 0x73b930,
+         0x82a8c0,
+-        0x7612c0, 0x720330, 0x81dad0
++        0x7612c0, 0x720330, 0x81dad0,
++        0x943510, 0x752d60, 0x7526f0, 0x7542b0, 0x753c20,
++        0x753250, 0x754aa0, 0x812f10, 0x81f0a0, 0x81f4f0,
++        0x768a20, 0x848460, 0x82e020,
++        0x9447d0, 0x70a0b0, 0x832cb0
+     }
+ };
+ const struct dock_client_layout *dock_client_layout(const char *sha256)
+diff --git a/src/client_layout.h b/src/client_layout.h
+index eb41976..77750a8 100644
+--- a/src/client_layout.h
++++ b/src/client_layout.h
+@@ -18,6 +18,18 @@ struct dock_client_layout {
+      * account may log on offline, from the offline logon ticket it fetched itself
+      * during an earlier online logon. */
+     uintptr_t logon_state, can_offline, logon_offline;
++    /* Friends (see CLIENT_LAYOUTS.md): CSteamClient slot 13 GetIClientFriends, then
++     * IClientFriendsMap slots 7 GetFriendCount, 10 GetFriendByIndex, 13
++     * GetFriendPersonaState, 14 GetFriendPersonaName, 23 GetFriendGamePlayed,
++     * 93 GetFriendRichPresence, 215 InviteUserToGame, 194 NotifyLobbyJoinRequested,
++     * 195 NotifyRichPresenceJoinRequested, 4 GetPersonaState, 5 SetPersonaState, 32 RequestUserInformation. Friends sign-in: CSteamClient
++     * slot 69 GetIClientSharedConnection, then IClientSharedConnectionMap slots 0
++     * AllocateSharedConnection and 2 SendMessage. Zero where a build was not inspected:
++     * the friends feature is then unavailable and the launch is unaffected. */
++    uintptr_t engine_friends, friend_count, friend_by_index, friend_state, friend_name,
++        friend_game, friend_presence, friend_invite, friend_join_lobby, friend_join_presence,
++        persona_state, set_persona_state, request_user_info,
++        engine_shared, shared_allocate, shared_send;
+ };
+ const struct dock_client_layout *dock_client_layout(const char *sha256);
+ bool dock_method_is(uintptr_t module, void *object, unsigned slot, uintptr_t rva);
+diff --git a/src/friends.c b/src/friends.c
+new file mode 100644
+index 0000000..9c147ba
+--- /dev/null
++++ b/src/friends.c
+@@ -0,0 +1,481 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++ * Copyright 2026 125hz
++ * Madeira Converter Exception: see LICENSE-EXCEPTION.md
++ * Friends through Valve's client: list, invite, and join through the client's
++ * own accepted-invite path (NotifyLobbyJoinRequested /
++ * NotifyRichPresenceJoinRequested), which posts the running game's own join
++ * callbacks. Slots and ABI: docs/CLIENT_LAYOUTS.md, "Friends research".
++ */
++#include "friends.h"
++#include <stdio.h>
++#include <string.h>
++
++#define SH_FRIENDS_FEED_MS 3000
++#define SH_FRIEND_FLAG_IMMEDIATE 4
++
++#ifdef _WIN64
++static const wchar_t feed_path[] = L"C:\\madeira-friends.bin";
++static const wchar_t feed_temp[] = L"C:\\madeira-friends.tmp";
++static const wchar_t command_path[] = L"C:\\madeira-friends-cmd.bin";
++static const wchar_t command_taken[] = L"C:\\madeira-friends-cmd.taken";
++/* FriendGameInfo_t, 24 bytes (GetFriendGamePlayed reads exactly 0x18). */
++struct game_info {
++    uint64_t game;
++    uint32_t ip;
++    uint16_t port, query_port;
++    uint64_t lobby;
++};
++_Static_assert(sizeof(struct game_info) == 24, "FriendGameInfo_t");
++
++typedef void *(__thiscall *get_friends_fn)(void *, int32_t, int32_t);
++typedef int32_t (__thiscall *count_fn)(void *, int32_t);
++typedef int32_t (__thiscall *own_state_fn)(void *);
++typedef void *(__thiscall *by_index_fn)(void *, uint64_t *, int32_t, int32_t);
++typedef int32_t (__thiscall *state_fn)(void *, uint64_t);
++typedef const char *(__thiscall *name_fn)(void *, uint64_t);
++typedef bool (__thiscall *game_fn)(void *, uint64_t, struct game_info *);
++typedef const char *(__thiscall *presence_fn)(void *, uint32_t, uint64_t, const char *);
++typedef bool (__thiscall *invite_fn)(void *, uint32_t, uint64_t, const char *);
++typedef bool (__thiscall *join_lobby_fn)(void *, uint32_t, uint64_t, uint64_t);
++typedef bool (__thiscall *join_presence_fn)(void *, uint32_t, uint64_t, const char *);
++typedef void *(__thiscall *get_shared_fn)(void *, int32_t, int32_t);
++typedef uint32_t (__thiscall *allocate_fn)(void *);
++typedef bool (__thiscall *send_fn)(void *, uint32_t, const void *, uint32_t);
++
++#define SLOT(f, n) ((*(void ***)(f)->friends)[n])
++#define SHARED(f, n) ((*(void ***)(f)->shared)[n])
++
++/* The status the app chose (MADEIRA_DOCK_PERSONA_STATE 1 Online, 3 Away,
++ * 7 Invisible), or -1. */
++static int32_t chosen_status(void)
++{
++    wchar_t value[4] = {0};
++    DWORD n = GetEnvironmentVariableW(L"MADEIRA_DOCK_PERSONA_STATE", value, 4);
++    return sh_friend_status_choice(value, n);
++}
++
++static bool disabled(void)
++{
++    wchar_t value[4] = {0};
++    if (GetEnvironmentVariableW(L"MADEIRA_DOCK_FRIENDS", value, 4) == 1 && value[0] == L'0') return true;
++    /* Opt-in: without the app's choice of a status (Offline, the app's default,
++     * or no variable at all) friends stay off entirely: no sign-in to Friends,
++     * no subscription, no list, no commands, nothing sent to Steam. */
++    return chosen_status() < 0;
++}
++
++void sh_friends_init(struct sh_friends *f, HMODULE module, void *engine, int32_t user, int32_t pipe,
++                     uint64_t self, uint32_t appid, const struct dock_client_layout *layout, const struct sh_observer *o)
++{
++    memset(f, 0, sizeof *f);
++    f->o = o;
++    f->appid = appid;
++    f->self = self;
++    f->last_count = f->last_total = f->last_valid = f->last_named = f->last_playing = f->last_online = -1;
++    f->logged_count = f->logged_named = f->logged_playing = f->logged_online = f->logged_requested = -1;
++    f->started_ms = o->now_ms();
++    DeleteFileW(feed_path);
++    DeleteFileW(command_path);
++    DeleteFileW(command_taken);
++    uintptr_t base = (uintptr_t)module;
++    if (disabled() || !layout || !dock_method_is(base, engine, 13, layout->engine_friends)) {
++        o->event("friends-available", 0);
++        return;
++    }
++    void *friends = ((get_friends_fn)(*(void ***)engine)[13])(engine, user, pipe);
++    const struct { unsigned slot; uintptr_t rva; } methods[] = {
++        {7, layout->friend_count}, {10, layout->friend_by_index}, {13, layout->friend_state},
++        {14, layout->friend_name}, {23, layout->friend_game}, {93, layout->friend_presence},
++        {215, layout->friend_invite}, {194, layout->friend_join_lobby}, {195, layout->friend_join_presence},
++        {4, layout->persona_state}, {5, layout->set_persona_state}, {32, layout->request_user_info}};
++    for (unsigned i = 0; i < sizeof methods / sizeof methods[0]; ++i)
++        if (!dock_method_is(base, friends, methods[i].slot, methods[i].rva)) {
++            o->event("friends-available", 0);
++            return;
++        }
++    f->friends = friends;
++    f->layout = layout;
++    o->event("friends-available", 1);
++    /* Desktop Steam's Friends window, not the client, signs in to Friends:
++     * with a web-based UI the client leaves the status change to the window
++     * (SetPersonaStateInternal_t). The window sends ClientChangeStatus and
++     * ClientRequestFriendData itself through the client's shared connection,
++     * so Dock sends the same two messages that way (sh_friends_poll).
++     * MADEIRA_DOCK_FRIENDS_ONLINE=0 sends neither. */
++    int32_t own = ((own_state_fn)SLOT(f, 4))(friends);
++    o->event("friends-own-state", own);
++    wchar_t online[4] = {0};
++    bool keep = GetEnvironmentVariableW(L"MADEIRA_DOCK_FRIENDS_ONLINE", online, 4) == 1 && online[0] == L'0';
++    if (keep || !dock_method_is(base, engine, 69, layout->engine_shared)) {
++        o->event("friends-signin-available", 0);
++        return;
++    }
++    void *shared = ((get_shared_fn)(*(void ***)engine)[69])(engine, user, pipe);
++    if (!shared || !dock_method_is(base, shared, 0, layout->shared_allocate) ||
++        !dock_method_is(base, shared, 2, layout->shared_send)) {
++        o->event("friends-signin-available", 0);
++        return;
++    }
++    f->shared = shared;
++    f->connection = ((allocate_fn)SHARED(f, 0))(shared);
++    o->event("friends-signin-available", f->connection ? 1 : 2);
++    if (!f->connection) { f->shared = NULL; return; }
++    /* The app's choice; disabled() made sure there is one. */
++    f->announce_state = chosen_status();
++    f->announce_pending = true;
++    o->event("friends-persona-chosen", f->announce_state);
++    f->announce_ms = o->now_ms() + 2000;
++}
++
++static uint32_t game_app(const struct game_info *game)
++{
++    /* CGameID: type in the top byte (0 = app), App ID in the low 24 bits. */
++    return (game->game >> 56) == 0 ? (uint32_t)(game->game & 0xffffff) : 0;
++}
++
++/* Copies the friend's rich presence "connect" into out when it is valid. */
++static bool friend_connect(struct sh_friends *f, uint64_t id, char *out)
++{
++    const char *value = ((presence_fn)SLOT(f, 93))(f->friends, f->appid, id, "connect");
++    if (!sh_friend_connect_valid(value)) return false;
++    strcpy(out, value);
++    return true;
++}
++
++/* The lobby this friend invited this player to, or 0. */
++static uint64_t invited_lobby(const struct sh_friends *f, uint64_t from)
++{
++    for (unsigned i = 0; i < f->invite_count; ++i) if (f->invites[i].from == from) return f->invites[i].lobby;
++    return 0;
++}
++
++static void forget_invite(struct sh_friends *f, uint64_t from)
++{
++    for (unsigned i = 0; i < f->invite_count; ++i)
++        if (f->invites[i].from == from) {
++            f->invites[i] = f->invites[--f->invite_count];
++            return;
++        }
++}
++
++static bool friend_known(struct sh_friends *f, uint64_t id)
++{
++    int32_t count = ((count_fn)SLOT(f, 7))(f->friends, SH_FRIEND_FLAG_IMMEDIATE);
++    for (int32_t i = 0; i < count && i < 2000; ++i) {
++        uint64_t other = 0;
++        ((by_index_fn)SLOT(f, 10))(f->friends, &other, i, SH_FRIEND_FLAG_IMMEDIATE);
++        if (other == id) return true;
++    }
++    return false;
++}
++
++static void write_feed(struct sh_friends *f)
++{
++    static struct sh_friend seen[SH_FRIENDS_SCAN];
++    static uint8_t ranks[SH_FRIENDS_SCAN];
++    static uint32_t keep[SH_FRIENDS_MAX];
++    static struct sh_friend list[SH_FRIENDS_MAX];
++    static uint8_t feed[SH_FRIENDS_FEED_CAP];
++    int32_t total = ((count_fn)SLOT(f, 7))(f->friends, SH_FRIEND_FLAG_IMMEDIATE);
++    uint32_t n = 0;
++    int32_t valid = 0, named = 0, playing = 0, online = 0;
++    /* Like desktop Steam, Invite is offered only when this player has something
++     * to join: a lobby of this app, or a rich presence "connect" the game set. */
++    struct game_info mine = {0};
++    char mine_connect[SH_FRIEND_CONNECT_CAP];
++    bool in_lobby = ((game_fn)SLOT(f, 23))(f->friends, f->self, &mine) && mine.lobby && game_app(&mine) == f->appid;
++    in_lobby = in_lobby || friend_connect(f, f->self, mine_connect);
++    /* One pass over the client's list, each call at most once per friend:
++     * SteamID and status for every friend; the game only for a friend who
++     * appears online (one who appears offline, invisible included, shows no
++     * game, as in desktop Steam); "connect" only for one in this game without
++     * a lobby. The counts come from the same calls. Names are asked below, for
++     * the listed friends only. */
++    for (int32_t i = 0; i < total && i < (int32_t)SH_FRIENDS_SCAN; ++i) {
++        uint64_t id = 0;
++        ((by_index_fn)SLOT(f, 10))(f->friends, &id, i, SH_FRIEND_FLAG_IMMEDIATE);
++        if (!sh_friend_steamid_valid(id)) continue;
++        ++valid;
++        int32_t state = ((state_fn)SLOT(f, 13))(f->friends, id);
++        if (state < 0) state = 0;
++        struct sh_friend *entry = &seen[n];
++        memset(entry, 0, sizeof *entry);
++        entry->steamid = id;
++        entry->state = (uint32_t)state;
++        if (invited_lobby(f, id)) entry->flags |= SH_FRIEND_INVITED;
++        if (in_lobby) entry->flags |= SH_FRIEND_CAN_INVITE;
++        struct game_info game = {0};
++        if (state > 0) {
++            ++online;
++            if (((game_fn)SLOT(f, 23))(f->friends, id, &game) && game.game) {
++                ++playing;
++                entry->flags |= SH_FRIEND_IN_GAME;
++                entry->appid = game_app(&game);
++                if (entry->appid && entry->appid == f->appid) {
++                    char connect[SH_FRIEND_CONNECT_CAP];
++                    entry->flags |= SH_FRIEND_SAME_APP;
++                    if (game.lobby || friend_connect(f, id, connect)) entry->flags |= SH_FRIEND_JOINABLE;
++                }
++            }
++        }
++        ranks[n++] = (uint8_t)sh_friend_rank(entry->state, entry->flags);
++    }
++    /* Past the cap, invited, joinable, same-game, in-game and online friends
++     * are kept before offline ones; within each, the client's order. */
++    uint32_t count = sh_friends_pick(ranks, n, keep, SH_FRIENDS_MAX);
++    for (uint32_t k = 0; k < count; ++k) {
++        list[k] = seen[keep[k]];
++        sh_friend_name_copy(list[k].name, sizeof list[k].name, ((name_fn)SLOT(f, 14))(f->friends, list[k].steamid));
++        if (list[k].name[0]) ++named;
++    }
++    /* As the Friends window does: ask for persona data only for friends whose
++     * name has not loaded, at most once a minute. Asking for loaded friends
++     * resets their live status to offline; status comes from the
++     * Chat.RequestFriendPersonaStates subscription (sh_friends_poll). */
++    uint64_t now = f->o->now_ms();
++    if (f->shared && !f->announce_pending && valid && now >= f->next_request_ms) {
++        static uint64_t ids[SH_FRIENDS_MAX];
++        static uint8_t message[8 + 14 + SH_FRIENDS_MAX * 9];
++        uint32_t unnamed = 0;
++        for (uint32_t i = 0; i < count; ++i) if (!list[i].name[0]) ids[unnamed++] = list[i].steamid;
++        f->next_request_ms = now + 60000;
++        if (unnamed) {
++            size_t size = sh_cm_request_friend_data(message, sizeof message, SH_CM_FRIEND_DATA_FLAGS, ids, unnamed);
++            bool sent = size && ((send_fn)SHARED(f, 2))(f->shared, f->connection, message, (uint32_t)size);
++            int32_t requested = sent ? (int32_t)unnamed : -1;
++            if (requested != f->logged_requested) f->o->event("friends-requested", requested);
++            f->logged_requested = requested;
++        }
++    }
++    /* Counts only, to tell an empty list from a failing step. */
++    if (total != f->last_total) f->o->event("friends-total", total);
++    if (valid != f->last_valid) f->o->event("friends-valid-ids", valid);
++    if ((named != f->logged_named || playing != f->logged_playing || online != f->logged_online ||
++         (int32_t)count != f->logged_count) && now >= f->next_counts_ms) {
++        f->o->event("friends-online", online);
++        f->o->event("friends-named", named);
++        f->o->event("friends-playing", playing);
++        f->o->event("friends-seconds", (int32_t)((now - f->started_ms) / 1000));
++        f->logged_named = named;
++        f->logged_playing = playing;
++        f->logged_online = online;
++        f->logged_count = (int32_t)count;
++        f->counts_interval_ms = !f->counts_interval_ms ? 15000
++            : f->counts_interval_ms >= 300000 ? 600000 : f->counts_interval_ms * 2;
++        f->next_counts_ms = now + f->counts_interval_ms;
++    }
++    f->last_total = total;
++    f->last_valid = valid;
++    f->last_named = named;
++    f->last_playing = playing;
++    f->last_online = online;
++    size_t size = sh_friends_feed_encode(feed, sizeof feed, list, count);
++    HANDLE file = size ? CreateFileW(feed_temp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL) : INVALID_HANDLE_VALUE;
++    if (file == INVALID_HANDLE_VALUE) return;
++    DWORD written = 0;
++    bool ok = WriteFile(file, feed, (DWORD)size, &written, NULL) && written == size;
++    CloseHandle(file);
++    if (!ok || !MoveFileExW(feed_temp, feed_path, MOVEFILE_REPLACE_EXISTING)) {
++        DeleteFileW(feed_temp);
++        return;
++    }
++    if ((int32_t)count != f->last_count) f->o->event("friends-count", (int32_t)count);
++    f->last_count = (int32_t)count;
++}
++
++static int32_t run_command(struct sh_friends *f, const struct sh_friend_command *c, bool game_running)
++{
++    if (c->op == SH_FRIEND_SET_STATE) {
++        uint8_t message[64];
++        size_t size = f->shared ? sh_cm_change_status(message, sizeof message, (uint32_t)c->steamid) : 0;
++        bool sent = size && ((send_fn)SHARED(f, 2))(f->shared, f->connection, message, (uint32_t)size);
++        f->o->event("friends-state-set", sent ? (int32_t)c->steamid : -1);
++        if (sent) f->announce_state = (int32_t)c->steamid;   /* re-sent after a reconnect */
++        return sent ? SH_FRIEND_DONE : SH_FRIEND_CALL_FAILED;
++    }
++    if (!friend_known(f, c->steamid)) return SH_FRIEND_UNKNOWN;
++    if (c->op == SH_FRIEND_INVITE) {
++        if (!game_running) return SH_FRIEND_NOT_JOINABLE;
++        /* The invite carries this player's own join details: in a lobby of this
++         * app, the friends menu's "Invite to lobby" (a lobby invite, which games
++         * accept through their lobby join callback); else the game's rich
++         * presence "connect"; else its lobby as +connect_lobby. With none of
++         * these there is nothing to join and no invite is sent. */
++        char connect[SH_FRIEND_CONNECT_CAP] = "";
++        int32_t kind = 0;
++        struct game_info own = {0};
++        /* What the client knows of this player's own game: 0 nothing, 1 no
++         * game, 2 another app, 3 this app without a lobby, 4 with a lobby. */
++        bool have = ((game_fn)SLOT(f, 23))(f->friends, f->self, &own);
++        f->o->event("friends-own-game", !have ? 0 : !own.game ? 1 : game_app(&own) != f->appid ? 2 : own.lobby ? 4 : 3);
++        bool lobby = have && own.lobby && game_app(&own) == f->appid;
++        if (lobby && f->shared) {
++            uint8_t message[40];
++            size_t size = sh_cm_invite_to_lobby(message, sizeof message, f->appid, own.lobby, c->steamid);
++            f->o->event("friends-invite-connect", 3);
++            return size && ((send_fn)SHARED(f, 2))(f->shared, f->connection, message, (uint32_t)size)
++                ? SH_FRIEND_DONE : SH_FRIEND_CALL_FAILED;
++        }
++        if (friend_connect(f, f->self, connect)) kind = 1;
++        else if (lobby) {
++            snprintf(connect, sizeof connect, "+connect_lobby %llu", (unsigned long long)own.lobby);
++            kind = 2;
++        }
++        f->o->event("friends-invite-connect", kind);
++        if (!kind) return SH_FRIEND_NOT_JOINABLE;
++        return ((invite_fn)SLOT(f, 215))(f->friends, f->appid, c->steamid, connect) ? SH_FRIEND_DONE : SH_FRIEND_CALL_FAILED;
++    }
++    /* An invite from this friend names the lobby to join. */
++    uint64_t invited = invited_lobby(f, c->steamid);
++    if (invited) {
++        forget_invite(f, c->steamid);
++        return ((join_lobby_fn)SLOT(f, 194))(f->friends, f->appid, invited, c->steamid)
++            ? SH_FRIEND_DONE : SH_FRIEND_CALL_FAILED;
++    }
++    struct game_info game = {0};
++    if (((state_fn)SLOT(f, 13))(f->friends, c->steamid) <= 0 ||
++        !((game_fn)SLOT(f, 23))(f->friends, c->steamid, &game) || game_app(&game) != f->appid)
++        return SH_FRIEND_NOT_JOINABLE;
++    if (game.lobby)
++        return ((join_lobby_fn)SLOT(f, 194))(f->friends, f->appid, game.lobby, c->steamid)
++            ? SH_FRIEND_DONE : SH_FRIEND_CALL_FAILED;
++    char connect[SH_FRIEND_CONNECT_CAP];
++    if (!friend_connect(f, c->steamid, connect)) return SH_FRIEND_NOT_JOINABLE;
++    return ((join_presence_fn)SLOT(f, 195))(f->friends, f->appid, c->steamid, connect)
++        ? SH_FRIEND_DONE : SH_FRIEND_CALL_FAILED;
++}
++
++static void read_command(struct sh_friends *f, bool game_running)
++{
++    /* The command is taken by renaming it first: one the app writes after
++     * this lands at command_path again and is read at the next poll, rather
++     * than deleted unread with this one. Without a command (the usual case)
++     * the rename fails and nothing else happens. */
++    if (!MoveFileExW(command_path, command_taken, MOVEFILE_REPLACE_EXISTING)) return;
++    HANDLE file = CreateFileW(command_taken, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
++    uint8_t data[SH_FRIENDS_COMMAND_SIZE + 1];
++    DWORD size = 0;
++    bool read = file != INVALID_HANDLE_VALUE && ReadFile(file, data, sizeof data, &size, NULL);
++    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
++    DeleteFileW(command_taken);
++    struct sh_friend_command command;
++    int32_t result = SH_FRIEND_BAD_COMMAND;
++    if (read && sh_friend_command_parse(data, size, &command)) {
++        if (command.sequence == f->last_sequence) return;   /* already answered */
++        f->last_sequence = command.sequence;
++        f->o->event("friends-cmd-seq", (int32_t)command.sequence);
++        result = run_command(f, &command, game_running);
++    }
++    f->o->event("friends-cmd-result", result);
++}
++
++void sh_friends_poll(struct sh_friends *f, bool game_running)
++{
++    /* Friends off: the app has no Friends page, so nothing to read or send. */
++    if (!f->friends) return;
++    uint64_t now = f->o->now_ms();
++    if (now < f->next_command_ms) return;
++    f->next_command_ms = now + SH_FRIENDS_FEED_MS / 6;
++    read_command(f, game_running);
++    if (f->shared && f->announce_pending && now >= f->announce_ms) {
++        uint8_t message[64];
++        size_t size = sh_cm_change_status(message, sizeof message, (uint32_t)f->announce_state);
++        bool sent = size && ((send_fn)SHARED(f, 2))(f->shared, f->connection, message, (uint32_t)size);
++        f->o->event("friends-signin", sent ? f->announce_state : -1);
++        /* Then, as the window does once the friends list is in, subscribe to
++         * friends' status; without it Steam sends their names only. */
++        bool subscribed = false;
++        if (sent) {
++            size = sh_cm_service_call(message, sizeof message, "Chat.RequestFriendPersonaStates#1");
++            subscribed = size && ((send_fn)SHARED(f, 2))(f->shared, f->connection, message, (uint32_t)size);
++            f->o->event("friends-subscribed", subscribed);
++        }
++        /* A failed send is tried again every 5 s, five times in all. */
++        if (subscribed || ++f->announce_tries >= 5) f->announce_pending = false;
++        else f->announce_ms = now + 5000;
++    }
++    if (now < f->next_feed_ms) return;
++    f->next_feed_ms = now + SH_FRIENDS_FEED_MS;
++    write_feed(f);
++}
++
++void sh_friends_callback(struct sh_friends *f, int32_t id, const void *data, int32_t size)
++{
++    if (!f->friends) return;
++    /* SteamServersConnected_t: the client logged on again (a dropped network,
++     * a new CM). That logon does not sign in to Friends either, so announce
++     * the status and subscribe again, as at start. */
++    if (id == 101 && f->shared) {
++        f->announce_pending = true;
++        f->announce_tries = 0;
++        f->announce_ms = f->o->now_ms() + 2000;
++    }
++    /* PersonaStateChange_t {uint64 SteamID; int32 flags}: which kinds of
++     * change (1 name, 2 status, 4 came online, 8 went offline, 16 game, ...)
++     * reach this session. Counts and flag bits only. */
++    /* LobbyInvite_t {inviter, lobby, CGameID}: a friend invited this player
++     * to a lobby. Kept for this app only (the newest per friend); Join on
++     * that friend joins it. */
++    if (id == 503 && size >= 24) {
++        uint64_t from, lobby, game;
++        memcpy(&from, data, 8);
++        memcpy(&lobby, (const uint8_t *)data + 8, 8);
++        memcpy(&game, (const uint8_t *)data + 16, 8);
++        struct game_info info = {.game = game};
++        bool ours = game_app(&info) == f->appid && lobby && sh_friend_steamid_valid(from);
++        f->o->event("friends-invite-received", ours ? 1 : 0);
++        if (ours) {
++            forget_invite(f, from);
++            if (f->invite_count == sizeof f->invites / sizeof f->invites[0]) {
++                memmove(f->invites, f->invites + 1, sizeof f->invites - sizeof f->invites[0]);
++                --f->invite_count;
++            }
++            f->invites[f->invite_count].from = from;
++            f->invites[f->invite_count].lobby = lobby;
++            ++f->invite_count;
++            f->next_feed_ms = 0;   /* show it at the next poll */
++        }
++    }
++    if (id == 304 && size >= 12) {
++        uint64_t who;
++        int32_t flags;
++        memcpy(&who, data, sizeof who);
++        memcpy(&flags, (const uint8_t *)data + 8, sizeof flags);
++        if (who != f->self) {
++            ++f->persona_updates;
++            if ((f->persona_flags | flags) != f->persona_flags) {
++                f->persona_flags |= flags;
++                f->o->event("friends-persona-flags", f->persona_flags);
++            }
++            /* At 1, 2, 4, 8, ...: a few lines however long the session. */
++            if ((f->persona_updates & (f->persona_updates - 1)) == 0) f->o->event("friends-persona-updates", f->persona_updates);
++        }
++    }
++    for (unsigned i = 0; i < f->callback_count; ++i) if (f->callback_ids[i] == id) return;
++    if (f->callback_count >= sizeof f->callback_ids / sizeof f->callback_ids[0]) return;
++    f->callback_ids[f->callback_count++] = id;
++    f->o->event("friends-callback-id", id);
++}
++
++void sh_friends_end(struct sh_friends *f)
++{
++    /* Friends off: init removed these and nothing has written them since. */
++    if (!f->friends) return;
++    DeleteFileW(feed_path);
++    DeleteFileW(feed_temp);
++    DeleteFileW(command_path);
++    DeleteFileW(command_taken);
++}
++#else
++void sh_friends_init(struct sh_friends *f, HMODULE module, void *engine, int32_t user, int32_t pipe,
++                     uint64_t self, uint32_t appid, const struct dock_client_layout *layout, const struct sh_observer *o)
++{
++    (void)module; (void)engine; (void)user; (void)pipe; (void)self; (void)appid; (void)layout;
++    memset(f, 0, sizeof *f);
++    f->o = o;
++    o->event("friends-available", 0);
++}
++void sh_friends_poll(struct sh_friends *f, bool game_running) { (void)f; (void)game_running; }
++void sh_friends_callback(struct sh_friends *f, int32_t id, const void *data, int32_t size) { (void)f; (void)id; (void)data; (void)size; }
++void sh_friends_end(struct sh_friends *f) { (void)f; }
++#endif
+diff --git a/src/friends.h b/src/friends.h
+new file mode 100644
+index 0000000..163e054
+--- /dev/null
++++ b/src/friends.h
+@@ -0,0 +1,50 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++ * Copyright 2026 125hz
++ * Madeira Converter Exception: see LICENSE-EXCEPTION.md */
++#ifndef MADEIRA_DOCK_FRIENDS_H
++#define MADEIRA_DOCK_FRIENDS_H
++#include "session.h"
++#include "friends_format.h"
++
++/* Friends feed and Join/Invite commands during a launched game. Optional:
++ * when unavailable (unpinned client build, MADEIRA_DOCK_FRIENDS=0, a method
++ * mismatch) it reports friends-available=0 and does nothing else; the launch
++ * is never affected. SteamIDs and names go only to the feed file, never to
++ * the report or a log. */
++struct sh_friends {
++    void *friends;
++    const struct dock_client_layout *layout;
++    const struct sh_observer *o;
++    uint32_t appid, last_sequence;
++    uint64_t next_command_ms, next_feed_ms;
++    int32_t last_count, last_total, last_valid, last_named, last_playing, last_online;
++    uint64_t started_ms, announce_ms, next_request_ms, self;
++    int32_t callback_ids[48];
++    unsigned callback_count;
++    int32_t announce_state;
++    bool announce_pending; /* announce_state (1, 3 or 7) still to be sent */
++    unsigned announce_tries; /* failed sends of the current announce */
++    void *shared;          /* IClientSharedConnection, or NULL */
++    uint32_t connection;   /* its allocated connection */
++    int32_t persona_flags; /* PersonaStateChange_t flags seen, OR-ed */
++    int32_t persona_updates;
++    /* The counts last written to the report, and when they may be written
++     * again: the interval doubles from 15 s to 10 min, so a long session's
++     * report stays small (the app reads at most 1 MB of it). */
++    int32_t logged_count, logged_named, logged_playing, logged_online, logged_requested;
++    uint64_t next_counts_ms, counts_interval_ms;
++    /* Lobby invites received for this app (LobbyInvite_t), newest kept. */
++    struct { uint64_t from, lobby; } invites[16];
++    unsigned invite_count;
++};
++
++void sh_friends_init(struct sh_friends *f, HMODULE module, void *engine, int32_t user, int32_t pipe,
++                     uint64_t self, uint32_t appid, const struct dock_client_layout *layout, const struct sh_observer *o);
++/* Rate-limited; call from the launch loop. Invites need the game running. */
++void sh_friends_poll(struct sh_friends *f, bool game_running);
++/* Records each distinct callback ID seen on the pipe (numbers only), to
++ * show which notifications reach this session. */
++void sh_friends_callback(struct sh_friends *f, int32_t id, const void *data, int32_t size);
++/* Removes the feed so the app never reads a stale list. */
++void sh_friends_end(struct sh_friends *f);
++#endif
+diff --git a/src/friends_format.c b/src/friends_format.c
+new file mode 100644
+index 0000000..70d52ca
+--- /dev/null
++++ b/src/friends_format.c
+@@ -0,0 +1,192 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++ * Copyright 2026 125hz
++ * Madeira Converter Exception: see LICENSE-EXCEPTION.md */
++#include "friends_format.h"
++#include <string.h>
++
++static const uint8_t feed_magic[8] = {'M', 'F', 'R', 'N', 'D', '0', '0', '1'};
++static const uint8_t command_magic[8] = {'M', 'F', 'C', 'M', 'D', '0', '0', '1'};
++
++/* Length of the UTF-8 sequence starting at s (at most `left` bytes), or 0. */
++static size_t utf8_length(const unsigned char *s, size_t left)
++{
++    unsigned char c = s[0];
++    size_t n = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
++    if (!n || n > left || (n == 2 && c < 0xc2) || (n == 4 && c > 0xf4)) return 0;
++    for (size_t i = 1; i < n; ++i) if ((s[i] & 0xc0) != 0x80) return 0;
++    if (n == 3 && ((c == 0xe0 && s[1] < 0xa0) || (c == 0xed && s[1] >= 0xa0))) return 0;
++    if (n == 4 && ((c == 0xf0 && s[1] < 0x90) || (c == 0xf4 && s[1] >= 0x90))) return 0;
++    return n;
++}
++
++void sh_friend_name_copy(char *out, size_t cap, const char *in)
++{
++    if (!out || !cap) return;
++    out[0] = 0;
++    if (!in) return;
++    const unsigned char *s = (const unsigned char *)in;
++    size_t length = strnlen(in, 4096), used = 0;
++    for (size_t i = 0; i < length;) {
++        size_t n = utf8_length(s + i, length - i);
++        if (!n) { out[0] = 0; return; }
++        if (!(n == 1 && (s[i] < 32 || s[i] == 127))) {
++            if (used + n >= cap) break;
++            memcpy(out + used, s + i, n);
++            used += n;
++        }
++        i += n;
++    }
++    out[used] = 0;
++}
++
++bool sh_friend_connect_valid(const char *connect)
++{
++    if (!connect || !connect[0]) return false;
++    size_t length = strnlen(connect, SH_FRIEND_CONNECT_CAP);
++    if (length >= SH_FRIEND_CONNECT_CAP) return false;
++    for (size_t i = 0; i < length; ++i)
++        if ((unsigned char)connect[i] < 32 || (unsigned char)connect[i] > 126) return false;
++    return true;
++}
++
++bool sh_friend_steamid_valid(uint64_t steamid)
++{
++    return (steamid >> 56) == 1 && ((steamid >> 52) & 0xf) == 1 && (uint32_t)steamid != 0;
++}
++
++static void put32(uint8_t *p, uint32_t v) { for (int i = 0; i < 4; ++i) p[i] = (uint8_t)(v >> (8 * i)); }
++static void put64(uint8_t *p, uint64_t v) { for (int i = 0; i < 8; ++i) p[i] = (uint8_t)(v >> (8 * i)); }
++
++size_t sh_friends_feed_encode(uint8_t *out, size_t cap, const struct sh_friend *friends, uint32_t count)
++{
++    if (!out || count > SH_FRIENDS_MAX || (count && !friends) || cap < 12) return 0;
++    memcpy(out, feed_magic, 8);
++    put32(out + 8, count);
++    size_t at = 12;
++    for (uint32_t i = 0; i < count; ++i) {
++        const struct sh_friend *f = &friends[i];
++        size_t name = strnlen(f->name, SH_FRIEND_NAME_CAP);
++        if (name >= SH_FRIEND_NAME_CAP || at + 18 + name > cap) return 0;
++        put64(out + at, f->steamid);
++        put32(out + at + 8, f->state);
++        put32(out + at + 12, f->appid);
++        out[at + 16] = f->flags & (SH_FRIEND_IN_GAME | SH_FRIEND_SAME_APP | SH_FRIEND_JOINABLE | SH_FRIEND_INVITED | SH_FRIEND_CAN_INVITE);
++        out[at + 17] = (uint8_t)name;
++        memcpy(out + at + 18, f->name, name);
++        at += 18 + name;
++    }
++    return at;
++}
++
++bool sh_friend_command_parse(const uint8_t *data, size_t size, struct sh_friend_command *command)
++{
++    if (!data || !command || size != SH_FRIENDS_COMMAND_SIZE || memcmp(data, command_magic, 8)) return false;
++    uint8_t op = data[8];
++    uint64_t id = 0;
++    uint32_t sequence = 0;
++    for (int i = 7; i >= 0; --i) id = (id << 8) | data[9 + i];
++    for (int i = 3; i >= 0; --i) sequence = (sequence << 8) | data[17 + i];
++    if (!sequence) return false;
++    if (op == SH_FRIEND_SET_STATE) {
++        if (!sh_friend_status_valid(id)) return false;
++    } else if ((op != SH_FRIEND_INVITE && op != SH_FRIEND_JOIN) || !sh_friend_steamid_valid(id)) {
++        return false;
++    }
++    command->op = op;
++    command->steamid = id;
++    command->sequence = sequence;
++    return true;
++}
++
++bool sh_friend_status_valid(uint64_t state)
++{
++    return state == 1 || state == 3 || state == 7;
++}
++
++int32_t sh_friend_status_choice(const wchar_t *value, uint32_t length)
++{
++    if (!value || length != 1 || value[0] < L'0' || value[0] > L'9') return -1;
++    uint32_t state = (uint32_t)(value[0] - L'0');
++    return sh_friend_status_valid(state) ? (int32_t)state : -1;
++}
++
++unsigned sh_friend_rank(uint32_t state, uint8_t flags)
++{
++    if (flags & SH_FRIEND_INVITED) return 0;
++    if (flags & SH_FRIEND_JOINABLE) return 1;
++    if (flags & SH_FRIEND_SAME_APP) return 2;
++    if (flags & SH_FRIEND_IN_GAME) return 3;
++    return state ? 4 : 5;
++}
++
++uint32_t sh_friends_pick(const uint8_t *ranks, uint32_t n, uint32_t *keep, uint32_t max)
++{
++    if (!ranks || !keep) return 0;
++    uint32_t count = 0;
++    for (unsigned rank = 0; rank <= 5 && count < max; ++rank)
++        for (uint32_t i = 0; i < n && count < max; ++i)
++            if ((ranks[i] > 5 ? 5u : ranks[i]) == rank) keep[count++] = i;
++    return count;
++}
++
++static size_t varint(uint8_t *out, uint32_t v)
++{
++    size_t n = 0;
++    do { out[n] = (uint8_t)(v & 0x7f); v >>= 7; if (v) out[n] |= 0x80; ++n; } while (v);
++    return n;
++}
++
++static size_t cm_header(uint8_t *out, uint32_t emsg)
++{
++    put32(out, emsg | 0x80000000u);
++    put32(out + 4, 0);
++    return 8;
++}
++
++size_t sh_cm_invite_to_lobby(uint8_t *out, size_t cap, uint32_t appid, uint64_t lobby, uint64_t user)
++{
++    if (!out || cap < 8 + 6 + 18 || !appid || !lobby || !sh_friend_steamid_valid(user)) return 0;
++    put32(out, SH_CM_INVITE_TO_LOBBY | 0x80000000u);
++    size_t at = 8;
++    out[at++] = 0x18; at += varint(out + at, appid);   /* header 3 routing_appid */
++    put32(out + 4, (uint32_t)(at - 8));
++    out[at++] = 0x11; put64(out + at, lobby); at += 8;  /* 2 steam_id_lobby */
++    out[at++] = 0x19; put64(out + at, user); at += 8;   /* 3 steam_id_user_invited */
++    return at;
++}
++
++size_t sh_cm_service_call(uint8_t *out, size_t cap, const char *method)
++{
++    size_t length = method ? strnlen(method, 128) : 0;
++    if (!out || !length || length >= 128 || cap < 8 + 2 + length) return 0;
++    put32(out, SH_CM_SERVICE_METHOD | 0x80000000u);
++    out[8] = 0x62;                                      /* header 12 target_job_name */
++    out[9] = (uint8_t)length;
++    memcpy(out + 10, method, length);
++    put32(out + 4, (uint32_t)(2 + length));
++    return 10 + length;
++}
++
++size_t sh_cm_change_status(uint8_t *out, size_t cap, uint32_t state)
++{
++    if (!out || cap < 8 + 1 + 5 + 6) return 0;
++    size_t at = cm_header(out, SH_CM_CHANGE_STATUS);
++    out[at++] = 0x08; at += varint(out + at, state);     /* 1 persona_state */
++    out[at++] = 0x28; out[at++] = 0;                    /* 5 persona_set_by_user */
++    out[at++] = 0x38; out[at++] = 1;                    /* 7 need_persona_response */
++    out[at++] = 0x40; out[at++] = 0;                    /* 8 is_client_idle */
++    return at;
++}
++
++size_t sh_cm_request_friend_data(uint8_t *out, size_t cap, uint32_t flags, const uint64_t *ids, uint32_t count)
++{
++    if (!out || (count && !ids) || count > SH_FRIENDS_MAX || cap < 8 + 1 + 5 + (size_t)count * 9) return 0;
++    size_t at = cm_header(out, SH_CM_REQUEST_FRIEND_DATA);
++    out[at++] = 0x08; at += varint(out + at, flags);     /* 1 persona_state_requested */
++    for (uint32_t i = 0; i < count; ++i) {               /* 2 friends, fixed64 */
++        out[at++] = 0x11;
++        put64(out + at, ids[i]);
++        at += 8;
++    }
++    return at;
++}
+diff --git a/src/friends_format.h b/src/friends_format.h
+new file mode 100644
+index 0000000..5bd6f75
+--- /dev/null
++++ b/src/friends_format.h
+@@ -0,0 +1,105 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++ * Copyright 2026 125hz
++ * Madeira Converter Exception: see LICENSE-EXCEPTION.md
++ * Bounded friends feed (host -> app) and command (app -> host) formats.
++ * Portable: no Windows or Steam calls, so the parsers are unit-tested natively.
++ */
++#ifndef MADEIRA_DOCK_FRIENDS_FORMAT_H
++#define MADEIRA_DOCK_FRIENDS_FORMAT_H
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <wchar.h>
++
++#define SH_FRIENDS_MAX 250u
++#define SH_FRIEND_NAME_CAP 64u          /* bytes including the terminator */
++#define SH_FRIEND_CONNECT_CAP 256u      /* rich presence "connect", with terminator */
++/* magic(8) count(4), then per friend: id(8) state(4) app(4) flags(1) name length(1) name */
++#define SH_FRIENDS_FEED_CAP (12u + SH_FRIENDS_MAX * (18u + SH_FRIEND_NAME_CAP))
++#define SH_FRIENDS_COMMAND_SIZE 21u     /* magic(8) op(1) id(8) sequence(4) */
++
++enum sh_friend_flag {
++    SH_FRIEND_IN_GAME = 1,      /* playing any game */
++    SH_FRIEND_SAME_APP = 2,     /* playing this session's App ID */
++    SH_FRIEND_JOINABLE = 4,     /* same app with a lobby or a connect string */
++    SH_FRIEND_INVITED = 8,      /* invited this player to a lobby of this app */
++    SH_FRIEND_CAN_INVITE = 16   /* this player has a lobby or connect string to invite with */
++};
++
++/* SET_STATE carries the new persona state in the id field: 1 Online, 3 Away or
++ * 7 Invisible. Offline is chosen before launch only (it turns friends off). */
++enum sh_friend_op { SH_FRIEND_INVITE = 1, SH_FRIEND_JOIN = 2, SH_FRIEND_SET_STATE = 3 };
++
++/* The friends the feed considers (the client's list in its order, up to this
++ * many); at most SH_FRIENDS_MAX of them are written. */
++#define SH_FRIENDS_SCAN 2000u
++
++/* friends-cmd-result values in the report. */
++enum sh_friend_result {
++    SH_FRIEND_DONE = 1,
++    SH_FRIEND_NOT_JOINABLE = 2,
++    SH_FRIEND_UNKNOWN = 3,
++    SH_FRIEND_CALL_FAILED = 4,
++    SH_FRIEND_BAD_COMMAND = 5
++};
++
++struct sh_friend {
++    uint64_t steamid;
++    uint32_t state, appid;
++    uint8_t flags;
++    char name[SH_FRIEND_NAME_CAP];
++};
++
++struct sh_friend_command {
++    uint8_t op;
++    uint64_t steamid;
++    uint32_t sequence;
++};
++
++/* Copies at most cap-1 bytes of valid UTF-8, cutting at a character boundary
++ * and dropping control characters. Invalid input yields an empty name. */
++void sh_friend_name_copy(char *out, size_t cap, const char *in);
++/* Printable ASCII only, 1..SH_FRIEND_CONNECT_CAP-1 bytes. */
++bool sh_friend_connect_valid(const char *connect);
++/* Individual SteamIDs only (universe public, account type individual). */
++bool sh_friend_steamid_valid(uint64_t steamid);
++/* Returns the encoded size, or 0 if out is too small or count exceeds the cap. */
++size_t sh_friends_feed_encode(uint8_t *out, size_t cap, const struct sh_friend *friends, uint32_t count);
++bool sh_friend_command_parse(const uint8_t *data, size_t size, struct sh_friend_command *command);
++
++/* A status a session may sign in to Friends with or change to: 1 Online,
++ * 3 Away, 7 Invisible. */
++bool sh_friend_status_valid(uint64_t state);
++/* MADEIRA_DOCK_PERSONA_STATE (its value and the length GetEnvironmentVariableW
++ * returned): the chosen status, or -1 when friends stay off (0 Offline,
++ * missing, or anything else). Friends are opt-in: only the app's explicit
++ * choice of 1, 3 or 7 turns them on. */
++int32_t sh_friend_status_choice(const wchar_t *value, uint32_t length);
++/* Which friends the feed keeps when the list is longer than its cap: lower
++ * first. 0 invited this player, 1 joinable, 2 in this game, 3 in another game,
++ * 4 online, 5 offline (as the app orders them). */
++unsigned sh_friend_rank(uint32_t state, uint8_t flags);
++/* Writes to keep the indices of at most max of the n ranks, lowest rank first
++ * and in list order within a rank; returns how many it wrote. */
++uint32_t sh_friends_pick(const uint8_t *ranks, uint32_t n, uint32_t *keep, uint32_t max);
++
++/* Steam server messages as desktop Steam's Friends window builds them: EMsg
++ * with the protobuf bit, header length 0 (the client fills the header), body.
++ * Both return the size, or 0 if out is too small. */
++#define SH_CM_CHANGE_STATUS 716u
++#define SH_CM_REQUEST_FRIEND_DATA 815u
++#define SH_CM_FRIEND_DATA_FLAGS 1106u   /* what the Friends window asks for */
++/* CMsgClientChangeStatus: persona_state, persona_set_by_user false,
++ * need_persona_response true, is_client_idle false. */
++size_t sh_cm_change_status(uint8_t *out, size_t cap, uint32_t state);
++/* CMsgClientRequestFriendData: persona_state_requested, friends (fixed64). */
++size_t sh_cm_request_friend_data(uint8_t *out, size_t cap, uint32_t flags, const uint64_t *ids, uint32_t count);
++#define SH_CM_INVITE_TO_LOBBY 6621u
++#define SH_CM_SERVICE_METHOD 151u
++/* A unified service call with an empty request, as the Friends window sends
++ * it: header target_job_name (e.g. "Chat.RequestFriendPersonaStates#1"). */
++size_t sh_cm_service_call(uint8_t *out, size_t cap, const char *method);
++/* CMsgClientMMSInviteToLobby as the friends menu's "Invite to lobby" sends
++ * it: header routing_appid, body steam_id_lobby and steam_id_user_invited. */
++size_t sh_cm_invite_to_lobby(uint8_t *out, size_t cap, uint32_t appid, uint64_t lobby, uint64_t user);
++#endif
+diff --git a/src/launch.c b/src/launch.c
+index 8ee966d..1682208 100644
+--- a/src/launch.c
++++ b/src/launch.c
+@@ -5,6 +5,7 @@
+  * entitlement checks. The installed game, API DLLs and DRM remain unchanged.
+  */
+ #include "launch.h"
++#include "friends.h"
+ #include "hold.h"
+ #include "scm.h"
+ #include "validation.h"
+@@ -32,15 +33,31 @@ static bool method_is(HMODULE module, void *object, unsigned slot, uintptr_t rva
+ }
+ 
+ struct saved_value { HKEY key; const wchar_t *name; DWORD previous, written; bool existed, changed; };
++/* [dock-code42-log] Why publish() refused, for the log only: what (1 the
++ * query failed, 2 an existing value is not a 4-byte DWORD, 3 the write
++ * failed), the registry status, and the existing value's type and size.
++ */
++static struct { int32_t what, status, type, size; } publish_fail;
+ static bool publish(struct saved_value *v, DWORD value)
+ {
+     DWORD type = 0, size = sizeof(DWORD);
+     LSTATUS status = RegQueryValueExW(v->key, v->name, NULL, &type, (BYTE *)&v->previous, &size);
+     v->existed = status == ERROR_SUCCESS;
+     if ((v->existed && (type != REG_DWORD || size != sizeof(DWORD))) ||
+-        (!v->existed && status != ERROR_FILE_NOT_FOUND)) return false;
++        (!v->existed && status != ERROR_FILE_NOT_FOUND)) {
++        publish_fail.what = v->existed ? 2 : 1;
++        publish_fail.status = (int32_t)status;
++        publish_fail.type = (int32_t)type;
++        publish_fail.size = (int32_t)size;
++        return false;
++    }
+     v->written = value;
+-    if (RegSetValueExW(v->key, v->name, 0, REG_DWORD, (BYTE *)&value, sizeof(value)) != ERROR_SUCCESS) return false;
++    status = RegSetValueExW(v->key, v->name, 0, REG_DWORD, (BYTE *)&value, sizeof(value));
++    if (status != ERROR_SUCCESS) {
++        publish_fail.what = 3;
++        publish_fail.status = (int32_t)status;
++        return false;
++    }
+     v->changed = true;
+     return true;
+ }
+@@ -81,16 +98,36 @@ static BOOL WINAPI on_control(DWORD control)
+  */
+ #define SH_CEG_WAIT_MS (5ULL * 60 * 1000)
+ #define SH_CEG_BUSY_RETRY_MS 10000
++#define SH_CEG_REMOTE_CALL_FAILED 55
++#define SH_CEG_REMOTE_RETRIES 3
++#define SH_CEG_REMOTE_RETRY_MS 1500
+ typedef int32_t (__thiscall *ceg_request_fn)(void *, uint32_t, bool, bool, uint32_t *);
+ 
++/* Porthole 0014: which of the game's launch options to ask Valve's client for. The options are the numbered entries under the app's
++ * config/launch, and not every app starts at 0 (Factorio's are 1, 2, 3 and 5, so asking for option 0 fails with "entry for launch option 0 not found").
++ * The app that starts this host names the right one in MADEIRA_DOCK_LAUNCH_OPTION; unset, empty or not a plain number below 1000 means 0, as before. */
++static uint32_t launch_option_from_environment(void)
++{
++    wchar_t value[8] = {0};
++    DWORD length = GetEnvironmentVariableW(L"MADEIRA_DOCK_LAUNCH_OPTION", value, 8);
++    if (length == 0 || length >= 8) return 0;
++    uint32_t option = 0;
++    for (DWORD i = 0; i < length; i++) {
++        if (value[i] < L'0' || value[i] > L'9') return 0;
++        option = option * 10 + (uint32_t)(value[i] - L'0');
++    }
++    return option < 1000 ? option : 0;
++}
++
+ static bool wide_flag(const wchar_t *name, wchar_t expected)
+ {
+     wchar_t value[4] = {0};
+     return GetEnvironmentVariableW(name, value, 4) == 1 && value[0] == expected;
+ }
+ 
+-/* Returns 0 once every started job reported success, otherwise 49 (or 12
+- * for a malformed callback). Only numeric results are reported: no paths.
++/* Returns 0 once every started job reported success, or at once when the
++ * first request started none (already prepared), otherwise 49 (or 12 for a
++ * malformed callback). Only numeric results are reported: no paths.
+  */
+ static int prepare_custom_binaries(HMODULE module, void *client_user,
+                                    const struct sh_api *api, const struct sh_observer *o,
+@@ -105,7 +142,7 @@ static int prepare_custom_binaries(HMODULE module, void *client_user,
+     struct sh_ceg_progress progress = {0};
+     uint64_t begin = o->now_ms(), retry_at = begin;
+     bool waiting = false;
+-    unsigned busy = 0, logged_jobs = 0;
++    unsigned busy = 0, logged_jobs = 0, remote_retries = 0;
+     int32_t logged_reply = INT32_MIN;
+     while (!InterlockedCompareExchange(&interrupted, 0, 0)) {
+         uint64_t now = o->now_ms();
+@@ -125,6 +162,14 @@ static int prepare_custom_binaries(HMODULE module, void *client_user,
+             } else {
+                 o->event("ceg-request-result", status);
+                 o->event("ceg-request", jobs == UINT32_MAX ? -1 : (int32_t)jobs);
++                /* Already prepared (OK, no job started). Trusted only from a
++                 * first request: after a failed job (the retry below) the
++                 * files were not prepared, so no job then still fails. */
++                if (step == SH_CEG_DONE && !remote_retries) {
++                    o->event("ceg-already-prepared", 1);
++                    o->event("ceg-result", 1);
++                    return 0;
++                }
+                 if (step != SH_CEG_WAIT) {
+                     o->event("ceg-result", progress.failure);
+                     return 49;
+@@ -155,6 +200,19 @@ static int prepare_custom_binaries(HMODULE module, void *client_user,
+                 o->event("ceg-result", 1);
+                 return 0;
+             }
++            if (step == SH_CEG_FAIL && progress.failure == SH_CEG_REMOTE_CALL_FAILED &&
++                remote_retries < SH_CEG_REMOTE_RETRIES) {
++                /* 55 (RemoteCallFailed): Valve's client found no running
++                 * service, demand-started it and failed this request before
++                 * the emulated service was up; the service may also have
++                 * ended between an earlier start and the request. Its next
++                 * request finds it running. */
++                o->event("ceg-request-retry", ++remote_retries);
++                progress = (struct sh_ceg_progress){0};
++                waiting = false;
++                retry_at = o->now_ms() + SH_CEG_REMOTE_RETRY_MS;
++                continue;
++            }
+             if (step == SH_CEG_FAIL) {
+                 o->event("ceg-finished-jobs", (int32_t)progress.finished);
+                 o->event("ceg-result", progress.failure);
+@@ -167,6 +225,69 @@ static int prepare_custom_binaries(HMODULE module, void *client_user,
+     return 49;
+ }
+ 
++/* Porthole 0075: start a program of the game's own, next to Valve's signed-in client, instead of asking Valve's client to launch the game.
++ * Some games cannot be started the way Valve lists them (Rust: its listed program starts Easy Anti-Cheat, which does not run here; its own
++ * program, RustClient.exe, plays on servers that do not require it). Everything before this point is unchanged and still gates it: the
++ * authenticated session, the entitlement to the app and the check that the app's install folder is the one the app expects. The program must be
++ * a .exe inside that verified folder; anything else is refused. It runs with the Steam discovery values published (the caller did that), so its
++ * Steam library finds this client, and with SteamAppId / SteamGameId set to the app, the way Valve's client sets them for a game it starts.
++ * The client's callbacks are served until the program ends. MADEIRA_DOCK_PROGRAM = the program's Windows path; MADEIRA_DOCK_PROGRAM_ARGS =
++ * optional arguments. Unset = the normal LaunchApp route. Valve's licence and DRM checks are not skipped or replaced: this only chooses which of
++ * the game's own programs starts. */
++static int run_own_program(const wchar_t *program, const wchar_t *install_dir, uint32_t appid,
++                           const struct sh_api *api, const struct sh_observer *o, int32_t pipe)
++{
++    static wchar_t full[32768], command[32768], folder[32768], args[4096];
++    size_t install_len = wcslen(install_dir);
++    DWORD length = GetFullPathNameW(program, 32768, full, NULL);
++    if (!length || length >= 32768) { o->event("launch-program-refused", 1); return 50; }
++    size_t full_len = wcslen(full);
++    if (full_len <= install_len + 5 || _wcsnicmp(full, install_dir, install_len) != 0 ||
++        (full[install_len] != L'\\' && full[install_len] != L'/') || _wcsicmp(full + full_len - 4, L".exe") != 0) {
++        o->event("launch-program-refused", 2);   /* not inside the verified install folder, or not an .exe */
++        return 50;
++    }
++    DWORD attributes = GetFileAttributesW(full);
++    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) { o->event("launch-program-refused", 3); return 50; }
++    wcscpy(folder, full);
++    for (size_t i = full_len; i > 0; --i) if (folder[i - 1] == L'\\' || folder[i - 1] == L'/') { folder[i - 1] = 0; break; }
++    args[0] = 0;
++    length = GetEnvironmentVariableW(L"MADEIRA_DOCK_PROGRAM_ARGS", args, 4096);
++    if (length >= 4096) args[0] = 0;
++    if (swprintf(command, 32768, L"\"%ls\"%ls%ls", full, args[0] ? L" " : L"", args) < 0) { o->event("launch-program-refused", 4); return 50; }
++    wchar_t id[16];
++    swprintf(id, 16, L"%u", (unsigned)appid);
++    SetEnvironmentVariableW(L"SteamAppId", id);
++    SetEnvironmentVariableW(L"SteamGameId", id);
++    STARTUPINFOW startup = {0};
++    startup.cb = sizeof(startup);
++    PROCESS_INFORMATION process = {0};
++    /* Porthole: the working directory is the install folder, as Valve's client gives it. A program in the install folder itself (Rust's) sees no change; a program below it
++     * (BeamNG's Bin64/BeamNG.drive.x64.exe, whose launcher normally starts it from the game's folder) now starts where its launcher would have started it. */
++    if (!CreateProcessW(full, command, NULL, NULL, FALSE, 0, NULL, install_dir, &startup, &process)) {
++        o->event("launch-program-start-failed", (int32_t)GetLastError());
++        return 51;
++    }
++    CloseHandle(process.hThread);
++    o->event("launch-program-started", 1);
++    o->event("launch-client-error", 0);   /* what the app waits for to say "Steam started the game" */
++    int result = 0;
++    for (;;) {
++        for (unsigned batch = 0; batch < 64; ++batch) {
++            struct sh_callback cb = {0};
++            if (!api->get_callback(pipe, &cb)) break;
++            api->free_callback(pipe);
++        }
++        DWORD wait = WaitForSingleObject(process.hProcess, 50);
++        if (wait == WAIT_OBJECT_0) break;
++        if (wait != WAIT_TIMEOUT) { result = 52; break; }
++        if (InterlockedCompareExchange(&interrupted, 0, 0)) { result = 52; break; }
++    }
++    CloseHandle(process.hProcess);
++    o->event("launch-game-ended", 1);
++    return result;
++}
++
+ int sh_launch(HMODULE module, void *engine, void *client_user,
+               const struct sh_api *api, const struct sh_observer *o,
+               int32_t pipe, int32_t user, uint64_t steamid, uint32_t appid,
+@@ -182,8 +303,11 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+     uint32_t launch_option = 0;
+     SetLastError(ERROR_SUCCESS);
+     DWORD option_length = GetEnvironmentVariableA("MADEIRA_STEAM_HOST_LAUNCH_OPTION", option_text, sizeof(option_text));
+-    if ((!option_length && GetLastError() != ERROR_ENVVAR_NOT_FOUND) || option_length >= sizeof(option_text) ||
+-        (option_length && !sh_parse_launch_option(option_text, &launch_option))) {
++    if (!option_length && GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
++        /* Porthole 0014: the app names the launch option in its own variable (see launch_option_from_environment). Upstream's variable wins when set. */
++        launch_option = launch_option_from_environment();
++    } else if (!option_length || option_length >= sizeof(option_text) ||
++               !sh_parse_launch_option(option_text, &launch_option)) {
+         o->event("launch-option-invalid", 1);
+         return 45;
+     }
+@@ -251,6 +375,8 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+     HKEY active = NULL, machine = NULL;
+     int result = 42;
+     struct saved_value values[3] = {0};
++    struct sh_friends friends;
++    bool friends_started = false;
+     /* ml1990: the public app sets MADEIRA_STEAM_HOST_CEG=1 only for an app
+      * whose depot manifests flag CustomExecutable files, and records them in
+      * the manifest's CheckGuid block. Failure never launches the game.
+@@ -275,21 +401,50 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+             result = 42;
+         }
+     }
+-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam\\ActiveProcess", 0,
+-                     KEY_QUERY_VALUE | KEY_SET_VALUE, &active) != ERROR_SUCCESS ||
+-        RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Valve\\Steam", 0,
+-                     KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_32KEY, &machine) != ERROR_SUCCESS) goto done;
++    /* [dock-code42-log] Both opens are tried so the log names which key (if
++     * either) is missing; the result is the same as before: either one
++     * failing ends the launch with 42.
++     */
++    LSTATUS active_status = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam\\ActiveProcess", 0,
++                                          KEY_QUERY_VALUE | KEY_SET_VALUE, &active);
++    LSTATUS machine_status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Valve\\Steam", 0,
++                                           KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_32KEY, &machine);
++    if (active_status != ERROR_SUCCESS || machine_status != ERROR_SUCCESS) {
++        o->event("launch-discovery-open-active", (int32_t)active_status);
++        o->event("launch-discovery-open-machine", (int32_t)machine_status);
++        goto done;
++    }
+     values[0] = (struct saved_value){.key=active, .name=L"pid"};
+     values[1] = (struct saved_value){.key=active, .name=L"ActiveUser"};
+     values[2] = (struct saved_value){.key=machine, .name=L"SteamPID"};
+-    if (!publish(&values[0], GetCurrentProcessId()) ||
+-        !publish(&values[1], (DWORD)steamid) || !publish(&values[2], GetCurrentProcessId())) goto done;
++    int publish_step = !publish(&values[0], GetCurrentProcessId()) ? 1 :
++                       !publish(&values[1], (DWORD)steamid) ? 2 :
++                       !publish(&values[2], GetCurrentProcessId()) ? 3 : 0;
++    if (publish_step) {
++        o->event("launch-discovery-publish-step", publish_step);
++        o->event("launch-discovery-publish-what", publish_fail.what);
++        o->event("launch-discovery-publish-status", publish_fail.status);
++        o->event("launch-discovery-publish-type", publish_fail.type);
++        o->event("launch-discovery-publish-size", publish_fail.size);
++        goto done;
++    }
+     o->event("launch-client-discovery-published", 1);
+     SetConsoleCtrlHandler(on_control, TRUE);
++    {
++        /* Porthole 0075: the app named a program of the game to start next to the client (see run_own_program). */
++        static wchar_t own_program[32768];
++        DWORD own_length = GetEnvironmentVariableW(L"MADEIRA_DOCK_PROGRAM", own_program, 32768);
++        if (own_length && own_length < 32768) {
++            result = run_own_program(own_program, normalized, appid, api, o, pipe);
++            goto done;
++        }
++    }
+     uint64_t gameid = appid;
+     uint64_t call = ((launch_fn)(*(void ***)manager)[2])(manager, &gameid, launch_option, 0, user_arguments);
+     o->event("launch-request-submitted", call != 0);
+     if (!call) { result = 43; goto done; }
++    sh_friends_init(&friends, module, engine, user, pipe, steamid, appid, layout, o);
++    friends_started = true;
+     uint64_t begin = o->now_ms(), stopped_at = 0;
+     bool seen_running = false, result_received = false, result_rejected = false;
+     /* ml1970: a content refusal keeps Valve's client alive while it installs
+@@ -343,6 +498,7 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+             struct sh_callback cb = {0};
+             if (!api->get_callback(pipe, &cb)) break;
+             bool valid = cb.id > 0 && cb.size >= 0 && (!cb.size || cb.data);
++            if (valid && friends_started) sh_friends_callback(&friends, cb.id, cb.data, cb.size);
+             if (valid && cb.id == 703 && cb.size >= 16) {
+                 uint64_t finished; int32_t kind; uint32_t size;
+                 memcpy(&finished, cb.data, 8);
+@@ -441,6 +597,7 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+                 break;
+             }
+         }
++        sh_friends_poll(&friends, running);
+         if (retry_at && !seen_running && o->now_ms() >= retry_at) {
+             retry_at = 0;
+             call = ((launch_fn)(*(void ***)manager)[2])(manager, &gameid, launch_option, 0, user_arguments);
+@@ -460,6 +617,7 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+         o->sleep_ms(50);
+     }
+ done:
++    if (friends_started) sh_friends_end(&friends);
+     SetConsoleCtrlHandler(on_control, FALSE);
+     bool restored = true;
+     /* Another Steam process may have claimed registration while this host was
+diff --git a/src/main.c b/src/main.c
+index 6f04ab6..fb4a65f 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -44,12 +44,58 @@ static void event(const char *stage, int32_t value)
+     }
+ }
+ 
++/* Madeira: a crash on a thread of Valve's client, or of a DLL it loads, ends
++ * this process before main() writes probe-result. The launcher then waits for
++ * a game that never starts ("Waiting for Steam to confirm this game's
++ * license" with no end). This filter writes the exception code and result 60
++ * first, then hands the exception on unchanged to the filter it replaced
++ * (Valve's client installs its own, which ends the process). Valve's client
++ * may install its filter after this one, so a watcher thread puts this one
++ * back in front, keeping the client's as the next in line. Numbers only.
++ * MADEIRA_DOCK_CRASH_REPORT=0 turns it off. */
++#define SH_HOST_CRASHED 60
++static LPTOP_LEVEL_EXCEPTION_FILTER volatile next_filter;
++static volatile LONG crash_reported;
++
++static LONG WINAPI host_crash_filter(EXCEPTION_POINTERS *info)
++{
++    /* Once only: a client filter that calls back into this one stops here. */
++    if (InterlockedExchange(&crash_reported, 1)) return EXCEPTION_CONTINUE_SEARCH;
++    DWORD code = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0;
++    event("host-unhandled-exception", (int32_t)code);
++    event("probe-result", SH_HOST_CRASHED);
++    LPTOP_LEVEL_EXCEPTION_FILTER next = next_filter;
++    return next ? next(info) : EXCEPTION_CONTINUE_SEARCH;
++}
++
++static void front_crash_filter(void)
++{
++    LPTOP_LEVEL_EXCEPTION_FILTER current = SetUnhandledExceptionFilter(host_crash_filter);
++    if (current && current != host_crash_filter) next_filter = current;
++}
++
++static DWORD WINAPI crash_filter_watch(void *unused)
++{
++    (void)unused;
++    for (;;) {
++        Sleep(250);
++        front_crash_filter();
++    }
++    return 0;
++}
++
+ static bool enabled(const wchar_t *name)
+ {
+     wchar_t value[4];
+     return GetEnvironmentVariableW(name, value, 4) == 1 && value[0] == L'1';
+ }
+ 
++static bool wide_off(const wchar_t *name)
++{
++    wchar_t value[4];
++    return GetEnvironmentVariableW(name, value, 4) == 1 && value[0] == L'0';
++}
++
+ static bool client_directory(wchar_t *directory)
+ {
+     DWORD count = GetEnvironmentVariableW(L"MADEIRA_STEAM_HOST_CLIENT_DIR", directory, PATH_CAP);
+@@ -246,6 +292,12 @@ int main(int argc, char **argv)
+     if (!log_length) wcscpy(path, L"C:\\madeira-steamhost-probe.txt");
+     if (log_length < PATH_CAP) report = _wfopen(path, L"w");
+     event("probe-start-bits", (int32_t)(sizeof(void *) * 8));
++    if (!wide_off(L"MADEIRA_DOCK_CRASH_REPORT")) {
++        front_crash_filter();
++        HANDLE watch = CreateThread(NULL, 0, crash_filter_watch, NULL, 0, NULL);
++        event("host-crash-report", watch != NULL);
++        if (watch) CloseHandle(watch);
++    }
+     mutex = CreateMutexW(NULL, FALSE, L"Local\\MadeiraSteamHostProbe");
+     if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+         event("another-probe-or-mutex-error", 1);
+diff --git a/src/scm.c b/src/scm.c
+index 6e95863..e60474e 100644
+--- a/src/scm.c
++++ b/src/scm.c
+@@ -7,8 +7,9 @@
+  * service manager may not be running; desktop routes start it themselves.
+  * This file starts only Wine's standard service manager and checks, read-only,
+  * that Valve's service is registered; if not, it runs Valve's own service
+- * installer as Valve's client would. Dock itself never creates, registers,
+- * configures or starts any service, and logs only numeric results.
++ * installer as Valve's client would. Dock itself never creates, registers or
++ * configures any service, starts only Valve's registered one through the
++ * service manager (start_client_service), and logs only numeric results.
+  */
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+@@ -23,6 +24,9 @@
+ #define SH_SERVICE_CONTROL_RETRY_MS 1000ULL
+ #define SH_PROCESS_EXIT_MS 5000
+ #define SH_SERVICE_INSTALL_MS 60000
++#define SH_SERVICE_START_MS 30000ULL
++#define SH_SERVICE_SETTLE_MS 2000
++#define SH_SERVICE_UPDATE_GRACE_MS 20000ULL
+ 
+ static const wchar_t steam_service[] = L"Steam Client Service";
+ /* Wine's include/wine/svcctl.idl SVCCTL_STARTED_EVENT: services.exe sets this
+@@ -171,6 +175,72 @@ static bool wide_flag(const wchar_t *name, wchar_t expected)
+     return GetEnvironmentVariableW(name, value, 4) == 1 && value[0] == expected;
+ }
+ 
++static bool query_state(SC_HANDLE service, SERVICE_STATUS_PROCESS *status);
++
++/* Valve's client connects to its service's pipe first and demand-starts the
++ * service only when that fails. On device the 32-bit service needs well over
++ * a second to start under emulation, and the client's request had already
++ * failed by then: service_log.txt "Failed to create Service pipe (GLE 2)",
++ * then ceg-job-result=55 (RemoteCallFailed) while the service was still
++ * starting. On a desktop the service is normally already running when a game
++ * is launched, so it is started here through the service manager, as Valve's
++ * client would start it, and the request waits until it reports running plus
++ * a short settle for its pipe. Returns 0 (running), a Win32 error, or -1 when
++ * it stopped again after one more start. MADEIRA_DOCK_CEG_SERVICE_START=0 skips this.
++ */
++static int32_t start_client_service(const struct sh_observer *o, SC_HANDLE manager)
++{
++    SC_HANDLE service = OpenServiceW(manager, steam_service, SERVICE_START | SERVICE_QUERY_STATUS);
++    if (!service) return (int32_t)GetLastError();
++    SERVICE_STATUS_PROCESS status = {0};
++    int32_t result = 0;
++    bool restarted = false;
++    if (!query_state(service, &status) || status.dwCurrentState != SERVICE_RUNNING) {
++        /* 1053: the service process ended before it reached the manager. A
++         * first start after a Steam update does that: the service copies its
++         * new files, runs SteamServiceTmp.exe /Update and is restarted by it
++         * (seen on device), so the wait below still applies. */
++        uint64_t grace = 2000;
++        if (!StartServiceW(service, 0, NULL)) {
++            DWORD error = GetLastError();
++            if (error == ERROR_SERVICE_REQUEST_TIMEOUT) {
++                /* give the updater time to copy and restart it itself */
++                grace = SH_SERVICE_UPDATE_GRACE_MS;
++                o->event("ceg-service-start-retry", (int32_t)error);
++            } else if (error != ERROR_SERVICE_ALREADY_RUNNING) result = (int32_t)error;
++        }
++        uint64_t begin = o->now_ms();
++        while (!result) {
++            if (query_state(service, &status)) {
++                if (status.dwCurrentState == SERVICE_RUNNING) break;
++                /* STOPPED right after the start is the manager not having
++                 * updated it yet; later it means the service ended. */
++                if (status.dwCurrentState == SERVICE_STOPPED && o->now_ms() - begin >= grace) {
++                    /* still stopped: one more start of our own */
++                    if (!restarted) {
++                        restarted = true;
++                        if (StartServiceW(service, 0, NULL) || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING) {
++                            grace = 2000;
++                            begin = o->now_ms();
++                            continue;
++                        }
++                    }
++                    result = -1;
++                    break;
++                }
++            }
++            if (!sh_remaining_ms(o->now_ms(), begin, SH_SERVICE_START_MS)) {
++                result = ERROR_TIMEOUT;
++                break;
++            }
++            o->sleep_ms(100);
++        }
++        if (!result) o->sleep_ms(SH_SERVICE_SETTLE_MS);
++    }
++    CloseServiceHandle(service);
++    return result;
++}
++
+ int32_t sh_ceg_scm_prepare(const struct sh_observer *o, HMODULE client)
+ {
+     SC_HANDLE manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+@@ -190,6 +260,8 @@ int32_t sh_ceg_scm_prepare(const struct sh_observer *o, HMODULE client)
+         o->event("ceg-service-install", install_client_service(o, client));
+         registered = service_registered(o, manager, &missing);
+     }
++    if (registered && !wide_flag(L"MADEIRA_DOCK_CEG_SERVICE_START", L'0'))
++        o->event("ceg-service-start", start_client_service(o, manager));
+     CloseServiceHandle(manager);
+     return sh_ceg_scm_result(true, registered);
+ }
+diff --git a/src/validation.c b/src/validation.c
+index 0efe6da..af3f9af 100644
+--- a/src/validation.c
++++ b/src/validation.c
+@@ -137,12 +137,17 @@ enum sh_ceg_step sh_ceg_request_step(int32_t result, uint32_t jobs, struct sh_ce
+ {
+     if (!progress) return SH_CEG_FAIL;
+     if (result == 10) return SH_CEG_RETRY;
+-    if (result != 1 || !jobs || jobs > SH_CEG_MAX_JOBS) {
++    if (result != 1 || jobs > SH_CEG_MAX_JOBS) {
+         progress->failure = result == 1 ? 0 : result;
+         return SH_CEG_FAIL;
+     }
+     *progress = (struct sh_ceg_progress){jobs, 0, 0};
+-    return SH_CEG_WAIT;
++    /* OK with no job started: Valve's client found nothing left to prepare.
++     * It answers so once it has produced this account's executables (every
++     * request after the first successful one, until the files are replaced
++     * again); the game's own check of them is untouched. An unset count
++     * (UINT32_MAX) still fails above. */
++    return jobs ? SH_CEG_WAIT : SH_CEG_DONE;
+ }
+ 
+ enum sh_ceg_step sh_ceg_record_job(struct sh_ceg_progress *progress, int32_t result)
+diff --git a/tests/test-client_layout.c b/tests/test-client_layout.c
+index 2614100..ab23c29 100644
+--- a/tests/test-client_layout.c
++++ b/tests/test-client_layout.c
+@@ -31,9 +31,16 @@ int main(void)
+     assert(dock_method_is(base, &object, 215, jan->logon_offline));
+     assert(!dock_method_is(base, &object, 215, sep->logon_offline));
+     assert(!dock_method_is(base, &object, 214, jan->logon_offline));
++    /* Friends: pinned for January only; September stays unpinned (feature off). */
++    assert(jan->engine_friends == 0x943510 && jan->friend_count == 0x752d60 &&
++           jan->friend_join_lobby == 0x81f0a0 && jan->friend_join_presence == 0x81f4f0);
++    assert(!sep->engine_friends && !sep->friend_count && !sep->friend_invite && !sep->friend_join_lobby);
++    vtable[13] = (void *)(base + jan->engine_friends);
++    assert(dock_method_is(base, &object, 13, jan->engine_friends));
++    assert(!dock_method_is(base, &object, 13, sep->engine_friends));
+     assert(!dock_method_is(base + 1, &object, 8, jan->engine_user));
+     assert(!dock_method_is(base, NULL, 8, jan->engine_user));
+     object = NULL;
+     assert(!dock_method_is(base, &object, 8, jan->engine_user));
+-    puts("PASS: exact client selection, unknown/partial/changed hash rejection and mismatched method rejection");
++    puts("PASS: exact client selection, unknown/partial/changed hash rejection and mismatched method rejection; friends pinned for January only");
+ }
+diff --git a/tests/test-friends_format.c b/tests/test-friends_format.c
+new file mode 100644
+index 0000000..586ed3e
+--- /dev/null
++++ b/tests/test-friends_format.c
+@@ -0,0 +1,151 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later
++ * Copyright 2026 125hz
++ * Madeira Converter Exception: see LICENSE-EXCEPTION.md */
++#include "friends_format.h"
++#include <assert.h>
++#include <stdio.h>
++#include <string.h>
++
++/* Synthetic SteamIDs only: universe 1, individual, instance 1. */
++#define ID(account) (0x0110000100000000ULL | (uint64_t)(account))
++
++static size_t command(uint8_t *out, uint8_t op, uint64_t id, uint32_t sequence)
++{
++    memcpy(out, "MFCMD001", 8);
++    out[8] = op;
++    for (int i = 0; i < 8; ++i) out[9 + i] = (uint8_t)(id >> (8 * i));
++    for (int i = 0; i < 4; ++i) out[17 + i] = (uint8_t)(sequence >> (8 * i));
++    return SH_FRIENDS_COMMAND_SIZE;
++}
++
++int main(void)
++{
++    char name[SH_FRIEND_NAME_CAP];
++    sh_friend_name_copy(name, sizeof name, "Player\tOne\n");
++    assert(!strcmp(name, "PlayerOne"));
++    sh_friend_name_copy(name, sizeof name, "caf\xc3\xa9");
++    assert(!strcmp(name, "caf\xc3\xa9"));
++    sh_friend_name_copy(name, sizeof name, "bad\xc3");
++    assert(!name[0]);
++    sh_friend_name_copy(name, sizeof name, "\xc0\xaf");   /* overlong */
++    assert(!name[0]);
++    sh_friend_name_copy(name, sizeof name, "\xed\xa0\x80"); /* surrogate */
++    assert(!name[0]);
++    sh_friend_name_copy(name, sizeof name, NULL);
++    assert(!name[0]);
++    char long_name[200];
++    memset(long_name, 'a', 62); memcpy(long_name + 62, "\xc3\xa9", 3);
++    sh_friend_name_copy(name, sizeof name, long_name);
++    assert(strlen(name) == 62);                          /* never splits a character */
++    char tiny[4];
++    sh_friend_name_copy(tiny, sizeof tiny, "abcdef");
++    assert(!strcmp(tiny, "abc"));
++
++    assert(sh_friend_connect_valid("+connect_lobby 109775241000000000"));
++    assert(!sh_friend_connect_valid(""));
++    assert(!sh_friend_connect_valid(NULL));
++    assert(!sh_friend_connect_valid("a\nb"));
++    assert(!sh_friend_connect_valid("caf\xc3\xa9"));
++    char connect[SH_FRIEND_CONNECT_CAP + 1];
++    memset(connect, 'x', SH_FRIEND_CONNECT_CAP - 1); connect[SH_FRIEND_CONNECT_CAP - 1] = 0;
++    assert(sh_friend_connect_valid(connect));
++    memset(connect, 'x', SH_FRIEND_CONNECT_CAP); connect[SH_FRIEND_CONNECT_CAP] = 0;
++    assert(!sh_friend_connect_valid(connect));
++
++    assert(sh_friend_steamid_valid(ID(42)));
++    assert(!sh_friend_steamid_valid(ID(0)));
++    assert(!sh_friend_steamid_valid(0x0170000100000000ULL | 42)); /* clan */
++    assert(!sh_friend_steamid_valid(0x0210000100000000ULL | 42)); /* universe 2 */
++
++    struct sh_friend friends[2] = {
++        {ID(1), 1, 0, 0, "One"},
++        {ID(2), 1, 480, SH_FRIEND_IN_GAME | SH_FRIEND_SAME_APP | SH_FRIEND_JOINABLE | SH_FRIEND_INVITED | SH_FRIEND_CAN_INVITE | 0x80, "Two"}};
++    static uint8_t feed[SH_FRIENDS_FEED_CAP];
++    size_t size = sh_friends_feed_encode(feed, sizeof feed, friends, 2);
++    assert(size == 12 + 2 * (18 + 3));
++    assert(!memcmp(feed, "MFRND001", 8) && feed[8] == 2 && !feed[9]);
++    assert(feed[12] == 1 && feed[12 + 16] == 0 && feed[12 + 17] == 3 && !memcmp(feed + 30, "One", 3));
++    assert(feed[33 + 12] == (480 & 0xff) && feed[33 + 16] == 31);   /* unknown flag bit dropped */
++    assert(!sh_friends_feed_encode(feed, size - 1, friends, 2));
++    assert(!sh_friends_feed_encode(feed, sizeof feed, friends, SH_FRIENDS_MAX + 1));
++    assert(sh_friends_feed_encode(feed, sizeof feed, NULL, 0) == 12);
++    static struct sh_friend many[SH_FRIENDS_MAX];
++    for (unsigned i = 0; i < SH_FRIENDS_MAX; ++i) {
++        many[i].steamid = ID(i + 1);
++        memset(many[i].name, 'n', SH_FRIEND_NAME_CAP - 1);
++    }
++    assert(sh_friends_feed_encode(feed, sizeof feed, many, SH_FRIENDS_MAX) == SH_FRIENDS_FEED_CAP - SH_FRIENDS_MAX);
++    many[0].name[SH_FRIEND_NAME_CAP - 1] = 'n';            /* unterminated */
++    assert(!sh_friends_feed_encode(feed, sizeof feed, many, 1));
++
++    uint8_t raw[SH_FRIENDS_COMMAND_SIZE + 1];
++    struct sh_friend_command parsed;
++    size = command(raw, SH_FRIEND_JOIN, ID(7), 3);
++    assert(sh_friend_command_parse(raw, size, &parsed));
++    assert(parsed.op == SH_FRIEND_JOIN && parsed.steamid == ID(7) && parsed.sequence == 3);
++    assert(sh_friend_command_parse(raw, command(raw, SH_FRIEND_INVITE, ID(7), 4), &parsed));
++    assert(!sh_friend_command_parse(raw, size - 1, &parsed));
++    assert(!sh_friend_command_parse(raw, size + 1, &parsed));
++    assert(sh_friend_command_parse(raw, command(raw, SH_FRIEND_SET_STATE, 3, 5), &parsed));
++    assert(parsed.op == SH_FRIEND_SET_STATE && parsed.steamid == 3);
++    assert(!sh_friend_command_parse(raw, command(raw, SH_FRIEND_SET_STATE, 0, 5), &parsed));   /* Offline: before launch only */
++    assert(!sh_friend_command_parse(raw, command(raw, SH_FRIEND_SET_STATE, 2, 5), &parsed));
++    assert(!sh_friend_command_parse(raw, command(raw, 4, ID(7), 3), &parsed));
++    assert(!sh_friend_command_parse(raw, command(raw, SH_FRIEND_JOIN, ID(7), 0), &parsed));
++    assert(!sh_friend_command_parse(raw, command(raw, SH_FRIEND_JOIN, 0x0170000100000007ULL, 3), &parsed));
++    command(raw, SH_FRIEND_JOIN, ID(7), 3); raw[0] = 'X';
++    assert(!sh_friend_command_parse(raw, size, &parsed));
++    assert(!sh_friend_command_parse(NULL, size, &parsed));
++    uint8_t msg[8 + 14 + SH_FRIENDS_MAX * 9];
++    size = sh_cm_change_status(msg, sizeof msg, 1);
++    static const uint8_t status[] = {0xcc, 0x02, 0, 0x80, 0, 0, 0, 0, 0x08, 1, 0x28, 0, 0x38, 1, 0x40, 0};
++    assert(size == sizeof status && !memcmp(msg, status, size));
++    assert(!sh_cm_change_status(msg, 10, 1));
++    uint64_t ids[2] = {ID(5), ID(6)};
++    size = sh_cm_request_friend_data(msg, sizeof msg, SH_CM_FRIEND_DATA_FLAGS, ids, 2);
++    static const uint8_t request[] = {0x2f, 0x03, 0, 0x80, 0, 0, 0, 0, 0x08, 0xd2, 0x08};
++    assert(size == sizeof request + 18 && !memcmp(msg, request, sizeof request));
++    assert(msg[11] == 0x11 && msg[12] == 5 && msg[19] == 1 && msg[20] == 0x11 && msg[21] == 6);
++    assert(!sh_cm_request_friend_data(msg, sizeof msg, 1, ids, SH_FRIENDS_MAX + 1));
++    assert(!sh_cm_request_friend_data(msg, 20, 1, ids, 2));
++    size = sh_cm_invite_to_lobby(msg, sizeof msg, 480, 0x0186000000000001ULL, ID(9));
++    static const uint8_t invite[] = {0xdd, 0x19, 0, 0x80, 3, 0, 0, 0, 0x18, 0xe0, 0x03, 0x11, 1};
++    assert(size == 8 + 3 + 18 && !memcmp(msg, invite, sizeof invite) && msg[19] == 0x01 && msg[20] == 0x19 && msg[21] == 9);
++    assert(!sh_cm_invite_to_lobby(msg, sizeof msg, 480, 0, ID(9)));
++    assert(!sh_cm_invite_to_lobby(msg, sizeof msg, 480, 1, 0x0170000100000009ULL));
++    size = sh_cm_service_call(msg, sizeof msg, "Chat.RequestFriendPersonaStates#1");
++    static const uint8_t call[] = {0x97, 0, 0, 0x80, 35, 0, 0, 0, 0x62, 33, 'C', 'h', 'a', 't', '.'};
++    assert(size == 10 + 33 && !memcmp(msg, call, sizeof call) && msg[size - 1] == '1');
++    assert(!sh_cm_service_call(msg, 20, "Chat.RequestFriendPersonaStates#1") && !sh_cm_service_call(msg, sizeof msg, ""));
++
++    /* Opt-in: only the app's explicit 1, 3 or 7 turns friends on. */
++    assert(sh_friend_status_choice(L"1", 1) == 1 && sh_friend_status_choice(L"3", 1) == 3 && sh_friend_status_choice(L"7", 1) == 7);
++    assert(sh_friend_status_choice(L"0", 1) == -1);                      /* Offline */
++    assert(sh_friend_status_choice(L"", 0) == -1);                       /* missing */
++    assert(sh_friend_status_choice(NULL, 1) == -1);
++    assert(sh_friend_status_choice(L"2", 1) == -1 && sh_friend_status_choice(L"x", 1) == -1);
++    assert(sh_friend_status_choice(L"17", 2) == -1 && sh_friend_status_choice(L"1", 4) == -1);   /* too long */
++    assert(sh_friend_status_valid(1) && sh_friend_status_valid(3) && sh_friend_status_valid(7));
++    assert(!sh_friend_status_valid(0) && !sh_friend_status_valid(2) && !sh_friend_status_valid(0x100000001ULL));
++
++    /* The feed cap keeps invited, joinable, same-game, in-game and online friends first. */
++    assert(sh_friend_rank(0, SH_FRIEND_INVITED | SH_FRIEND_CAN_INVITE) == 0);
++    assert(sh_friend_rank(1, SH_FRIEND_IN_GAME | SH_FRIEND_SAME_APP | SH_FRIEND_JOINABLE) == 1);
++    assert(sh_friend_rank(1, SH_FRIEND_IN_GAME | SH_FRIEND_SAME_APP) == 2);
++    assert(sh_friend_rank(1, SH_FRIEND_IN_GAME) == 3);
++    assert(sh_friend_rank(3, SH_FRIEND_CAN_INVITE) == 4);
++    assert(sh_friend_rank(0, SH_FRIEND_CAN_INVITE) == 5);
++    static uint8_t ranks[SH_FRIENDS_SCAN];
++    static uint32_t keep[SH_FRIENDS_MAX];
++    for (unsigned i = 0; i < SH_FRIENDS_SCAN; ++i) ranks[i] = 5;          /* 2000 offline friends ... */
++    ranks[1999] = 1; ranks[1500] = 4; ranks[300] = 0; ranks[1000] = 4; ranks[7] = 9;   /* ... a few online past 250 */
++    uint32_t kept = sh_friends_pick(ranks, SH_FRIENDS_SCAN, keep, SH_FRIENDS_MAX);
++    assert(kept == SH_FRIENDS_MAX);
++    assert(keep[0] == 300 && keep[1] == 1999 && keep[2] == 1000 && keep[3] == 1500);
++    assert(keep[4] == 0 && keep[5] == 1 && keep[11] == 7 && keep[SH_FRIENDS_MAX - 1] == SH_FRIENDS_MAX - 5);
++    for (uint32_t i = 0; i < kept; ++i) for (uint32_t j = i + 1; j < kept; ++j) assert(keep[i] != keep[j]);
++    assert(sh_friends_pick(ranks, 3, keep, SH_FRIENDS_MAX) == 3 && keep[0] == 0 && keep[2] == 2);
++    assert(sh_friends_pick(ranks, SH_FRIENDS_SCAN, keep, 2) == 2 && keep[0] == 300 && keep[1] == 1999);
++    assert(!sh_friends_pick(ranks, 0, keep, SH_FRIENDS_MAX) && !sh_friends_pick(NULL, 3, keep, 3) && !sh_friends_pick(ranks, 3, NULL, 3));
++    puts("PASS: friends feed bounds, name/connect sanitizing, SteamID and command validation, Friends sign-in messages, opt-in status, feed priority past the cap");
++}
+diff --git a/tests/test-validation.c b/tests/test-validation.c
+index 1590039..a29e18a 100644
+--- a/tests/test-validation.c
++++ b/tests/test-validation.c
+@@ -106,7 +106,11 @@ int main(void)
+     assert(!sh_decode_ceg_reply(job, 8, 29, &ceg));
+     struct sh_ceg_progress progress = {0};
+     assert(sh_ceg_request_step(10, 0, &progress) == SH_CEG_RETRY);
+-    assert(sh_ceg_request_step(1, 0, &progress) == SH_CEG_FAIL && progress.failure == 0);
++    /* OK with no job started: already prepared. */
++    progress = (struct sh_ceg_progress){5, 3, 7};
++    assert(sh_ceg_request_step(1, 0, &progress) == SH_CEG_DONE && progress.expected == 0 &&
++           progress.finished == 0 && progress.failure == 0);
++    assert(sh_ceg_record_job(&progress, 1) == SH_CEG_FAIL);
+     assert(sh_ceg_request_step(2, 0, &progress) == SH_CEG_FAIL && progress.failure == 2);
+     assert(sh_ceg_request_step(55, 3, &progress) == SH_CEG_FAIL && progress.failure == 55);
+     assert(sh_ceg_request_step(1, UINT32_MAX, &progress) == SH_CEG_FAIL);
+diff --git a/tools/build.sh b/tools/build.sh
+index ce99669..2e4034e 100644
+--- a/tools/build.sh
++++ b/tools/build.sh
+@@ -15,7 +15,7 @@ for arch in x86_64 i686; do
+     [[ -x "$compiler" ]] || { echo "Missing cross compiler: $compiler" >&2; exit 1; }
+     "$compiler" -std=c11 -O2 -Wall -Wextra -Werror -Wno-cast-function-type \
+         -static -Wl,--strip-all -o "$output/dockhost-$arch.exe" \
+-        src/main.c src/probe.c src/session.c src/launch.c src/validation.c src/auth.c src/client_layout.c src/scm.c src/hold.c -ladvapi32 -luser32
++        src/main.c src/probe.c src/session.c src/launch.c src/validation.c src/auth.c src/client_layout.c src/scm.c src/friends.c src/friends_format.c src/hold.c -ladvapi32 -luser32
+ done
+ echo "Built x86-64 and i386 probes in $output"
+ # Staging is explicit: experimental probes are not a new default launch route.
+diff --git a/tools/check-client-layout.py b/tools/check-client-layout.py
+index ee2d916..e68294a 100644
+--- a/tools/check-client-layout.py
++++ b/tools/check-client-layout.py
+@@ -17,7 +17,7 @@ source = (Path(__file__).resolve().parents[1] / 'src/client_layout.c').read_text
+ block = re.search(r'"' + fingerprint + r'",\s*(\d+),([^}]+)', source)
+ assert block, 'Unknown SHA-256; never infer a layout from similar metadata'
+ rvas = [int(x, 16) for x in re.findall(r'0x[0-9a-f]+', block[2])]
+-assert len(rvas) == 18
++assert len(rvas) == 34
+ pe = struct.unpack_from('<I', raw, 0x3c)[0]
+ assert raw[pe:pe+4] == b'PE\0\0' and struct.unpack_from('<H', raw, pe+4)[0] == 0x8664
+ sections = struct.unpack_from('<H', raw, pe+6)[0]
+@@ -52,8 +52,15 @@ groups = [('CSteamClient',[8,33,43],rvas[:3]),
+           ('IClientUserMap',[1,4,6,49,50,56,67,181,182],rvas[3:12]),
+           ('IClientAppManagerMap',[2,5],rvas[12:14]),
+           ('IClientUserMap',[71],rvas[14:15]),
+-          ('IClientUserMap',[5,214,215],rvas[15:18])]
++          ('IClientUserMap',[5,214,215],rvas[15:18]),
++          ('CSteamClient',[13],rvas[18:19]),
++          ('IClientFriendsMap',[7,10,13,14,23,93,215,194,195,4,5,32],rvas[19:31]),
++          ('CSteamClient',[69],rvas[31:32]),
++          ('IClientSharedConnectionMap',[0,2],rvas[32:34])]
+ for name,slots,expected in groups:
++    if not any(expected):
++        print(f'SKIP: {name} {slots} not pinned for this build (feature unavailable)')
++        continue
+     table = vtable(name)
+     for slot,rva in zip(slots,expected):
+         actual=struct.unpack_from('<Q', image, table+8*slot)[0]-base
+@@ -82,3 +89,28 @@ for rva, name, function_id in ((rvas[15], 'GetLogonState', 0xb3679023),
+                                (rvas[17], 'LogOnOffline', 0x706f013f)):
+     assert names_method(rva, name, function_id), f'{name} is not at its pinned slot'
+ print('PASS: IClientUserMap slots 5/214/215 name GetLogonState, CanLogonOffline, LogOnOffline')
++
++# Friends: each called IClientFriendsMap wrapper must name its own method and
++# serialize its IPC function ID. Builds without friends pins skip this.
++FRIENDS = [('GetFriendCount', 0x1e61eaea), ('GetFriendByIndex', 0x272df28d),
++           ('GetFriendPersonaState', 0xbb9a6e98), ('GetFriendPersonaName', 0x3063e89a),
++           ('GetFriendGamePlayed', 0xe0ce182e), ('GetFriendRichPresence', 0xa4bf8b60),
++           ('InviteUserToGame', 0x481f046d), ('NotifyLobbyJoinRequested', 0x0e74cb2a),
++           ('NotifyRichPresenceJoinRequested', 0x5fe1c8cf),
++           ('GetPersonaState', 0x534bc194), ('SetPersonaState', 0xe333cf87),
++           ('RequestUserInformation', 0xbc9a7cbb)]
++if any(rvas[19:31]):
++    for rva, (name, function_id) in zip(rvas[19:31], FRIENDS):
++        assert names_method(rva, name, function_id, 0x400), f'{hex(rva)} is not {name}'
++    print('PASS: IClientFriendsMap pinned slots name their methods and IPC function IDs')
++
++# Friends sign-in: the shared-connection wrappers must name their methods and
++# serialize their IPC function IDs; slot 69 must return the per-user
++# interface stored at 0x118, where the bundle constructor puts the
++# IClientSharedConnectionMap it creates.
++if any(rvas[31:34]):
++    for rva, name, function_id in ((rvas[32], 'AllocateSharedConnection', 0x309e429d),
++                                   (rvas[33], 'SendMessage', 0x8ad70af2)):
++        assert names_method(rva, name, function_id), f'{hex(rva)} is not {name}'
++    assert b'\x48\x8b\x83\x18\x01\x00\x00' in image[rvas[31]:rvas[31]+0x80], 'slot 69 does not return the 0x118 interface'
++    print('PASS: CSteamClient slot 69 and IClientSharedConnectionMap slots 0/2 (AllocateSharedConnection, SendMessage)')
+diff --git a/tools/check.sh b/tools/check.sh
+index 6237c34..83203ad 100644
+--- a/tools/check.sh
++++ b/tools/check.sh
+@@ -13,7 +13,7 @@ fi
+ [[ -n "$compiler" ]] || { echo "No clang found; set HOST_CC to a clang with ASan/UBSan" >&2; exit 1; }
+ output=.build/tests
+ mkdir -p "$output"
+-for test in probe validation auth client_layout; do
++for test in probe validation auth client_layout friends_format; do
+     "$compiler" -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+         -Isrc "src/$test.c" "tests/test-$test.c" -o "$output/test-$test"
+     "$output/test-$test"

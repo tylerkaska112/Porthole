@@ -86,6 +86,7 @@ struct RowBase<Trailing: View>: View {
     var emphasized = false
     let action: () -> Void
     @ViewBuilder var trailing: Trailing
+    @Environment(\.shadedGlass) private var shaded
 
     var body: some View {
         HStack(spacing: 0) {
@@ -108,7 +109,7 @@ struct RowBase<Trailing: View>: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
         }
-        .background(plain ? AnyShapeStyle(Color.clear) : emphasized ? AnyShapeStyle(Theme.accent.opacity(0.16)) : AnyShapeStyle(Theme.panel), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(plain ? AnyShapeStyle(shaded ? AnyShapeStyle(GlassFill.panel) : AnyShapeStyle(Color.clear)) : emphasized ? AnyShapeStyle(Theme.accent.opacity(0.16)) : AnyShapeStyle(GlassFill.panel), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(plain ? Color.clear : emphasized ? Theme.accent.opacity(0.7) : Theme.line, lineWidth: emphasized ? 1.5 : 1))
         .focusTarget(id, radius: 16, scale: 1.012, adjust: adjust, action: action)
     }
@@ -196,7 +197,7 @@ struct ChoiceSheet<T: Hashable>: View {
                 HStack {
                     Text(title).font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text)
                     Spacer()
-                    PillButton(id: "choice-cancel", title: "Cancel", symbol: "xmark") { done(nil) }
+                    PillButton(id: "chooser-cancel", title: "Cancel", symbol: "xmark") { done(nil) }
                 }
                 FocusScroll {
                     VStack(spacing: 8) {
@@ -209,7 +210,7 @@ struct ChoiceSheet<T: Hashable>: View {
                                     if option.0 == selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
                                 }
                                 .padding(.horizontal, 16).frame(minHeight: 54)
-                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(option.0 == selected ? Theme.accent.opacity(0.6) : Theme.line, lineWidth: 1))
                             }
                             .buttonStyle(.plain)
@@ -273,7 +274,7 @@ struct SliderRow: View {
             .frame(height: 22)
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(GlassFill.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(scope?.engaged == id ? Theme.accent : Theme.line, lineWidth: scope?.engaged == id ? 2.5 : 1))
         .focusTarget(id, radius: 16, scale: 1.012, adjust: { set(value + Double($0) * step) }, engageToAdjust: true, action: {})
     }
@@ -366,7 +367,7 @@ struct SidebarRow: View {
                 if !selected { Image(systemName: "chevron.right").font(.footnote.weight(.bold)).foregroundStyle(Theme.textDim) }
             }
             .padding(.horizontal, 14).frame(minHeight: 58)
-            .background(selected ? Theme.panelHigh : Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(selected ? GlassFill.high : GlassFill.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(selected ? Theme.accent.opacity(0.6) : Theme.line, lineWidth: selected ? 1.5 : 1))
             // A plain button only answers where something is drawn; the whole card is pressable.
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

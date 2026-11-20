@@ -6,6 +6,8 @@ struct ShellTab: Identifiable, Equatable {
     let id: String
     var title: String
     var symbol: String
+    /// A count shown on the tab (waiting messages); 0 shows nothing.
+    var badge = 0
 }
 
 /// The brand mark: the porthole from the app icon, with the sea inside (a transparent picture, drawn by tools/make_icon.swift).
@@ -38,6 +40,8 @@ struct AppShell<Content: View>: View {
     @Environment(\.verticalSizeClass) private var vSize
 
     private var roomy: Bool { hSize == .regular }
+    /// A phone held sideways has the least height: the bar gets slimmer so the content under it has the room.
+    private var slim: Bool { vSize == .compact }
 
     @State private var barBottom: CGFloat = 0
     /// The line under the chosen section slides from one to the next.
@@ -46,6 +50,13 @@ struct AppShell<Content: View>: View {
     var body: some View {
         ZStack {
             AmbientBackdrop()
+            // Home's picture lives here, under the bar as well as the page, so the bar is not a strip of its own colour.
+            GeometryReader { geo in
+                let page = max(0, geo.size.height - barBottom)
+                HomeBackdrop(game: ShellBackdrop.shared.game, height: geo.safeAreaInsets.top + barBottom + page * ShellBackdrop.shared.fraction, shade: geo.safeAreaInsets.top + barBottom, dim: ShellBackdrop.shared.dim)
+            }
+            .allowsHitTesting(false)
+            if let art = ShellBackdrop.shared.art { art.ignoresSafeArea().allowsHitTesting(false) }
             VStack(spacing: 0) {
                 // Above the section's content, always: a page whose picture reaches up under the bar (a game's page in Stores) must not sit on top of it and take its taps.
                 topBar.zIndex(1)
@@ -67,22 +78,22 @@ struct AppShell<Content: View>: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: roomy ? 22 : 12) {
+        HStack(spacing: roomy ? (slim ? 12 : 22) : 12) {
             HStack(spacing: 10) {
-                PortholeMark(size: vSize == .compact ? 30 : 38)
-                    .festiveLogoBadge(size: vSize == .compact ? 15 : 19)
-                if roomy || vSize == .compact { Text("Porthole").font(.system(size: 21, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1).fixedSize() }
+                PortholeMark(size: slim ? 24 : 38)
+                    .festiveLogoBadge(size: slim ? 12 : 19)
+                if roomy || vSize == .compact { Text("Porthole").font(.system(size: slim ? 18 : 21, weight: .heavy, design: .rounded)).foregroundStyle(Theme.text).lineLimit(1).fixedSize() }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Porthole")
             tabStrip
             HStack(spacing: roomy ? 14 : 8) {
-                if let onHelp { HelpChip(action: onHelp) }
+                if let onHelp { HelpChip(action: onHelp, slim: slim) }
                 if roomy || vSize == .compact { Clock() }   // upright on a phone the system bar already shows the time
             }
             .fixedSize()
         }
-        .padding(.horizontal, roomy ? 32 : 16).padding(.top, vSize == .compact ? 4 : 10).padding(.bottom, vSize == .compact ? 2 : 6)
+        .padding(.horizontal, roomy ? 32 : 16).padding(.top, slim ? 1 : 10).padding(.bottom, slim ? 0 : 6)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -90,14 +101,10 @@ struct AppShell<Content: View>: View {
     /// (next to Settings), not at the far end of the bar. Only when the sections do not all fit do they scroll sideways, with the two glyphs held at the ends.
     private var tabStrip: some View {
         ViewThatFits(in: .horizontal) {
-            glyphed { tabRow(tight: false).padding(.horizontal, 6).padding(.vertical, 6) }
-            glyphed { tabRow(tight: true).padding(.horizontal, 2).padding(.vertical, 6).background(PointerScroll()) }   // a narrow phone: tighter sections before anything scrolls
-            glyphed {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) { tabRow(tight: true).padding(.horizontal, 2).padding(.vertical, 6) }
-                        .onChange(of: selection) { _, id in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) } }
-                }
-            }
+            glyphed { tabRow(tight: false).padding(.horizontal, 6).padding(.vertical, slim ? 2 : 6) }
+            glyphed { tabRow(tight: true).padding(.horizontal, 2).padding(.vertical, slim ? 2 : 6).background(PointerScroll()) }   // a narrow phone: tighter sections before anything scrolls
+            // Never scroll: the last resort is the same row with the smallest words and the least room between them.
+            glyphed { tabRow(tight: true, tighter: true).padding(.horizontal, 1).padding(.vertical, slim ? 2 : 6) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -111,9 +118,9 @@ struct AppShell<Content: View>: View {
         }
     }
 
-    private func tabRow(tight: Bool) -> some View {
-        HStack(spacing: roomy ? 10 : 2) {
-            ForEach(tabs) { tab in TabPill(tab: tab, selected: selection == tab.id, roomy: roomy, tight: tight, line: tabLine) { selection = tab.id }.id(tab.id) }
+    private func tabRow(tight: Bool, tighter: Bool = false) -> some View {
+        HStack(spacing: tighter ? 0 : (roomy ? (slim ? 2 : 10) : 2)) {
+            ForEach(tabs) { tab in TabPill(tab: tab, selected: selection == tab.id, roomy: roomy, tight: tight, slim: slim, tighter: tighter, line: tabLine, badge: tab.badge) { selection = tab.id }.id(tab.id).coachTarget("tab-\(tab.id)") }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: selection)
     }
@@ -122,10 +129,11 @@ struct AppShell<Content: View>: View {
 /// The question mark in the bar.
 private struct HelpChip: View {
     let action: () -> Void
+    var slim = false
     var body: some View {
         Button(action: action) {
-            Image(systemName: "questionmark.circle").font(.system(size: 21, weight: .semibold)).foregroundStyle(Theme.textDim)
-                .frame(width: 44, height: 44).contentShape(Rectangle())
+            Image(systemName: "questionmark.circle").font(.system(size: slim ? 18 : 21, weight: .semibold)).foregroundStyle(Theme.textDim)
+                .frame(width: slim ? 34 : 44, height: slim ? 34 : 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusTarget("shell-help", radius: 22, scale: 1.08, action: action)
@@ -157,23 +165,36 @@ struct TabPill: View {
     var roomy = true
     /// A narrow phone with the controller hints on: the words a little smaller and closer so all of them fit beside LB and RB.
     var tight = false
+    /// Held sideways on a phone: less height.
+    var slim = false
+    /// The last step before the words would not fit: smaller still, with the least room around them.
+    var tighter = false
     /// Shared by the sections of one bar, so the line under the chosen one moves between them.
     var line: Namespace.ID?
+    /// The count on the tab (0: none).
+    var badge = 0
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(tab.title)
-                .font(.system(size: roomy ? 19 : (tight ? 14 : 15), weight: selected ? .heavy : .semibold, design: .rounded))
+                .font(.system(size: tighter ? 13 : (roomy ? (slim ? 16 : 19) : (tight ? 14 : 15)), weight: selected ? .heavy : .semibold, design: .rounded))
                 .foregroundStyle(selected ? Theme.text : Theme.textDim)
                 .lineLimit(1).fixedSize()
-                .padding(.horizontal, roomy ? 16 : (tight ? 5 : 9)).padding(.vertical, 8)
-                .frame(minHeight: 40)
+                .padding(.horizontal, tighter ? 4 : (roomy ? (slim ? 7 : 16) : (tight ? 5 : 9))).padding(.vertical, slim ? 3 : 8)
+                .frame(minHeight: slim ? 30 : 40)
                 .contentShape(Rectangle())
                 .animation(.easeOut(duration: 0.2), value: selected)
+                .overlay(alignment: .topTrailing) {
+                    if badge > 0 {
+                        Text(badge > 99 ? "99+" : "\(badge)").font(.system(size: 11, weight: .heavy, design: .rounded)).foregroundStyle(.white).monospacedDigit()
+                            .padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18).background(Theme.bad, in: Capsule())
+                            .offset(x: tighter ? 5 : 9, y: slim ? -2 : -1).accessibilityLabel("\(badge) unread")
+                    }
+                }
                 .overlay(alignment: .bottom) {
                     if selected {
-                        Capsule().fill(Theme.accentGradient).frame(height: 3).padding(.horizontal, roomy ? 16 : (tight ? 5 : 9))
+                        Capsule().fill(Theme.accentGradient).frame(height: 3).padding(.horizontal, tighter ? 4 : (roomy ? (slim ? 7 : 16) : (tight ? 5 : 9)))
                             .shadow(color: Theme.accent.opacity(0.6 * Theme.glowStrength), radius: 4)
                             .modifier(MatchedLine(line: line))
                     }

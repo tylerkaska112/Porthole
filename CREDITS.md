@@ -56,3 +56,21 @@ downloaded from. They are trademarks of their owners and are not covered by this
 ## Not affiliated
 Steam and the Steam artwork belong to Valve; Epic Games, GOG, Factorio (Wube Software) and every game or launcher you run belong to their owners.
 This project is not affiliated with or endorsed by any of them. Games and launchers are never bundled.
+
+## 3D model of the DualSense
+The 3D controller in Settings > Controls > Test controller is based on **"Playstation 5 Dualsense"** by **AHarmlessPotato** (https://skfb.ly/opKOx), licensed under **Creative Commons Attribution 4.0** (http://creativecommons.org/licenses/by/4.0/). Porthole changed it: it was turned to Porthole's axes, split into the parts that move and given pivots, and converted to USD with its textures kept as files (`tools/dualsense/prepare_dualsense.py`, `app/Models/DualSense-LICENSE.txt`). Not affiliated with or endorsed by Sony or the author.
+
+## 3D model of the DualShock 4
+The 3D controller for a PS4 pad is based on **"DualShock 4 PlayStation Controller"** by **shaielwolf** (https://skfb.ly/oPRAI), licensed under **Creative Commons Attribution 4.0** (http://creativecommons.org/licenses/by/4.0/). Porthole changed it: it was turned to Porthole's axes, split into the parts that move and given pivots, and converted to USD with its textures kept as files (`tools/dualsense/prepare_dualshock4.py`, `app/Models/DualShock4-LICENSE.txt`). Not affiliated with or endorsed by Sony or the author.
+
+## 3D model of the Xbox controller
+The 3D controller for an Xbox pad is based on **"Xbox Controller"** by **umkhero** (https://skfb.ly/6VtqJ), licensed under **Creative Commons Attribution 4.0** (http://creativecommons.org/licenses/by/4.0/). Porthole changed it: it was turned to Porthole's axes and tipped level, split into the parts that move and given pivots, and converted to USD with its texture kept as a file (`tools/dualsense/prepare_xbox.py`, `app/Models/Xbox-LICENSE.txt`). Not affiliated with or endorsed by Microsoft or the author.
+
+## Libraries behind the Discord features
+The Discord features (Settings > Discord features, the Social tab) use **libdave** (Discord, MIT), **mlspp** (Cisco, BSD-2-Clause), **OpenSSL 3.0.18** (Apache-2.0), **nlohmann/json** (MIT),
+**libdatachannel** and **libjuice** (Paul-Louis Ageneau, MPL-2.0; their source is public at github.com/paullouisageneau), **libsrtp** (Cisco, BSD-3-Clause), **usrsctp** (BSD-3-Clause), **plog** (MIT) and **Opus** (Xiph.Org and others, BSD-3-Clause),
+built for iOS by `tools/build_dave.sh`, unchanged. Exact versions, sources and licence texts: `docs/notices/Discord-libraries.md` and `Discord-libraries-licences.txt` (also in Settings > About > Licences).
+Porthole is not an official Discord client and is not affiliated with Discord.
+
+## Madeira Nightly 0.2.29
+Porthole 1.4.0's engine includes the work of the contributors to Madeira's open pull requests (https://github.com/willfaust/Madeira/pulls), gathered into one tree by the community test build "Madeira Nightly 0.2.29": memory and JIT-pool handling, the launchers' browser helpers, Mono code invalidation in FEX and more. Their files keep their own licence headers; the exact changes are `patches/0204-engine-1.4.0-*.patch` (see `docs/SOURCE.md`).

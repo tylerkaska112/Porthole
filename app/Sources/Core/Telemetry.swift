@@ -22,6 +22,9 @@ struct TelemetrySample {
     var mode = ""
     var gpuBusyPercent: Double?   // share of the last second the GPU was busy; nil = not measured (only while the full readout is shown)
     var gpuFrameMs: Double?       // GPU time per presented frame
+    var inputLagMs: Double?       // an estimate of the lag a press has (InputLagEstimate: the game's frames and the screen delay); nil until both are measured
+    var gameFrameMs: Double?      // the game's own frame time, from the pictures it puts on the screen (PresentTimer)
+    var screenDelayMs: Double?    // from the game asking for a picture to the picture being on the screen (PresentTimer)
     var topThreadPercent: Double? // the busiest thread, 100 = one full core: a game held back by one thread while the total stays low
     var engine = EngineStats()    // swap file, memory split and page-in rate, from the log (only while the full readout is shown)
 
@@ -212,6 +215,21 @@ final class Telemetry {
             s.topThreadPercent = Self.busiestThread()
             s.engine = EngineStats.read(from: LogStore.shared.logFileURL)
         } else { gpuMeterOn = false }
+        if PresentTimer.shared.isRunning {
+            // With frame generation making pictures, a game frame is more than one picture, and the engine says how fast the game itself draws.
+            let (generating, perFrame, gameFPS) = MainActor.assumeIsolated { () -> (Bool, Int, Double?) in
+                let ls = LosslessScaling.shared, st = ls.engineStatus()
+                guard ls.live.enabled, st["state"] == "generating" else { return (false, 1, nil) }
+                return (true, 1 + ls.live.generated, st["game"].flatMap { Double($0) }.flatMap { $0 > 0 ? $0 : nil })
+            }
+            s.gameFrameMs = gameFPS.map { 1000 / $0 } ?? PresentTimer.shared.frameMs(picturesPerFrame: perFrame)
+            s.screenDelayMs = PresentTimer.shared.screenMs(picturesPerFrame: perFrame)
+            s.inputLagMs = InputLagEstimate.milliseconds(frameMs: s.gameFrameMs, screenMs: s.screenDelayMs, readMs: InputLagMeter.shared.medianToReadMs, generating: generating)
+            if ticks % 10 == 0, let lag = s.inputLagMs, let frame = s.gameFrameMs, let screen = s.screenDelayMs {
+                LogStore.shared.log(String(format: "[latency] game frame %.0f ms%@, a picture from the game asking for it to the screen %.0f ms%@%@: estimated input lag %.0f ms", frame, gameFPS != nil ? " (from the engine)" : "", screen,
+                                           generating ? String(format: ", %d pictures a frame", perFrame) : "", InputLagMeter.shared.medianToReadMs.map { String(format: ", the controller read in %.0f ms", $0) } ?? "", lag))
+            }
+        }
         latest = s
         peakFootprintMB = max(peakFootprintMB, s.footprintMB); peakGPUMB = max(peakGPUMB, s.gpuMB)
         if s.availableMB > 0 {

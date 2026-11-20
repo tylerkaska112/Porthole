@@ -1,10 +1,630 @@
 [
   {
-    "version": "1.3.1",
-    "build": "928",
-    "summary": "Steam Cloud saves that Steam sends packed in other ways now download, Steam games start from Steam's saved sign-in once they have started online, and compatibility reports can say a game came from Amazon Games.",
+    "version": "1.4.0",
+    "build": "982",
+    "summary": "All Hands on Deck: Discord inside Porthole (experimental, off until you turn it on), a rebuilt in-game menu, much easier controls, interactive tutorials and a new engine.",
     "added": [
-      "Settings > Steam > Starting games > Start from Steam's saved sign-in (on): once a game has started online, its next starts use what Steam saved, so there is no new sign-in and no ownership check each time (about ten seconds faster), and a game can start with no connection at all. Steam renews the saved sign-in with an online start, which happens by itself two weeks after the last one, or when Steam could not use it (the game then says so and the next Play signs in online). Inside such a start Steam is offline, so multiplayer and Steam achievements do not work: a game's own page has Steam sign-in: Online every time for those.",
+      "Discord (experimental, off until you turn it on; Porthole is not an official Discord client and Discord's terms do not allow third-party clients, so an account used with it can be limited or banned): a Social tab with your servers, channels, direct messages and forums; voice calls with your game's sound in the call, push to talk and a volume for each person; banners over the game for messages and calls; your game on your profile; and a viewer for other people's Go Live streams.",
+      "A rebuilt in-game menu: on a phone it fills the screen with tabs down the side and is see-through; on an iPad it is a floating card you can drag to any size.",
+      "Default controls: choose once how every game is controlled, from starter layouts drawn as pictures. A new Universal layout suits most games; the on-screen game controller has a second layout; every game has a controls card; left-handed mode, button size and a quick layout switch in the game.",
+      "The layout editor works on several controls at once: select, move, scale, align, space evenly, flip, resize and copy.",
+      "Test your controls: Settings > Controls tests a controller (in 3D for DualSense, DualShock 4 and Xbox pads), a keyboard and a mouse, and sets a deadzone for a stick that drifts.",
+      "Interactive tutorials that point at the real buttons, a first-run setup where you choose how you play, and a tour of the in-game menu on your first game.",
+      "Play on a TV or monitor on a cable: the game fills that screen and the controls stay on the device.",
+      "Steam games on an external drive are found and added by themselves; a Steam download region; starting from Steam's saved sign-in; Epic games started the way Epic's launcher starts them, with a warning for anti-cheat.",
+      "Input lag and Screen delay numbers for the performance overlay, and turning to landscape when a game starts.",
+      "A new engine (the Madeira Nightly 0.2.29 work) with fixes for memory, the JIT pool and the launchers' browser components. Every game's compatibility badge starts again at \"Not yet tested\"."
+    ],
+    "changed": [
+      "Discord lives in the Social tab, together with Steam's friends list.",
+      "Settings > Controls is much shorter: Default controls first, then Controller, Keyboard and mouse and Touch screen, and one Test and troubleshoot row.",
+      "Updating, resuming or repairing a Steam game asks only for the space it really needs.",
+      "In Settings a page you open starts at its top, and only a page you go back to keeps its place."
+    ],
+    "fixed": [
+      "Steam Cloud saves that Steam sends packed in other ways now download.",
+      "A Steam game started from an external drive hides the launch screen once its window is up.",
+      "The swap readout shows what is really on the disk.",
+      "A failed JIT attempt names the real cause and says what to do.",
+      "BeamNG.drive's Bin64 program starts in the game's install folder, and start options typed with the iOS keyboard reach a program as typed."
+    ]
+  },
+  {
+    "version": "1.4.107",
+    "build": "981",
+    "summary": "Settings: a page you open always starts at its top; only a page you go back to keeps its place.",
+    "fixed": [
+      "In Settings, a page opened inside another page remembered where you had scrolled it the last time, and opened there again. Now a page you open always starts at the top, and only the page you go back to (the one you opened it from) is shown where you left it."
+    ]
+  },
+  {
+    "version": "1.4.106",
+    "build": "980",
+    "summary": "Settings: a page you open inside another page starts at its top, and going back shows the page where you left it.",
+    "fixed": [
+      "Settings kept one scroll position for a page and for the pages opened inside it. If you scrolled down JIT and connection and opened VPN and cellular options, that page opened scrolled down too, and going back scrolled the first page up to where you had been in the second. Each page now has its own position: a page you open starts at the top, going back shows the page you left exactly where you left it, and choosing another Settings page starts at its top."
+    ]
+  },
+  {
+    "version": "1.4.105",
+    "build": "979",
+    "summary": "A new engine: the Madeira nightly 0.2.29 changes are in (a test build, please try your games), plus Steam updates that ask only for the space they need.",
+    "added": [
+      "The game engine now includes the Madeira Nightly 0.2.29 work: many fixes for memory, the JIT pool, the Social Club, Ubisoft and Battle.net launchers, and Direct3D 9 and 12. Because it is a new engine, every game's compatibility badge starts again at \"Not yet tested\".",
+      "Settings > About > Licences lists the libraries behind the Discord features (libdave, mlspp, OpenSSL, libdatachannel, libjuice, libsrtp, usrsctp, Opus and the rest) with their licence texts and where their source is."
+    ],
+    "changed": [
+      "Updating, resuming or repairing a Steam game no longer asks for the whole game's size in free space: it checks only the space the update really needs, and says how much more is needed when there is not enough."
+    ],
+    "fixed": [
+      "A program the launcher starts itself (for example BeamNG's Bin64 program) now starts in the game's install folder, as Valve's client would start it."
+    ]
+  },
+  {
+    "version": "1.4.104",
+    "build": "978",
+    "summary": "Closing Porthole from the app switcher now ends your Discord call and stream and shows you offline.",
+    "fixed": [
+      "Force-closing Porthole used to leave Discord thinking you were still there: the call stayed connected, a stream kept going and the account stayed online for a while. When iOS tells the app it is about to be closed, Porthole now ends your stream, leaves the voice channel, shows you invisible, and closes the connection to Discord properly (a normal close, which makes Discord end the session at once). The log (Settings > Advanced) says [discord] the app is closing, then goodbye: N message(s) sent. iOS does not promise to tell an app before it ends it, and does not at all when the app was already suspended, so if the log lacks those lines after a force close, Discord keeps the old session until it times out."
+    ]
+  },
+  {
+    "version": "1.4.103",
+    "build": "977",
+    "summary": "Watching a stream: a steady pacing mode that does not trust the sender's clock, a button to switch modes while watching, and timing numbers in the log.",
+    "added": [
+      "The stream screen has a pacing button (top right) that cycles Steady, Sender clock and Instant. Steady (now the default) spaces the pictures by the rhythm in which they arrive and keeps a little picture in hand (60 ms, more after a stall, up to 250 ms), so a stall is hidden when it is shorter than that and a burst afterwards is not rushed. Sender clock is 1.4.102's way (the times the sender stamped on the pictures). Instant is 1.4.100's way (each picture the moment it arrives). Try all three on the same stream and tell me which looks best.",
+      "The log (Settings > Advanced, [discord-watch]) now compares the sender's stamps with the arrival times every five seconds (middle, 90%, 99% and longest gaps, how many stamps went backwards, and the first 60 pairs once), which shows whether the sender's clock can be trusted."
+    ],
+    "fixed": [
+      "1.4.102's log showed the sender's stamps do not match the arrival times (a jitter of 215 to 363 ms and 145 to 381 pictures shown late, by up to 679 ms, while the pictures never came more than 139 ms apart), so pacing by the sender's clock was not smoothing anything."
+    ]
+  },
+  {
+    "version": "1.4.102",
+    "build": "976",
+    "summary": "Watching a stream: smoother motion (a short playout delay instead of showing each picture the moment it arrives).",
+    "fixed": [
+      "Watching a Go Live slowed down and then rushed to catch up, as if frames were lost and then arrived late. Nothing was lost: the pictures came in uneven bursts and each was shown the moment it arrived. A picture is now shown a short time after the sender made it, spaced by the sender's own clock: 60 ms normally, more when the connection is uneven (up to 250 ms), and back down when it settles. The sound is not delayed to match, so it can run slightly ahead of the picture. The log line now also says how far apart pictures came at worst, the jitter, the delay added, how many pictures were shown late, and the slowest time Porthole itself took to handle a picture, so a delay inside the app can be told from one on the network."
+    ]
+  },
+  {
+    "version": "1.4.101",
+    "build": "975",
+    "summary": "Watching a stream: the first picture shows sooner.",
+    "fixed": [
+      "Watching a Go Live took about three seconds to show its first picture: the first request for a key frame was sent before the connection was open and was lost, and the next one came a second and a half later. The request is now only counted once it has really been sent, and repeats twice a second until the first picture shows."
+    ]
+  },
+  {
+    "version": "1.4.100",
+    "build": "974",
+    "summary": "Watching a stream: far fewer freezes, because lost packets are now asked for again.",
+    "fixed": [
+      "Watching a Go Live showed a picture and played the sound (1.4.99), but froze often: about one picture in four was thrown away after a lost packet while Porthole waited for a whole new key frame, and a packet that merely arrived out of order counted as lost. The picture's packets are now put back in order, a missing one is asked for again (a resend request) and the sender's resent copy fills the gap, and only a packet that has not come after a quarter of a second is given up on. Picture-loss requests and receiver reports are now sent by Porthole itself, once a second. The log line (Settings > Advanced, [discord-watch]) now says how many resends were asked for, how many arrived, and how many were given up on."
+    ]
+  },
+  {
+    "version": "1.4.99",
+    "build": "973",
+    "summary": "Watching a stream: the connection works, now the pictures are opened with the start codes the sender used.",
+    "fixed": [
+      "Watching a Go Live: the first real test showed Discord accepting Porthole as a viewer and thousands of picture packets arriving, but every key frame failed its end-to-end check, so nothing was shown. The check covers the bytes that mark where each piece of the picture starts, and Porthole put them back with a different length than the sender used. It now tries the likely layouts (and remembers the one that works), and when a key frame still will not open the log (lines starting [discord-watch], \"a key frame would not open\") has its first and last bytes for the next try."
+    ]
+  },
+  {
+    "version": "1.4.98",
+    "build": "972",
+    "summary": "Discord: watch other people's Go Live streams (experimental, not yet tried against a real stream).",
+    "added": [
+      "Watch a stream: when somebody is streaming (a red LIVE mark) in the voice channel you are in, tap their tile in Discord and press Watch. The stream opens full screen with its sound, a Sound on/off button and Stop watching. Porthole joins the stream's own connection, opens the streamer's end-to-end encryption, puts the H.264 picture back together from its packets and lets the phone's own decoder show it. Only H.264 streams can be shown. If a stream shows no picture within 25 seconds it says so, and the next try uses a different way of joining (the log, Settings > Advanced, lines starting [discord-watch] say what happened at each step).",
+      "Not tried yet: this was built from Discord's own description of streams and tested only on the parts that need no network (packets, picture assembly and decoding, with the Mac's encoder). Whether Discord accepts the viewer is what the first real test will show. Watching from inside a running game is not built yet."
+    ]
+  },
+  {
+    "version": "1.4.97",
+    "build": "971",
+    "summary": "Tutorials fixed from the device checklist: they scroll to what they point at, pick the right game and the swap sizes, and the game menu tour can be set for the next launch.",
+    "fixed": [
+      "Tutorials scroll the screen to the thing they point at when it is out of sight (Touch screen in Set up your controls, Where it stands in Get JIT working), instead of saying to scroll.",
+      "Play a game and tune it, and Turn on swap, point at the first game in the list (the one you played last), not a game in the middle.",
+      "Turn on swap: the Pick a size step now outlines the list of sizes, not the Cancel button, and tapping a size moves on.",
+      "A step that only explains something no longer lets you touch the screen or the highlighted thing. Only steps that ask you to tap, or to type in a box, accept touches.",
+      "The game menu tutorial, when no game is running, now says it will start by itself the next time you launch a game (it used to refuse), and it starts then even if tips are off or you did it before."
+    ]
+  },
+  {
+    "version": "1.4.96",
+    "build": "970",
+    "summary": "Safety checks after the big Discord, tutorial and menu changes: a server can no longer lose all its channels by mistake.",
+    "fixed": [
+      "Discord: if Discord's start-up message ever left out a server's role list, every channel in that server counted as hidden and the whole server disappeared. A server without a role list now keeps all its channels, and a server whose rules would hide every single channel keeps them too (a single hidden channel is still hidden).",
+      "Discord: a malformed address in a request can no longer crash the app (it becomes an ordinary network error).",
+      "Tutorials: the card no longer assumes a step exists while a tutorial is closing."
+    ]
+  },
+  {
+    "version": "1.4.95",
+    "build": "969",
+    "summary": "Discord shows what you are doing in Porthole: \"Firewatch on Porthole\" in a game, and browsing, downloading or adjusting settings otherwise.",
+    "changed": [
+      "The Discord activity (Discord settings > Activity, now Show what I am doing in Porthole; still off until you turn it on) follows what you are doing. While a game runs it says the game's title and on Porthole, for example \"Firewatch on Porthole\". Otherwise it says Playing Porthole with a line under it: Browsing their library, Browsing the game stores, Reading game reports, Adjusting settings, or Downloading <game> (or Downloading games when several are going). A running game comes before a download, and a download before the screen you are on. The time restarts when what you are doing changes. Downloads are looked at every few seconds; nothing is checked while the setting is off.",
+      "Game names longer than Discord allows are shortened so the whole line still fits."
+    ]
+  },
+  {
+    "version": "1.4.94",
+    "build": "968",
+    "summary": "Discord: an experimental way to reduce echo from your speakers, and a LIVE mark on people who are streaming.",
+    "added": [
+      "Reduce echo (experimental; Discord settings > Voice, and the in-game menu's Discord tab): while other people are being played, a microphone frame that is not clearly louder than the speakers is taken for their sound coming back and is not sent. It is not true echo cancelling (the game's audio engine cannot share the device's own voice processing), so you will not be heard over somebody who is louder than you, and headphones fix echo completely. The log (Settings > Advanced) says how many frames it held back.",
+      "A red LIVE mark shows on anybody who is streaming with Go Live in a voice channel, on their tile and beside their name in the channel list, so you can see who is sharing a screen or a game. (Watching their stream inside Porthole is not built yet.)"
+    ]
+  },
+  {
+    "version": "1.4.93",
+    "build": "967",
+    "summary": "Discord: show the game you are playing (off until you turn it on), and push to talk.",
+    "added": [
+      "Show the game I am playing (Discord settings > Activity): while a game runs in Porthole, your friends and the servers you are in see \"Playing <the game's name>\" next to your name, with how long you have played. Off until you turn it on, and it asks once, because it is something Discord's own app does by recognising games and Porthole can only do by telling Discord itself. It appears when the game's picture is up and goes when the game ends or you turn it off.",
+      "Push to talk (Discord settings > Voice, and the in-game menu's Discord tab): with it on, your microphone sends only while you hold the microphone button at the top of the game screen, which shows only while you are in a call and turns green while held. Nobody sees a mute: you simply speak when you press, and the setting is kept between calls."
+    ]
+  },
+  {
+    "version": "1.4.92",
+    "build": "966",
+    "summary": "Discord chat polish, part two: link cards, stickers, a full-screen picture viewer, day lines and jumping to the message a reply answers.",
+    "added": [
+      "Cards: a link's preview and what bots send now show as cards as Discord draws them: a coloured bar, the site, who it is from, the title, the text, fields, a picture and a footer. A moving picture (a GIF link) shows its first frame with a GIF mark and is not played.",
+      "Stickers show as pictures (PNG, animated PNG as its first frame, and GIF). A sticker Porthole cannot draw is named.",
+      "Tap a picture in a message or a card to see it full screen: pinch to zoom, drag while zoomed, double-tap to fit again, and a share button for its address. Close with the button or B on a controller.",
+      "A line between days in a conversation says Today, Yesterday, the weekday for the last week, or the date.",
+      "Tap the line above a reply (the one that says who it answers) to scroll to that message and light it for a moment, when it is among the messages shown."
+    ],
+    "changed": [
+      "A message that is only a link now shows the link's card instead of a line saying Embed; the banner for such a message uses the card's title."
+    ]
+  },
+  {
+    "version": "1.4.91",
+    "build": "965",
+    "summary": "Discord chat polish: reactions, replies, editing and deleting your own messages, typing indicators and earlier messages.",
+    "added": [
+      "Reactions: the emoji people used show under a message with how many, yours highlighted. Tap one to add or take away your vote (it changes at once and changes back with a reason if Discord refuses), and they update live as other people react. A server's own emoji show as their picture.",
+      "A message menu: press and hold a message (X with a controller) for Reply, a quick reaction (thumbs up, heart, laughing, surprised, sad, party), Copy text, and on your own messages Edit and Delete (Delete asks first and says it cannot be undone). Replying shows who you are answering above the box and sends your message as an answer in Discord; Edit puts the text back in the box and saves over the message. The box says what it is doing and has a cross to give it up.",
+      "Typing: \"Alex is typing\", \"Alex and Sam are typing\" or \"Several people are typing\" shows above the box while they do, in servers, threads and direct messages. Porthole only listens: it does not tell Discord when you type.",
+      "Load earlier messages at the top of a channel or conversation reads the 50 before the oldest one shown, as many times as you like; it goes away when Discord has no more. Porthole now keeps up to 600 messages of a channel in memory (was 200)."
+    ],
+    "fixed": [
+      "A reaction, edit or delete that Discord answers with an empty reply (which is how it says yes) was treated as an error."
+    ]
+  },
+  {
+    "version": "1.4.90",
+    "build": "964",
+    "summary": "Discord: forums and threads, banners over the app between games, and a message count on the Social tab.",
+    "added": [
+      "Forums: a forum or media channel shows its posts as cards, pinned ones first and then the most recently active, with the title, the start of the first message, its tags, who posted, how many replies and when, and a picture when the post has one. Open a post to read it and reply, with Posts to go back. Threads open under their channel in the channel list (up to six, newest first) and read and write like any channel.",
+      "Discord notifications now also show when you are in the app and no game is running: a banner (and an incoming call with Join and Decline) slides in over any screen. Tap it and the Social tab opens on that conversation or channel. Over a game it works as before. No banner shows for the conversation you are reading, and none while you stream with Go Live.",
+      "The Social tab has a red count of the Discord messages waiting: every message of a direct message or group chat, and the messages in a server that name you or answer you, since you last looked. The same counts show on Messages, on each conversation (its name goes bold), on each server and on each channel. Opening a conversation clears it. The counts are kept in memory only."
+    ],
+    "fixed": [
+      "The notification settings on the Discord page now say where banners show (over a game and over the app)."
+    ]
+  },
+  {
+    "version": "1.4.89",
+    "build": "963",
+    "summary": "Discord: direct messages and group chats, and a profile card for anyone you tap.",
+    "added": [
+      "Messages in the Discord screen: a new button in the server rail (and a row in the list on a phone held upright) opens your direct messages and group chats, newest first, with each one's picture (a group's pictures overlap) and the start of its latest message once it has been read. Open one to read it and write in it, the same as a server's text channel; Call rings the other people, and the person icon opens their card. A new message moves its conversation to the top.",
+      "Tap a picture or a name to see who it is. In a chat, the friends list, and each person's tile in a voice channel (a small person icon), a profile card opens with their banner and picture, their name and user name, pronouns, whether they are online and the game they are playing, what they wrote about themselves, the date their account was made, and the servers and number of friends you share. Message opens the conversation with them (made if there is none; nothing is sent), and Call opens it and rings. Your own card has neither.",
+      "With a controller, A on a message's picture or a friend opens their card; on a friend who is in a voice channel X still joins them."
+    ]
+  },
+  {
+    "version": "1.4.88",
+    "build": "962",
+    "summary": "Discord: channels you cannot open are no longer listed, and your servers come in the order of your own Discord.",
+    "changed": [
+      "Discord shows only the channels your account may open. Discord sends every channel of a server, including private ones; Porthole now works out what your roles and each channel's rules allow (the same arithmetic Discord documents: owner and administrator see everything, @everyone's rule, then your roles', then your own) and leaves out the channels you cannot see. A server with nothing left to show is not listed. If Discord does not say which roles you have, nothing is hidden, so you never lose a channel you can open.",
+      "Your servers are listed in the order of your own Discord (the folders and positions you arranged), with servers that order does not name after them by name. The log (Settings > Advanced) says how many servers were read and for how many your roles were known."
+    ]
+  },
+  {
+    "version": "1.4.87",
+    "build": "961",
+    "summary": "On iPad, the in-game menu can be any size: drag its edge handle, or tap the new expand button.",
+    "added": [
+      "The iPad's in-game menu card can be resized. Drag the handle on its left edge: to the left makes it wider (up to almost the whole screen), to the right makes it narrower, and pulling it in well past the smallest size and letting go closes the menu. The handle now shows two grip bars as well as its arrow. A tap on the handle still closes the menu.",
+      "A new button in the card's header (next to Close) switches between the standard size and a large one (about 82 percent of the screen) in one tap.",
+      "The size you choose is remembered between games. A card made very wide keeps its words in a comfortable column in the middle. Turning the iPad keeps the size within what the new screen can hold, and the standard size follows the screen.",
+      "The game menu tutorial points at the new button and explains the handle."
+    ]
+  },
+  {
+    "version": "1.4.86",
+    "build": "960",
+    "summary": "The in-game menu on iPad is now a clean floating card with a big Close button, tabs along the top and roomier rows.",
+    "changed": [
+      "On an iPad the in-game menu is a floating card on the right with rounded corners and one nearly solid surface, instead of a full-height strip made of three see-through layers that let the game's own menu, its on-screen controls and the performance overlay show through every row. The game stays in view and playable beside it. Background (Game tab > This menu) still works, between mostly and fully solid.",
+      "Closing it is no longer a small cross in the far corner: the header has a labelled Close button 44 points tall, a handle on the card's left edge (the same handle that opens it from the right edge) closes it with a tap or a drag to the right, and a swipe to the right on the card still backs out of a page or closes it.",
+      "The tabs are a row of pills across the top of the card (Performance, Controls, Game, Steam, Discord), each an icon over a label, the chosen one filled; they stay in view while a page is open. Rows, switches, steppers, chips and buttons are larger for a finger on a tablet. Phones keep their menu as it is.",
+      "The menu's first-open tip and the game menu tutorial no longer say to tap outside the menu to close it: that never worked."
+    ]
+  },
+  {
+    "version": "1.4.85",
+    "build": "959",
+    "summary": "When a tutorial ends, you land back on the list of tutorials.",
+    "changed": [
+      "Finishing a tutorial, or closing it with the cross, now takes you to Settings > Setup, tutorials and tips (closing the Add a game sheet or a game's page on the way), where the next tutorial is one tap away. The game menu tour, which runs over a game, stays where it is."
+    ]
+  },
+  {
+    "version": "1.4.84",
+    "build": "958",
+    "summary": "Tutorial highlights now land exactly on the button: the glow ring was drifting toward the screen's corner.",
+    "fixed": [
+      "The glowing ring of a tutorial step was drawn up to about 9 points away from the button it described (up and to the left of it on an iPad, and lower on rows near the bottom of the screen). Its gentle pulse scaled the whole screen layer around the screen's centre instead of the ring around itself, so the further a button was from the middle, the further the ring drifted. The ring now pulses around its own centre. The dimmed screen's hole, the finger and the card were already measured from the right place.",
+      "Tutorial steps measure positions in the overlay's own coordinates and log every window's frame at the start, so a remaining offset can be traced from the log."
+    ]
+  },
+  {
+    "version": "1.4.83",
+    "build": "957",
+    "summary": "Tutorial highlights now follow what is really drawn on the screen, so the glow sits on the right button.",
+    "fixed": [
+      "Tutorial highlights were placed from the positions SwiftUI reports for each view. Those leave out scrolling in progress, a sheet sliding in, page transitions and the zoom a selected row gets, and they can be out of date, so the glow could land beside or behind the thing it described. The tutorial now reads where each target is actually drawn, every display frame, from an invisible marker behind it that exists only while a tutorial runs, and it ignores a target that a sheet or full-screen page is covering.",
+      "The log (Settings > Advanced) now has a [coach] line for each tutorial step with the name it found, its position and the screen size, so a highlight that is still wrong can be reported with real numbers."
+    ]
+  },
+  {
+    "version": "1.4.82",
+    "build": "956",
+    "summary": "Interactive tutorials: a guide that points at the real buttons, says what they do, and moves on as you tap them, from tab to tab and into sheets. Includes a tour of the in-game menu on your first game.",
+    "added": [
+      "Tutorials (Settings > Setup, tutorials and tips): Find your way around, Add a game, Sign in to a store, Install a game from Steam, Play a game and tune it, Turn on swap, Set up your controls, Get JIT working, Back up your saves and The game menu. Each dims the screen, glows around the real button or row, says what it is and what it does, and moves on when you tap it (or press Next). It follows you from tab to tab and into sheets, and says to scroll when what it points at is out of sight. The cross on its card ends it at any time.",
+      "The first game you run offers the tour of the in-game menu once the game's picture is up: it asks you to swipe in from the right edge, then points at each tab (Performance, Controls, Game) and the rows in them. The Game tab's Help card has Show me around this menu to run it again.",
+      "The last page of setup has Show me around, and the last step of a screen's question-mark guide has Walk me through it."
+    ],
+    "changed": [
+      "The Settings page Setup guide and tips is now Setup, tutorials and tips."
+    ]
+  },
+  {
+    "version": "1.4.81",
+    "build": "955",
+    "summary": "First-run setup now lets you choose how you play and set up the app in full: controls, colours and sound, picture and power, and helpers, before the steps that get it ready.",
+    "added": [
+      "Setup has a new step 1, \"Make it yours\", of four pages with every default already chosen: Controls (the default controls with Try it, button size, left-handed, controller status), Colours and sound (colour scheme, festive themes, game volume, keep other apps' sound), Picture and power (resolution, turn to landscape, power mode) and Helpers (look for known problems, back up saves after each game, compatibility badges, ask how a game ran). Each choice is the setting itself, so Settings shows it and nothing needs applying.",
+      "The welcome page has a \"Just the essentials\" shortcut that skips the choices and goes straight to getting ready; the last page lists your choices and each one takes you back to change it.",
+      "The progress bar has four phases (Yours, Speed, Components, Games); on a phone held upright the Finish later button is a small cross to leave room for it."
+    ],
+    "changed": [
+      "Settings > Display, Performance, Controls and Appearance now share their Resolution, Power mode, Turn to landscape, Button size, Left-handed and colour scheme rows with setup, so the two cannot drift apart. Setup starts again from the welcome page once after this update (the pages were renumbered)."
+    ],
+    "fixed": [
+      "Settings > Display listed \"Play on a connected display\" twice."
+    ]
+  },
+  {
+    "version": "1.4.80",
+    "build": "954",
+    "summary": "Controls made easier to use: button size, left-handed, a controls card for each game, a quick layout switch in the game, and finer placement in the editor.",
+    "added": [
+      "Button size (Settings > Controls > Touch screen, and the layout editor's Options): Automatic, Smaller, Normal, Larger or Largest, one setting for the device. Automatic draws layouts a little larger on an iPad, where they looked small. It does not touch the on-screen game controller, which has its own size.",
+      "Left-handed (Settings > Controls > Touch screen, and the in-game menu's Controls tab): every layout is shown flipped left to right, the stick and the buttons swapping hands. Only the display flips, so nothing stored changes, switching it off puts everything back, and layouts you share are not turned round. The editor shows the flipped layout too.",
+      "A game's Controls page starts with a card, “In use now”: the layout in use, drawn, with Try it, Edit and Change layout. Edit on a game that uses your default controls makes a copy just for that game; Change layout adds a new layout from a starter and uses it. Your other layouts are never overwritten. When there is something to say, the card also tells you about buttons that sit on top of each other or are too small to hit (tap it to fix them), and the most popular layout other players shared for the game.",
+      "In-game menu, Controls tab: a Layout card with a chip for each layout the game has (and the default controls), so a tap switches layout without opening the editor, and “+ New” adds one from a starter. The layouts stay, so another tap goes back.",
+      "Layout editor: buttons that overlap another are ringed in red and ones too small to hit in orange; a Nudge button next to Size shows four arrows that move the selection 1 or 6 points a press (hold to repeat); and tapping the size number lets you type an exact size."
+    ],
+    "changed": [
+      "Settings > Controls has fewer rows on its first screen: the controller, keyboard and mouse tests and the stick check are behind one “Test and troubleshoot” row.",
+      "The in-game Controls tab keeps four cards: Layout, Controller (the on-screen game controller is in it now), On the game screen, and Edit and share. The old “Layout” row, which opened the touch pointer, floating sticks and auto-hide, is called “Touch settings”.",
+      "On a game's Controls page, “In use” and “Your sets” are one group, “Binds and layouts”."
+    ],
+    "fixed": [
+      "On an iPad the performance numbers and the Discord call were drawn where a layout would put them on a phone, not where the editor shows their spots (1.4.76 changed how layouts fit a bigger screen and missed these two). They now follow the same fit, and left-handed.",
+      "Point and click: the hotkey row (1 to 6) was too tight for the larger button sizes and the buttons overlapped. They are spaced wider."
+    ]
+  },
+  {
+    "version": "1.4.79",
+    "build": "953",
+    "summary": "Starter layouts: pick Universal, Gamepad, Action, Point and click or Platformer from a picture of each.",
+    "added": [
+      "A game's Binds and layouts page has “Start over from a layout…”: a picker that draws each starting layout (Universal, Gamepad, Action for first and third person games, Point and click for strategy and building games, Platformer, and an empty screen) with what it is for, instead of three text rows. It asks before replacing controls you already have, as before.",
+      "The layout editor's Start button lists every layout Porthole ships (it only had Universal and Gamepad), so Action, Point and click and Platformer can be started from right on the game. Undo brings your controls back."
+    ],
+    "fixed": [
+      "In the Platformer layout the B button touched the edge of the screen; it sits a little further in."
+    ]
+  },
+  {
+    "version": "1.4.78",
+    "build": "952",
+    "summary": "Epic games: started the way Epic's own launcher starts them, and a warning for anti-cheat before a big download.",
+    "added": [
+      "A game that ships an online anti-cheat (Easy Anti-Cheat, BattlEye, EQU8, PunkBuster, GameGuard) now says so on its Epic page, as soon as its download starts (the file list is read before anything is downloaded) and for games already installed: “Uses Easy Anti-Cheat. Anti-cheat of this kind does not run on Porthole, so online play will not work and the game may not start at all.” Of the 24 Epic reports, Fall Guys (Easy Anti-Cheat, twice) and PUBG (BattlEye) were such games.",
+      "Automatic fixes: when a game starts but Epic's servers refuse its own login (“corrective action required”, seen with G.I. Joe Wrath of Cobra), Porthole now says what to do: sign in at epicgames.com, do what Epic asks, then sign out and in again in Porthole. It changes nothing in the game."
+    ],
+    "changed": [
+      "An Epic game now gets the same command line Epic's own launcher gives it (taken from Legendary's launch code). It adds -epicsandboxid, which Epic Online Services reads to know which product a game belongs to; it adds the ownership token that games which check one ask for (-epicovt, fetched from Epic at each start, only for games whose catalog entry asks for it); and it adds the extra arguments Epic's catalog lists for the game. These are looked up while the sign-in code is fetched. If a lookup fails the game still starts with the sign-in as before, and the log says which one failed. Not yet tried on a device."
+    ],
+    "fixed": [
+      "The Epic cloud-save check used a host name that no longer exists (“A server with the specified hostname could not be found” in 13 of 15 Epic reports). It now uses Epic's current one."
+    ]
+  },
+  {
+    "version": "1.4.77",
+    "build": "951",
+    "summary": "Fixes from reading every problem and game report on the Hub: JIT failures say the real cause, setups show why they could not start, pairing keeps listening, and a game that needs Steam is offered Through Steam.",
+    "added": [
+      "Automatic fixes: a game that is set to Run directly and needs Steam's client (it logs that Steam was not found and ends at once with exit code 53, seen with Green Hell and Ultimate Marvel vs. Capcom 3) is offered “Start this game through Steam”. It asks first, can be undone, and is judged by the next run like the other fixes."
+    ],
+    "fixed": [
+      "When JIT could not be switched on, the message said only “the device is not ready for debugging”, often after a wait of a minute or more. It now says the usual cause when Porthole can see it: this copy was signed without the VPN permission, so its own private link cannot start, and LocalDevVPN has to be turned on and chosen (Settings › JIT and connection); or “Use LocalDevVPN instead” is on but no VPN is switched on. If this install cannot start its own link and no VPN is on, Porthole now says so at once instead of waiting.",
+      "A GOG or itch.io setup that could not start (JIT not on, for example) only ever said “The installer did not install the game” and the real reason was never shown. The setup's page now shows why it could not start, so a person is no longer sent round in circles.",
+      "Pairing from Settings gave up after about 35 seconds (“The app ran out of background time before the iPhone connected”) although the silent sound that keeps Porthole running was still playing. It now keeps listening for as long as the sound keeps the app running, so there is time to find the right row in Settings. Not verified on a device."
+    ]
+  },
+  {
+    "version": "1.4.76",
+    "build": "950",
+    "summary": "Layouts keep their spacing on a big screen: Universal is no longer spread out on an iPad.",
+    "fixed": [
+      "On an iPad the Universal layout was spread over the whole screen: every control sat at the same fraction of the screen as on a phone, so the gaps grew to twice as big while the buttons stayed the same size. A layout now keeps its controls phone-sized and close to the edges they hang from: the top row from the top, everything else from the bottom (where the thumbs are), the left controls from the left and the right controls from the right. Only the strip in between takes up the extra room, and that is where the right thumb drags to look around. On a phone nothing moves. This applies to every touch layout, yours included: a layout you made on a phone now fits an iPad the same way.",
+      "The layout editor works on the same spacing, so Align, Space evenly, Flip, scaling a group, dragging and the box that selects controls behave the same on an iPad, and the green look area shows where the right thumb's room really is."
+    ]
+  },
+  {
+    "version": "1.4.75",
+    "build": "949",
+    "summary": "Universal replaces Mouse and keys and First person; the on-screen controller has a second layout, Corner sticks.",
+    "added": [
+      "Corner sticks: a second layout for the on-screen game controller, drawn for an iPad but the same on a phone. A stick sits in each outer corner with the direction pad (left) and the face buttons (right) beside it, a trigger over a bumper above each stick, and View and Menu in the middle. The middle of the screen is left open, and on an iPad the performance numbers and the Discord call sit there. Choose it under Settings > Controls > Default controls (On-screen controller > Layout), on a game's page (On-screen controller > Layout) or in the in-game menu (Controls > On-screen controller > Appearance > Layout). Every controller type (Xbox, PlayStation, Nintendo Switch, Super Nintendo) has both layouts; a game remembers its own choice and the next game starts with the one chosen last."
+    ],
+    "changed": [
+      "Mouse and keys and First person are gone. Universal (the layout added in 1.4.74: a W A S D stick, the mouse buttons, the usual keys and a Look / Mouse switch) replaces them, so there is one layout to learn and edit. They are no longer choices in Settings > Controls, on a game's page or in the in-game menu, and the layout editor's Presets and a bind set's \"Start over from\" offer Universal instead. A game that had one of them chosen follows the default now, and a default saved as one of them reads as Universal.",
+      "The buttons the engine used to draw for those two layouts (the stick with E F Tab Esc and the \"More\" keys, the first-person pad, and \"Right mode\") are gone with them. A game that uses a bind set with no touch layout of its own gets Universal where it used to get those buttons. A right click is the RMB button in Universal, or a two-finger tap.",
+      "The in-game menu's Binds list always offers \"Binds and layouts\" (it was hidden while a layout was in use), and a game's page keeps its Look sensitivity slider for every layout."
+    ]
+  },
+  {
+    "version": "1.4.74",
+    "build": "948",
+    "summary": "A new default for the on-screen controls: Universal, for most games.",
+    "added": [
+      "Universal is a new choice in Settings > Controls > Default controls, and it is what every game starts with now (a game whose controls you set up yourself, or whose default you changed, keeps them). It is a layout like the others, so every control can be moved, resized, added to or taken away in the editor, and it can be shared.",
+      "How it is laid out: the left thumb has the W A S D stick with Shift above it, Space and Ctrl beside it, and F and Q further along the bottom. The right thumb has the mouse buttons (LMB, RMB), E and R in one tight arc in the bottom right corner, and the rest of the right side is left free: drag there to move the mouse, or to look around. Along the top are Esc and Tab, the mouse wheel, a Look / Mouse switch and the full keyboard. It starts with the drag moving the mouse, so menus, strategy and point-and-click games work as they are, and one tap on Look makes the drag look around for first and third person games.",
+      "While you edit a layout, the part of the screen the right thumb needs (right of the middle, left of the corner buttons) is drawn as a teal dashed area labelled \"Right thumb: drag here to look or move the mouse\", so you can keep it clear. It shows only while editing."
+    ],
+    "changed": [
+      "Mouse and keys (what every game started with before) is still in the list, and a game that follows the default now follows Universal. If you had chosen Mouse and keys yourself before this build, choose it again in Settings > Controls: it was stored as \"nothing chosen\", so it reads as the new default."
+    ]
+  },
+  {
+    "version": "1.4.73",
+    "build": "947",
+    "summary": "The controls editor works on several controls at once: select, move, line up, space out, flip, resize, copy.",
+    "added": [
+      "Select several controls: drag across empty space to draw a box round them (what the box covers is selected), or tap Select in the top bar and then tap controls one at a time to add them or take them out. Options > Select all picks everything.",
+      "With several selected they move together (drag any one of them, and they keep their shape against the screen's edge), pinch scales the group, bigger or smaller, spacing and all, and the panel gives Align (left edges, centres, right edges, top edges, middles, bottom edges), Space (equal gaps across or down, for three or more), Flip (turn the group left to right in place), one Size for all, Copy and Delete. Shape, Colour, Bring to front and Send to back in Options apply to every selected control that can take them.",
+      "Options > Mirror the whole layout (left-handed) swaps left and right across the screen for every control in one step (Undo brings it back).",
+      "Options > Copy selection to another layout and Paste copied controls here carry controls from one layout to another (a game's layout to a shared one, say) while the app stays open. Pasting where the controls already are puts the copies a little to the side; an overlay spot the layout already has is not pasted twice."
+    ],
+    "changed": [
+      "A drag that starts on empty space used to do nothing; it now draws the selection box. Dragging a control, the corner dot and pinching a single control work as before.",
+      "Copy on several controls copies them all, a little down and to the right, and selects the copies."
+    ]
+  },
+  {
+    "version": "1.4.72",
+    "build": "946",
+    "summary": "Screen delay and Input lag measure more of the real delay.",
+    "added": [],
+    "changed": [
+      "Screen delay and Input lag in 1.4.71 showed numbers but they hardly moved with frame generation or heavier graphics, and sat far below what the game feels like. The log showed three flaws, now fixed.",
+      "The time of each picture is now taken before the wait for a free screen buffer (it was taken after, which left out exactly the wait a queue causes).",
+      "With frame generation making pictures, the game's frame time was guessed from how close together pictures are, which gave 23 ms for a game drawing at 20 fps. The frame time now comes from the engine's own reading when frame generation is generating, and otherwise from the time between pictures times the number of pictures in a frame. The screen delay is that of the real picture (the slowest of the frame's pictures), not an average with the generated ones.",
+      "Input lag = the controller read + one and a half game frames + the screen delay, and with frame generation generating, half a game frame more (the real picture is held back so the generated ones can be shown first). It is an estimate put together from measurements, not the timing of one press; a slow-motion video of a tap is the way to check it.",
+      "The log line now says where the frame time came from and how many pictures a frame is."
+    ]
+  },
+  {
+    "version": "1.4.71",
+    "build": "945",
+    "summary": "Screen delay and Input lag now work in desktop sessions (Steam games and others that draw into a Wine desktop window).",
+    "added": [],
+    "changed": [
+      "Screen delay and Input lag showed nothing in 1.4.70 in a game that draws into a Wine desktop window (the log says \"display: Wine desktop (separate compositor layer)\"): that window has a screen layer of its own, and the meter was only watching the app's own game layer. It now watches every screen layer of a useful size (640x360 or bigger) and reports from the one the game draws to most often, so it also works in a plain session and ignores the launcher's hidden browser window.",
+      "The log says what it found: \"[latency] watching the pictures the game asks the screen for\" when the number is switched on, and \"[latency] a layer of WxH is being drawn to\" the first time each layer is used. If neither the numbers nor that second line show, the meter did not see the game draw."
+    ]
+  },
+  {
+    "version": "1.4.70",
+    "build": "944",
+    "summary": "Input lag in the performance overlay now measures what happens after the game presents, and there is a Screen delay number.",
+    "added": [
+      "Screen delay: a new number for the performance overlay (in-game menu > Overlay details > Screen delay). It is how long a picture takes from the game asking the screen for it until it is on the screen, which is where the game's frame queue, frame generation holding a picture back, and the screen's refresh add up. It does not need a press: it shows as soon as the game is drawing. Over 70 ms is yellow, over 150 ms red.",
+      "In a game with frame generation, a generated picture and the real one are counted as one game frame, and the delay is the real picture's (the slower one)."
+    ],
+    "changed": [
+      "Input lag was rebuilt. The first version timed the press only up to the game's next picture and read about 9 ms whatever was going on (it counted every picture, generated ones included, so it mostly measured how often pictures arrive). It is now an estimate put together from measurements: the game's own frame time (a press waits on average half a frame and the game spends about one on it), plus the screen delay, plus the few milliseconds the game takes to read the controller. It shows with a ~ in front, and as soon as the game is drawing, without pressing anything. Over 120 ms is yellow, over 250 ms red.",
+      "The log gets a line every 10 seconds: \"[latency] game frame ... ms, a picture from the game asking for it to the screen ... ms, the controller read in ... ms: estimated input lag ... ms\".",
+      "How it works: while one of these two numbers is on the overlay, the app notes when the game asks its screen layer for each picture and when that picture is shown. Off, nothing is watched. It does not change the game or the engine."
+    ]
+  },
+  {
+    "version": "1.4.69",
+    "build": "943",
+    "summary": "A new \"Input lag\" number for the performance overlay.",
+    "added": [
+      "Input lag: a new number for the performance overlay (in-game menu > Overlay details > Input lag). It follows a press of the on-screen controller or a real controller into the game and shows, in milliseconds, how long it takes from the press until the game's next picture (the middle of the last 24 presses). Press, push a stick or pull a trigger and it updates; until then it shows a dash. It is colour coded: over 80 ms yellow, over 150 ms red.",
+      "What it covers: the press getting to the game, the game reading it, and the game building and presenting the picture that follows. What it does not cover: how long that picture then waits (the game's frame queue, the moment frame generation holds a picture back, the screen's refresh), and a game that eases a stick's movement in by itself. So a high number means the game is slow to read or show the press, and a low number while the game still feels slow means the delay is after the game presents, or in the game's own smoothing. The log gets a line every 10 seconds with the two halves (\"[latency] press to the game reading it ... to the game's next picture ...\").",
+      "It costs nothing while the number is not on the overlay, and while it is on it only watches between a press and the answer."
+    ],
+    "changed": []
+  },
+  {
+    "version": "1.4.68",
+    "build": "942",
+    "summary": "On an iPad the game picture no longer has its corners cut off by the screen's rounded corners.",
+    "added": [],
+    "changed": [
+      "On an iPad the game's picture, when it sits against the top (or bottom) edge and reaches the sides, now keeps about 20 points from that edge, where the screen's rounded corners no longer cut into it. This applies to the picture moving up by itself above the on-screen controls and to a position chosen in a layout of your own, and only where there is room: a picture that fills the whole height stays where it is. It does not apply on a phone.",
+      "Because of that margin, the picture moves up by itself when at least 130 points are free under it after the margin (it was 150 before): a 13-inch iPad and an 11-inch iPad Air still qualify, an iPad mini still does not."
+    ]
+  },
+  {
+    "version": "1.4.67",
+    "build": "941",
+    "summary": "Layouts of your own choose where the game picture goes and where the performance and Discord overlays sit.",
+    "added": [
+      "In the layout editor (Options > Game picture) a layout of your own can say where the game's picture goes: automatic, or any of nine positions (top left to bottom right, middle) at a size from 100% down to 50%. It works on phones and iPads, for any shape of game (a 4:3 game too), and applies while that layout's controls are showing. Outside a game the layout sandbox draws a dashed outline of the picture behind the buttons, so you can plan around it; in a game the picture itself moves as you change it.",
+      "The performance numbers and the people in a Discord call each have a spot in the editor now: add \"Perf numbers\" or \"Discord call\" from the + Add tray, then drag it where you want it and resize it (its width is how big the overlay is drawn, half to twice the usual). The overlay is centred on its spot and kept on the screen. The overlay itself still has to be switched on in the in-game menu, and a layout with no spot keeps it in the corner you chose. A spot shows only in the editor.",
+      "4:3 and squarer games (5:4) are left filling the screen by default, even where an iPad would have room to move them up: not many games run that shape any more and those that do are made for full screen. A position you choose in a layout still applies to them."
+    ],
+    "changed": [
+      "Sharing a layout carries its picture position and its overlay spots once the Hub is updated (the Hub needs a restart for that; until then they stay on your own device)."
+    ]
+  },
+  {
+    "version": "1.4.66",
+    "build": "940",
+    "summary": "One on-screen controller layout; on iPads the picture moves up above the controls and the overlays move into the middle of the controls.",
+    "added": [
+      "The on-screen controller has one layout now, the same for every controller type: the direction pad over the left stick, A B X Y (or the PlayStation or Nintendo marks) over the right stick, a trigger over a bumper beside each, and View and Menu small in the middle. The left and right sides are mirror images, and the pad and the face buttons are centred over their sticks.",
+      "On an iPad, while the on-screen controller or a layout of on-screen buttons is in use, the game's picture moves to the top edge of the screen and the controls sit under it, so they cover as little of the game as possible. The picture is the same size, never cropped, and touches still land where they should. It stays put with a mouse and keyboard, with a real controller, on a phone, on an iPad held upright, and when less than about 150 points are free under the picture (an iPad mini). Settings > Controls > Default controls has a switch for it (\"Picture above the controls\").",
+      "With the picture moved up, the performance overlay and the people in a Discord call go into the free space in the middle of the on-screen controller, centred: the performance numbers in up to two rows with the call's pictures under them. More numbers or more people widen it equally on both sides. A call of more than 12 shows 12 (everyone talking first) and \"+N\" for the rest. A layout of your own buttons keeps the overlays in their corners.",
+      "A layout list of five starting points for the editor (Gamepad, Mouse and keys, Action, Point and click, Platformer) is in the code; it is not offered anywhere yet."
+    ],
+    "changed": [
+      "The eight on-screen controller layouts (Standard, Xbox, PlayStation, Nintendo Switch, Mirrored, Retro, Racing, Minimal) are gone, and with them the Layout choice in Settings, on a game's page and in the in-game menu. Choosing a controller type changes only the names and colours on the buttons; a layout chosen in an earlier build is read as the new one.",
+      "The on-screen controller is drawn bigger on an iPad than on a phone, and sits further in from the edges."
+    ]
+  },
+  {
+    "version": "1.4.65",
+    "build": "939",
+    "summary": "Test controller draws the PS4 and Xbox controllers in 3D too.",
+    "added": [
+      "Settings > Controls > Test controller: a DualShock 4 (PS4) is drawn in 3D like the DualSense, with its sticks, buttons, touchpad and triggers moving as you press them, and it turns with the real controller's motion sensors too.",
+      "An Xbox controller is drawn in 3D as well: sticks, A B X Y, the D-pad (it rocks toward the arm you press), bumpers, triggers and the Guide, View and Menu buttons. An Xbox controller has no motion sensors, so its drawing only turns with your finger.",
+      "Credits for the two new models (\"DualShock 4 PlayStation Controller\" by shaielwolf and \"Xbox Controller\" by umkhero, both CC BY 4.0) are in Settings > About > Licences and CREDITS.md."
+    ],
+    "changed": [
+      "The 3D controller code is shared by all three pads (Pad3D.swift); the \"3D controller follows motion\" setting now says which pads have motion."
+    ]
+  },
+  {
+    "version": "1.4.64",
+    "build": "938",
+    "summary": "Test controller shows only the controller; sticks and drift have their own page.",
+    "added": [
+      "Settings > Controls > Sticks and drift: the two sticks as big dials with a deadzone for each, and the drift check. It was on the Test controller page; it is a page of its own now."
+    ],
+    "changed": [
+      "Settings > Controls > Test controller is only the controller now: the 3D DualSense (or the drawing for other controllers), big, with one line of hints. The plain stick dials, the deadzone and the drift check moved to Sticks and drift, because the controller already shows the sticks.",
+      "The switch for the 3D controller following the real one's motion moved to Settings > Controls > Controller (\"3D controller follows motion\"). Double-tapping the 3D controller puts the view back, centres the motion and clears the marks of buttons you pressed.",
+      "The 3D controller fits the width of its card, whatever the shape, instead of being cut off on a narrow one."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.63",
+    "build": "937",
+    "summary": "The 3D DualSense turns as you turn the real controller.",
+    "added": [
+      "Settings > Controls > Test controller: the 3D DualSense now follows the real controller's motion in real time, from its gyro: tilt it, turn it, hold it any way and the model does the same. Nothing tells the controller which way is forward, so \"Centre\" makes the way it points now the front (it keeps the real tilt), and the heading may slowly wander. The motion sensors are on only while the page follows them; \"Follow the controller's motion\" switches it off and the model eases back to flat."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.62",
+    "build": "936",
+    "summary": "The 3D DualSense's stick base stays still again.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "The 3D DualSense: the base of each stick (the cup and ring around the stem) stays still again, as it did before 1.4.61: moving it with the stick looked worse. The stick itself (the cap and its stem) moves as it did."
+    ]
+  },
+  {
+    "version": "1.4.61",
+    "build": "935",
+    "summary": "The 3D DualSense's stick base moves with the stick, and the small buttons sink only about flush.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "The 3D DualSense: the base of each stick (the cup and ring around the stem) now leans and shifts with the stick instead of staying fixed.",
+      "The 3D DualSense: Create and Options now sink only about half a millimetre when pressed, about flush with the controller, instead of going too deep. The PS button sinks a little less too."
+    ]
+  },
+  {
+    "version": "1.4.60",
+    "build": "934",
+    "summary": "The 3D DualSense has solid buttons with their symbols, and the sticks move as a whole.",
+    "added": [],
+    "changed": [
+      "The 3D DualSense's credit is no longer printed under the picture: it is in Settings > About > Licences (\"3D model of the DualSense\") and in the credits, with the title, the author, the source and the licence."
+    ],
+    "fixed": [
+      "The 3D DualSense's buttons were drawn see-through, like holes. The face buttons and D-pad keys are now solid plastic with their symbols (cross, circle, square, triangle and the four arrows) printed on them, and they still sink and glow when pressed.",
+      "The 3D DualSense's sticks only leaned at the top of the cap. Each stick now turns about a point under the plate like a real one, so the whole stick (the cap and its stem) slides toward where you push as it leans."
+    ]
+  },
+  {
+    "version": "1.4.59",
+    "build": "933",
+    "summary": "Test controller shows a 3D DualSense that moves with the real one.",
+    "added": [
+      "Settings > Controls > Test controller: when the connected controller is a DualSense (the PS5 pad), it is shown as a photo-accurate 3D model instead of the flat drawing. Drag to turn it, pinch to zoom, double-tap to put it back. Both sticks tilt as you push them, the face buttons, D-pad keys and the small buttons sink and glow while held, the bumpers and triggers swing (the triggers by how far you pull them), and a button you pressed once keeps a faint glow. Other controllers keep the flat drawing for now.",
+      "Settings > About > Licences lists the model's credit: \"Playstation 5 Dualsense\" by AHarmlessPotato, licensed Creative Commons Attribution 4.0 (https://skfb.ly/opKOx), changed for Porthole. The credit is also under the picture."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.58",
+    "build": "932",
+    "summary": "Test controller looks like a controller: a drawn gamepad with every control in its place, and the sticks and their deadzones together.",
+    "added": [],
+    "changed": [
+      "Settings > Controls > Test controller is redrawn. The controller is drawn from above with each control where it is on the real one (the PlayStation layout for DualSense and DualShock pads), and lights up when pressed: both sticks move, the triggers fill, the D-pad lights the arm held, and a button pressed once keeps a ring. The two big stick dials now sit in one card with their deadzone sliders under them, so a drifting stick and its fix are in one place, and the drift check is below. The trigger percentages show on the Pressed line."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.57",
+    "build": "931",
+    "summary": "Test controller and Test keyboard and mouse no longer move around the app while you test.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Settings > Controls > Test controller and Test keyboard and mouse: they now keep the controller and the keyboard to themselves. Before, pushing the left stick to the left (or pressing B, or Esc on a keyboard) carried on working as in the rest of Porthole and left the page. Nothing you do on these pages moves around Porthole any more. To leave, hold the controller's Menu button (or Esc on a keyboard) for a second, or touch Back; the page says so."
+    ]
+  },
+  {
+    "version": "1.4.56",
+    "build": "930",
+    "summary": "Settings > Controls can now test a controller, a keyboard and a mouse, and set a deadzone for a stick that drifts.",
+    "added": [
+      "Settings > Controls > Test controller: the connected controller drawn live. Both sticks show where they are (with the numbers), the triggers fill, and every button lights while it is held and keeps a ring once pressed, so a quick tap is seen. Buttons are named as printed on the controller (Xbox, PlayStation, Switch). With several controllers connected, pick which one to look at.",
+      "Check for drift: put the controller down, let go of both sticks and Porthole measures for two seconds how far each rests from its centre, says Centred, Slight drift or Drifting, and offers a deadzone that hides it.",
+      "Deadzone for each stick of each controller (0 to 50%), set by hand or from the drift check. It holds a drifting stick at its centre in games and in Porthole's own menus (a drifting stick no longer walks the selection around by itself), and the test shows the raw position and what a game gets. It is kept for that controller; Back to none removes it.",
+      "Settings > Controls > Test keyboard and mouse: a keyboard drawn flat where every key lights while it is held and keeps a ring once pressed, with the last key named; and a pad that shows where a mouse or trackpad moves, which of its buttons (left, middle, right, back, forward) are held and when the wheel turns."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.55",
+    "build": "929",
+    "summary": "The 1.3.1 fixes are in: Steam Cloud saves that Steam sends packed in other ways now download, Amazon Games is a report source, and a failed JIT attempt says what to do.",
+    "added": [
       "Compatibility reports: \"Amazon Games\" is now one of the choices for where the game's files came from."
     ],
     "changed": [
@@ -12,8 +632,598 @@
     ],
     "fixed": [
       "Steam Cloud download: a save that Steam sends compressed in a way the app did not recognise (for example a zip, gzip or Zstandard wrapper, or Steam's own VZip and VZstd forms) failed the checksum and was not saved. Every packing Steam is known to use is now unpacked, and the file is still saved only when it matches Steam's checksum.",
-      "Steam Cloud download: a file whose link was cut short is fetched once more before it is given up on, and a file that still fails now says in the log how big it was, what it started with and what Steam said, so the cause can be read from one report.",
+      "Steam Cloud download: a file whose link was cut short is fetched once more before it is given up on, and a file that still fails now says in the log how big it was, what it started with and what Steam said, so the cause can be read from one report."
+    ]
+  },
+  {
+    "version": "1.4.54",
+    "build": "924",
+    "summary": "The on-screen game controller is a default choice in Settings > Controls.",
+    "added": [
+      "Settings > Controls > Default controls has a new choice, On-screen controller: the console-style controller drawn over the game. Pick its type (Xbox, PlayStation, Nintendo Switch or Super Nintendo), its layout, its size and how solid it is, right there, and press Try it to feel the real controller on a sample screen. Every game that has no controls of its own then starts with it on; the in-game menu and a game's own page can still turn it off for that game."
+    ],
+    "changed": [
+      "The editable gamepad choice is now called Gamepad layout, to tell it from the on-screen controller.",
+      "In the controls sandbox the Close button moves to the middle of the left edge when you are trying the on-screen controller, so it never covers a trigger."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.53",
+    "build": "923",
+    "summary": "Try your controls, and change them, right from Settings.",
+    "added": [
+      "Settings > Controls now has Try it and Edit under the Default controls cards. Try it opens the layout you picked on a sample game screen with the real on-screen controls: press the buttons, push the sticks, feel the haptics, and a readout shows what a game would receive. Nothing reaches a game. Edit opens the same editor you use in a game (move, resize, add, presets, undo) right there; your changes are kept as My own layout and become the default."
+    ],
+    "changed": [
+      "On a phone held upright the sandbox asks you to turn the device sideways, since games are played that way."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.52",
+    "build": "922",
+    "summary": "A tidier Settings > Controls page.",
+    "added": [],
+    "changed": [
+      "Settings > Controls is much shorter: the Default controls cards come first (smaller, equal in size, with short descriptions and the check mark on the picture), then three doors, Controller, Keyboard and mouse, and Touch screen. Each door opens its own page with the settings that used to be in one long list. Settings search finds each setting on its new page."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.51",
+    "build": "921",
+    "summary": "Default controls: pick how every game is controlled, once.",
+    "added": [
+      "Settings > Controls now starts with Default controls: pick Mouse and keys, First person or Gamepad (each shown with a small picture of where its buttons sit), or your own layout. Every game that has no controls of its own starts with it. Mouse and keys is the default, so nothing changes until you choose.",
+      "In a game, once you have edited the on-screen controls, the in-game menu (Controls tab) offers Use as my default controls: that layout becomes the one every game starts with.",
+      "A game's page shows what it starts with (My default: ...) and has a Use my default controls button to go back to it after you set controls for that game."
+    ],
+    "changed": [
+      "A game you set controls for (a layout on its page, a bind set, the on-screen game controller, or a layout picked in the in-game menu) keeps them: only games with no controls of their own follow your default. Changing the controls in a game that follows the default makes that game's own copy; the default stays as it was."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.50",
+    "build": "920",
+    "summary": "Shaded glass on a game's page is a little darker, and plain rows get it too.",
+    "added": [],
+    "changed": [
+      "On a game's page the shaded glass of buttons, panels and rows is a little darker, and the rows that had no panel at all (like Offline play) now sit on the same shaded glass, so their words and values read on a light picture."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.49",
+    "build": "919",
+    "summary": "A game's page is easier to read on light pictures.",
+    "added": [],
+    "changed": [
+      "On a game's page the buttons, panels, stat tiles, rows and chips sit on a darker, shaded glass, and the picture behind the page is dimmed a little, so white text stays readable when the game's picture is light."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.48",
+    "build": "918",
+    "summary": "The chosen game on Home's row is bigger than the rest.",
+    "added": [],
+    "changed": [
+      "On Home's row the chosen game (the one in the first slot) is drawn larger and the others a little smaller, so it stands out as you scroll. The row itself does not shift while you scroll."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.47",
+    "build": "917",
+    "summary": "Scroll Home's row and the chosen game follows; Play is always there.",
+    "added": [],
+    "changed": [
+      "Home's row of games now snaps: the game in the first slot is always the chosen one, with the ring, and the picture, title and Play button above it follow as you scroll. Tap a game that is not chosen and the row scrolls it into the first slot and chooses it, so you can scroll to a game and press Play without opening its page. Tap the chosen game (or Details) to open its page. With a controller the row works as before."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.46",
+    "build": "916",
+    "summary": "Home and a game's page share one picture, so going between them is smooth.",
+    "added": [],
+    "changed": [
+      "A game's page now uses Home's own picture, drawn at the same size and place, instead of a differently cropped and scaled copy. Going from Home to the page and back no longer shows a wrong picture for a second before it changes: the picture stays put and is not loaded again."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.45",
+    "build": "915",
+    "summary": "Only a light blur behind Home.",
+    "added": [],
+    "changed": [
+      "The blur on the picture behind Home is much lighter again: the picture stays clear and only its hard edges are softened."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.44",
+    "build": "914",
+    "summary": "A gentler blur behind Home.",
+    "added": [],
+    "changed": [
+      "The blur on the picture behind Home is lighter: you can still tell what the picture is, and it stays soft enough not to compete with the text."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.43",
+    "build": "913",
+    "summary": "The picture behind Home is blurred again.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "The game picture behind Home was sharp and busy; it is blurred now, so it sets a mood and does not compete with the text, the alerts and the game tiles."
+    ]
+  },
+  {
+    "version": "1.4.42",
+    "build": "912",
+    "summary": "The alerts on Home are easier to see on light pictures.",
+    "added": [],
+    "changed": [
+      "The alerts on Home (updates, a game that closed unexpectedly, components to download) sit on a darker background now, with a brighter outline, like the layout picker."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.41",
+    "build": "911",
+    "summary": "The Home layout picker is easier to see on light pictures.",
+    "added": [],
+    "changed": [
+      "The three layout buttons at the top right of Home sit on a darker background now, with a brighter outline and icons, so they no longer fade into a light game picture."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.40",
+    "build": "910",
+    "summary": "A tidier top row on Home: no Friends button, alerts beside the layout picker.",
+    "added": [],
+    "changed": [
+      "The Friends button is gone from Home: friends live in the Social tab now.",
+      "The alerts on Home (a game closed unexpectedly, an update, components to download) now sit in one row with the layout picker, in every orientation, and scroll sideways when there are more than fit. The picker is pinned to the right edge of a row whose height never changes, so it stays put whether or not there are alerts."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.39",
+    "build": "909",
+    "summary": "Game pages blend with the top bar too.",
+    "added": [],
+    "changed": [
+      "A game's page in Stores (Steam and Epic) and a game's own page in your library now draw the game's picture behind the top bar as well, so the bar and the page read as one screen, like Home."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.38",
+    "build": "908",
+    "summary": "The top bar really blends into Home now.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "On Home the top bar was still a separate dark strip, because the picture was cut off at the bar's lower edge by the page it is drawn in. The picture is now drawn behind both the bar and the page, so they read as one screen."
+    ]
+  },
+  {
+    "version": "1.4.37",
+    "build": "907",
+    "summary": "The top bar blends into the screen under it.",
+    "added": [],
+    "changed": [
+      "On Home, the game's picture now reaches up behind the top bar, so the bar is part of the screen and not a separate dark strip. A soft shade at the very top keeps the section names easy to read."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.36",
+    "build": "906",
+    "summary": "The sections in the top bar never scroll sideways.",
+    "added": [],
+    "changed": [
+      "The sections in the top bar are a little closer together on a phone held sideways, and when they would still not fit they get smaller and closer step by step instead of scrolling sideways."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.35",
+    "build": "905",
+    "summary": "The sections in the top bar fit again on a phone held sideways.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Held sideways, the top bar cut the last section off ('Sett' instead of 'Settings') once the help button was in it: the section names are a little smaller and closer there, so all of them fit."
+    ]
+  },
+  {
+    "version": "1.4.34",
+    "build": "904",
+    "summary": "A slimmer top bar on a phone held sideways, and a tighter Discord screen.",
+    "added": [],
+    "changed": [
+      "Held sideways on a phone, the bar along the top of the app (logo, sections, clock, help) is about half as tall in every section, so all content gets more room.",
+      "Discord, held sideways: a narrower server column and channel list, smaller channel rows and category headings, smaller server pictures, tighter messages, and a lower message box that sits closer to the bottom edge. The channel's topic line is left out there to save a line."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.33",
+    "build": "903",
+    "summary": "Discord in the Social tab uses a phone held sideways much better.",
+    "added": [],
+    "changed": [
+      "Held sideways, the Discord / Steam switch at the top of the Social tab is gone while you are in Discord: a small Steam button sits under the gear in the server column instead (Steam still has the switch, to come back). The channel heading is one line and slimmer, so a chat gets about twice the height it had."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.32",
+    "build": "902",
+    "summary": "The Social tab is Discord itself once you are signed in; its settings are behind a gear.",
+    "added": [
+      "Signed in, the Social tab's Discord section shows Discord itself: Friends and your servers, their channels and who is in voice, and the messages. A gear in the corner opens Discord's settings (account, voice, message notifications) over it."
+    ],
+    "changed": [
+      "Before you are signed in the Discord section is still the setup page (the warning, turning Discord on, signing in). The settings page no longer has an 'Open Discord' button, because the tab is the Discord screen. In the tab the bumpers keep switching tabs; servers are picked with the D-pad."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.31",
+    "build": "901",
+    "summary": "A Social tab: Discord moves out of Settings, and Steam's friends list joins it.",
+    "added": [
+      "A new Social tab between Reports and Settings. A switch at the top chooses Discord or Steam. Discord is the page that was in Settings (sign in, Open Discord, voice, notifications); the 'Read this first' warning now shows only until Discord is turned on. Steam shows your Steam friends (who is online and what they are playing) and says that Steam messages and groups are meant to live here later. The Social tab has its own short guide, and LB and RB reach it with a controller."
+    ],
+    "changed": [
+      "Settings no longer has a Discord page (it moved to the Social tab). The Friends button on Home and in the Steam store now opens the Social tab on Steam instead of a pop-up. The in-game menu and messages that said 'Settings > Discord' now say the Social tab."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.30",
+    "build": "900",
+    "summary": "In-game menu: one column, simpler Discord tab, no Engine page, and the iPad menu no longer blocks the screen beside it.",
+    "added": [],
+    "changed": [
+      "The in-game menu is one single column everywhere (the cards no longer split into two), so a controller moves straight up and down. The tabs stay down the left on a phone held sideways; the column is no wider than is comfortable to read.",
+      "Discord tab, simpler to move through: the top is what matters now (a ringing call with Join and Decline, then the call you are in with Mute, Deafen, People, Go Live and Leave, then new messages), and rows open Servers and channels, Voice and sound, Friends and Notifications. Who is in the call (with each person's volume) and Go Live are pages of their own now. A conversation opens as a page too, so B or Back goes back to the list. The overlay's corner and size, and which messages notify you, are one row each that you press to change instead of a long list of choices.",
+      "Performance: the Engine page is gone. Eco mode is now a switch on the Power page (the Power row on the list says 'eco' when it is on). The GPU sync choice is no longer in the menu.",
+      "iPad: the menu panel keeps its width on the right, and the rest of the screen is no longer dimmed or blocked: the game stays visible and playable beside it. Close the menu with the X, a swipe to the right, B or the menu button (a tap beside it no longer does)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.29",
+    "build": "899",
+    "summary": "The in-game menu is see-through, so the game shows behind it, and you set how much.",
+    "added": [
+      "Game tab > This menu > Background: how solid the menu's background is, in steps of 5 percent from 30 to 100 (75 percent to start). Lower shows more of the game behind the menu; higher reads easier over a bright game. It works with a controller (minus and plus)."
+    ],
+    "changed": [
+      "The in-game menu's background is a dark tint you can see the game through, instead of a blurred, nearly solid panel. There is no blur any more: a blur over the whole screen would have made the game cost more to draw while the menu is open. On a phone the tint covers the whole screen, including the strip beside the notch, and the extra dimming of the game behind the menu is gone when the menu fills the screen."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.28",
+    "build": "898",
+    "summary": "The in-game menu fills a phone's screen: tabs down the side and the cards in columns.",
+    "added": [],
+    "changed": [
+      "The in-game menu on a phone now uses the whole screen instead of the right 40 percent. Held sideways: a slim column of tabs down the left (icon and name), a heading with Back and Close on top of the rest, and the cards in two columns (three on a big iPad), so about four times as many rows are in view and the title bar and tab bar no longer eat the height. A page that is one big card takes the full width. Held upright: the menu takes the full width (one column, the tabs in a row as before). An iPad keeps a wide panel on the right with the game showing beside it. Close it with the X, a swipe to the right, B or the menu button.",
+      "The Discord tab of the menu is grouped into pages like Performance: what matters now stays on top (a ringing call, new messages, the call you are in and who is in it), and rows open Servers and channels, Voice and sound, Friends and Notifications.",
+      "While the menu fills the screen, the 'Back to launch screen' pill (shown when you peek at Steam during a launch) hides until the menu closes."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.27",
+    "build": "897",
+    "summary": "Discord banners can be tapped now, and Discord and achievement pop-ups got a new look.",
+    "added": [],
+    "changed": [
+      "New look for the Discord message banner, the call banner and the achievement pop-up, all in one style: a soft dark glass card with a colour of its own (blue for messages, green for calls, gold for achievements), a light edge, a thin line along the bottom that drains while the pop-up stays, and a little shadow. Messages show the avatar with a badge (# for a channel, an envelope for a direct message), the name, where it came from and a Reply button; a call shows a pulsing ring round the caller and labelled Decline and Join buttons; an achievement shows its picture in a gold frame under 'ACHIEVEMENT UNLOCKED'. Still slightly see-through, and no blur, so the game's picture costs nothing extra."
+    ],
+    "fixed": [
+      "Discord banners could not be tapped: every touch on them went through to the game, so tapping, Join, Decline and the swipe up did nothing. The HUD now lets touches through to a banner while one shows (and only inside its card).",
+      "The test banner (in-game Discord tab) now opens the Discord tab when tapped, so it is clear tapping works."
+    ]
+  },
+  {
+    "version": "1.4.26",
+    "build": "896",
+    "summary": "Discord banners are slightly see-through instead of solid.",
+    "added": [],
+    "changed": [
+      "The Discord message and call banners over the game are slightly transparent (about a third of the game shows through) instead of nearly solid black, with a lighter shadow. The text and the Join and Decline buttons stay fully solid so they read on any game."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.25",
+    "build": "895",
+    "summary": "Discord: incoming calls as a banner over the game, with Join and Decline on it.",
+    "added": [
+      "Incoming calls. When a friend calls you in a direct message or group chat, a banner slides in over the running game with a red Decline and a green Join button on it: answer without opening the menu, or send the ring away. Off until you turn on 'Show incoming calls' (Settings > Discord, or the in-game Discord tab), separately from message notifications. The banner stays while it rings (at most about a minute), goes when the caller hangs up or someone answers, and takes the place of message banners meanwhile. It follows the same safety rules as message banners: only over a running game with its menu closed, none while you stream with Go Live, touches only inside its own card. When the banner cannot show (the menu is open) the call waits at the top of the in-game Discord tab with Join and Decline rows, which is also how to answer with a controller.",
+      "You can now be in a call in a direct message or group chat: Porthole joins it the way Discord does (the call's channel stands in for a server). It shows in the in-game tab like any call (mute, deafen, leave, volume per person, sensitivity), and Open Discord's friends view has a bar with Leave, Mute and Deafen for it. Group chats and direct messages are named from Discord's list, so banners and the menu say 'Game night' instead of the last person who wrote. Go Live does not work in these calls yet."
+    ],
+    "changed": [
+      "A group call's banner names the group under a 'Group call' label."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.24",
+    "build": "894",
+    "summary": "Discord: message banners over the game, with a reply from the in-game menu.",
+    "added": [
+      "Message notifications (Settings > Discord, and the in-game Discord tab). Off until you turn them on. You choose which messages count: Mentions (messages that name you or answer something you wrote), Direct messages (messages to you alone or in a group chat), or Everything. A banner slides in from the top over the running game for six seconds; tap it to open the in-game menu on that conversation, read the latest messages and answer with the same box as in Open Discord (the first send asks once about unofficial clients); swipe it up to send it away. 'Show the message in the banner' can be turned off so the banner only says who wrote to you. The Discord tab keeps a 'New messages' list of the conversations that notified lately, which is also how to answer with a controller.",
+      "Safe for the game: banners show only over a running game with its menu closed, one at a time with a pause between two, a conversation never has more than one waiting (a newer message joins it: '4 new messages'), none while you stream with Go Live, and the banner takes touches only inside its own small card, only while it shows. @everyone and role mentions do not count as mentions. Messages are kept in memory only."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.23",
+    "build": "893",
+    "summary": "Discord: write messages in text channels.",
+    "added": [
+      "Open Discord: a box under a text channel's messages and a Send button. Type with the keyboard (Return sends too), or press A on the box with a controller to open Porthole's pad keyboard. Nothing is sent until you press Send; the message is checked first (not empty, at most 2000 characters, with a count that appears near the limit) and the box is emptied only when Discord took the message. If Discord refuses, the reason shows under the box (not allowed in this channel, slow down, sign in again). The first time you ever send, Porthole asks once whether you understand that sending messages from an unofficial client can get an account limited or banned. The text of a message is never written to the log."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.22",
+    "build": "892",
+    "summary": "Discord: read the messages of text channels.",
+    "added": [
+      "Open Discord now shows the messages of text and announcement channels: the latest 50 when you open a channel, newest at the bottom, grouped by person the way Discord does, with replies, attachments (pictures are shown), and mentions, channel names and emoji written out as names. New messages, edits and deletions in a channel you have opened appear live. A refresh button reads the channel again. With a controller the D-pad moves from message to message and the list follows. If this account cannot read a channel, or Discord says to slow down, the pane says so with a Try again button. Messages are kept in memory only, never saved, and forgotten when you sign out. Writing messages comes next; forum and media channels are not shown yet."
+    ],
+    "changed": [
+      "In Open Discord the voice channel view keeps its header in place while the people scroll under it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.21",
+    "build": "891",
+    "summary": "Discord: see which friends are in a voice channel and join them.",
+    "added": [
+      "Friends in a voice channel now show where (\"In Lounge, Porthole Testers\") with a Join button, in Open Discord's friends view and in the in-game Discord tab. Tap, click or press A on a friend to join the channel they are in; Open Discord then shows that server and channel. Friends in a call are listed first, in their own section, even if their status says offline. It only works for channels of servers you are both in; calling a friend directly comes later."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.20",
+    "build": "890",
+    "summary": "Discord: a volume and a mute for each person in a call.",
+    "added": [
+      "A volume (0 to 200 percent) and a mute for each person in a call, for you alone: the others still hear them as before. In Open Discord, tap a person in the channel you are in; in the in-game Discord tab, tap a name under \"In the call\". A person you turned down, or muted, shows a small icon. It is remembered by Discord account, so the same person is just as loud in your next call."
+    ],
+    "changed": [],
+    "fixed": [
+      "Open Discord: a voice channel with more people than fit on the screen was cut off at the bottom (on a phone held sideways even three people). The channel now scrolls, by touch, mouse wheel and controller."
+    ]
+  },
+  {
+    "version": "1.4.19",
+    "build": "889",
+    "summary": "Discord: microphone sensitivity, with a level bar.",
+    "added": [
+      "Microphone sensitivity (Settings > Discord, and the Microphone card in the in-game Discord tab): how quiet a sound still counts as you talking, 0 to 100 percent. 50 percent is the level the app used before. Under the slider a bar shows how loud your microphone is while you are in a call, with a line where it starts to count as talking, so you can set it by looking: past the line when you speak, under it when you do not."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.18",
+    "build": "888",
+    "summary": "Discord: Deafen.",
+    "added": [
+      "Deafen, next to Mute: in Open Discord (the Deafen button beside Mute), in Settings > Discord and in the in-game Discord tab. It stops playing the call to you, mutes your microphone too, and tells Discord, so the others see the crossed-out headphones. Turning your microphone back on ends the deafen, and ending it puts your microphone back the way it was. Mute now also tells Discord (before, only Porthole knew)."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.17",
+    "build": "887",
+    "summary": "Discord looks and works like Discord: servers down the side, channels in their categories, and who is in each voice channel.",
+    "added": [
+      "Settings > Discord > Open Discord: a full-screen Discord browser. Your servers down the left (with their pictures), the picked server's channels in the categories the server made (text, announcement, forum, media and voice channels with their own icons, categories that fold), who is in each voice channel, and the selected channel on the right with Join, Leave and Mute. A friends view with who is online and what they play. On a phone held upright it is three steps (servers, channels, channel). It works by touch, with a controller (D-pad to move, A to open, X to join a voice channel, the bumpers to change server, B to go back) and with a keyboard and mouse. Reading and writing messages is not there yet: a text channel says so."
+    ],
+    "changed": [
+      "The in-game Discord tab now lists one server at a time with its voice channels in the server's categories and the names of who is in each, instead of every voice channel of every server in one list. Settings > Discord no longer lists every channel and friend; Open Discord has them."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.16",
+    "build": "886",
+    "summary": "A program's start options typed with the iOS keyboard now reach it as typed (curly quotes and dashes are made plain).",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Start options typed on an iPhone or iPad could carry curly quotes, long dashes or an ellipsis character that iOS's smart punctuation had put in (a folder in quotes became \\u201cC:\\\\Program and Files (x86)\\\\...). A Windows program does not understand them: the Memoria patcher for Final Fantasy IX reported File not found: \\u201cC:\\\\Program\\\\FF9_Launcher.exe because of it. They are now turned back into straight quotes, hyphens and three dots when a game starts, and the log says so."
+    ]
+  },
+  {
+    "version": "1.4.15",
+    "build": "885",
+    "summary": "Steam games start from Steam's saved sign-in once they have started online, and the Steam sign-in is kept more safely.",
+    "added": [
+      "Settings > Steam > Starting games > Start from Steam's saved sign-in (on): once a game has started online, its next starts use what Steam saved, so there is no new sign-in and no ownership check each time (about ten seconds faster). Steam renews the saved sign-in with an online start, which happens by itself two weeks after the last one, or when Steam could not use it (the game then says so and the next Play signs in online). Inside such a start Steam is offline, so multiplayer and Steam achievements do not work: a game's own page has Steam sign-in: Online every time for those."
+    ],
+    "changed": [],
+    "fixed": [
       "The saved Steam sign-in is now updated in place in the Keychain. Before, the old copy was deleted first, so a save that failed or was cut short (the app closed, the device locked, two saves at once) could leave no sign-in and ask you to sign in again."
+    ]
+  },
+  {
+    "version": "1.4.14",
+    "build": "884",
+    "summary": "Direct3D 12 games can move more of their CPU-visible buffers off the memory the app is charged for (setting, off unless asked).",
+    "added": [
+      "Engine line upload-swap-min-kb = N (default 8192, the 8 MB used until now): CPU-visible buffers of N KB or more live on the file tier, which iOS does not charge to the app. Grand Theft Auto V Enhanced keeps about 6,900 such buffers, about 490 MB together, all smaller than 8 MB, so none of them were moved. Try 256 for it. It is a test: a smaller number moves more buffers and could cost speed."
+    ],
+    "changed": [
+      "The memory report (metal-gap) now counts the Direct3D 12 texture heaps (it showed them as 0 MB)."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.13",
+    "build": "883",
+    "summary": "A diagnostic for where the GPU memory of Direct3D 12 games goes (off unless asked for).",
+    "added": [
+      "Engine line gpu-attr = 1 (a diagnostic, off by default): the memory census line [madeira-d3d12] gpu-attr: then says how much of Metal's allocated memory grew at each place the Direct3D 12 layer allocates (pipelines, shader libraries, textures, buffers, descriptor heaps, rings, scratch buffers, heaps). It is meant to explain the 650-750 MB the existing metal-gap line leaves as 'the rest' in Grand Theft Auto V Enhanced. It slows allocations a little, so leave it off otherwise."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.12",
+    "build": "882",
+    "summary": "The launcher-helper experiment of 1.4.10 now really ships.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "1.4.10 and 1.4.11 contained the Steam host without the new MADEIRA_DOCK_TRIM code (the build took the host from another runtime folder), so the experiment of closing the Social Club helper once the game's window is up did nothing. This build has it. Add env.MADEIRA_DOCK_TRIM = SocialClubHelper.exe@GTA5_Enhanced.exe to the game's engine lines to try it."
+    ]
+  },
+  {
+    "version": "1.4.11",
+    "build": "881",
+    "summary": "The swap readout shows what is really on the disk.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "The performance readout's Swap row (and the Swap line of the detailed readout) showed something like 33 / 4 GB in the broad and wide swap modes. It compared how far the sparse swap file had been handed out (tens of GB, almost all of it empty) with the cap on what is really on the disk. It now shows what is on the disk, so it can no longer read far above the cap, and the false \"Swap is almost full\" warning that came with it is gone."
+    ]
+  },
+  {
+    "version": "1.4.10",
+    "build": "880",
+    "summary": "Experiment for memory-heavy launcher games (Grand Theft Auto V): close the launcher's browser helper once the game's window is up.",
+    "added": [
+      "Opt-in, per game: the Steam host can close a launcher's browser helper after the game's window has been up for a while, to give the game its memory back. In the game's engine lines (the game's page, This game's engine lines) add env.MADEIRA_DOCK_TRIM = SocialClubHelper.exe@GTA5_Enhanced.exe (the helper(s) before the @, the game's program after it). The helper is asked to close 30 seconds after the game's window shows and ended 10 seconds later if it stays; env.MADEIRA_DOCK_TRIM_AFTER_S and env.MADEIRA_DOCK_TRIM_GRACE_S change the two times. Nothing happens unless the line is there. The log shows [dock-report] launch-trim-close, launch-trim-end and launch-trim-end-failed. Whether a game keeps running without its launcher's helper is being tested: a game may close or lose its online features."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.9",
+    "build": "879",
+    "summary": "A Steam game started from an external drive now hides the launch screen when its window is up.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "A Steam game whose files are on an external drive never counted as started: the launch screen stayed up until its 6-minute limit, and looking at the game still showed the Back to launch screen button over it. The game's window is now recognised in any Steam library. If no game window is found after a minute, the log lists the windows it can see."
+    ]
+  },
+  {
+    "version": "1.4.8",
+    "build": "878",
+    "summary": "Play on a TV or monitor connected with a cable: the game fills that screen and the controls stay on the device.",
+    "added": [
+      "Settings > Display > Other screens > Play on a connected display (on by default). With a TV or monitor connected by a cable (USB-C or Lightning to HDMI), the game's picture goes to that screen and the touch controls, the menu and the keyboard stay on the iPhone or iPad. Between games the display shows a waiting screen. This is the feature of 0.50.210 to 0.50.216, brought back for cables only: AirPlay Screen Mirroring on an iPhone is a copy of the device's screen, so iOS gives the app no second screen over it. Not tested with a display yet."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.7",
+    "build": "877",
+    "summary": "Three suggestions from the Discord: turn to landscape when a game starts, a Steam download region, and sliding a finger across buttons.",
+    "added": [
+      "Settings > Display > Orientation: the screen turns to landscape when a game starts and stays there while it runs, even if you hold the device upright or lie down, and even with the system's rotation lock on. A game's own page can override it (Landscape or Any orientation). On unless switched off.",
+      "Settings > Steam > Downloads > Download region: choose which of Valve's download servers (22 cities) a game comes from, or leave it on Automatic. If a region has no server for a download, Steam's own choice is used.",
+      "Settings > Controls > Touch screen > Slide a finger across buttons: sliding from one held on-screen button to the next lets go of the first and presses the second without lifting (hold B to run, slide to A to jump). Works on the held buttons of the touch layouts and on the on-screen keyboard. On unless switched off."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.6",
+    "build": "876",
+    "summary": "The library follows an external drive live: no need to close and open the app.",
+    "added": [],
+    "changed": [
+      "While Porthole is open, it looks at the external drive every few seconds (a small read, nothing is scanned or written). Plugging the drive in puts its games in the library, and pulling it out takes them off, within a few seconds. It pauses while a game is running. A drive Porthole has not been given yet is offered the same way."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.5",
+    "build": "875",
+    "summary": "Games on an external drive leave the library while the drive is not connected.",
+    "added": [],
+    "changed": [
+      "A game whose files are on an external drive is not shown in the library while the drive is not connected, and comes back when the drive does. Its tile and settings are kept; nothing is deleted."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.4",
+    "build": "874",
+    "summary": "Steam games found on an external drive now reach your library.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Steam games found on an external drive were announced as added but did not appear in the library. Each one now gets its tile (with its program found, as after a download), also for games a scan in 1.4.3 had already recorded. A game whose tile you remove is not put back. A game with no program to run is said so, and can be added with Add a game."
+    ]
+  },
+  {
+    "version": "1.4.3",
+    "build": "873",
+    "summary": "Steam games on an external drive are found and added by themselves.",
+    "added": [
+      "When an external drive is connected, Porthole asks whether to look for Steam games on it. Say yes, open the drive in the picker iOS shows once, and the games found are added to your Steam list and start through Steam like any other.",
+      "A drive you picked earlier is read again whenever Porthole opens or comes forward, and games that were copied onto it since are announced."
+    ],
+    "changed": [
+      "Choosing an SSD library folder now also accepts the drive itself or a folder with a Steam library inside it (a PC's SteamLibrary folder): Porthole looks one level down for the steamapps folder. Before, only a folder that held steamapps directly worked, and nothing was said when it did not."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.4.2",
+    "build": "872",
+    "summary": "A Community and links page in Settings, and a Follow on X row in Report a problem.",
+    "added": [
+      "Settings > Help > Community and links: Porthole's X account, Discord, GitHub, the website, the documentation, the compatibility list, what's new and the privacy page, and a Tell a friend row that opens the share sheet. TikTok will appear there once the account exists.",
+      "Report a problem: a Follow Porthole on X row next to Ask on Discord."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.4.1",
+    "build": "871",
+    "summary": "The first test build of 1.4.0: the Discord features join the main line, with the rebuilt in-game menu, and two fixes.",
+    "added": [
+      "Discord (experimental), under Settings > JIT and connection > Discord. Off until you switch it on. Voice in a channel with who is talking, volume sliders for the game and the call, and Go Live: stream the game's picture and its own sound to a channel, with quality presets. A Discord tab in the in-game menu. It is not an official Discord client and Discord's terms do not allow third-party clients, so an account used with it can be limited or banned.",
+      "The in-game menu is rebuilt as short rows with a page behind each (the layout tried in 1.3.149), with every control setting 1.3.0 has: full keyboard, touch pointer, floating sticks and hiding the on-screen controls."
+    ],
+    "changed": [
+      "Test builds of 1.4.0 are numbered 1.4.N and published to the same private channel as the 1.3.N builds did. The engine is 2c133ca-r2: it carries the two Discord patches (the voice bridge and the tap of the game's sound), so compatibility badges start again."
+    ],
+    "fixed": [
+      "Stores: after searching in a store and tapping a game, the keyboard stayed over the game's page. It now goes away when the page opens.",
+      "Discord Go Live: stopping a stream while pictures were still being sent could crash."
     ]
   },
   {
@@ -488,6 +1698,318 @@
     "fixed": [
       "A .NET program packed as one file (the Memoria patcher for Final Fantasy IX is one) ended at once with \"Failed to load System.Private.CoreLib.dll (error code 0x800701E7)\". The .NET runtime maps such a program's assemblies in 4 KB pieces, which this device's 16 KB pages cannot do, and it gave up instead of copying them. Every program now starts with the runtime's switch for copying them (DOTNET_PELoader_DisableMapping=1); a line of your own for it in a game's settings still wins. Not tried on a device yet."
     ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9044",
+    "summary": "Discord test build: Go Live freezes less (stream quality choice, gentler key frames).",
+    "added": [
+      "Stream quality (Settings > Discord, and the Discord tab of the in-game menu, tap to change): Low data (up to 540p, 1.5 Mbit/s), Smooth (up to 720p, 2.5 Mbit/s, the default) and Sharp (up to 720p, 4 Mbit/s)."
+    ],
+    "changed": [
+      "A viewer's key frame requests (picture loss, a new viewer) are answered at most once every three seconds, and the encoder makes a key frame every three seconds instead of two, with a tighter peak rate. Measured from Discord's web app in the 9043 test: the game's sound arrived fine (133 kbit/s, audible), but a quarter of the picture's packets were lost on the way, so almost no complete pictures reached the viewer; each lost key frame made the viewer ask for another, which made the burst worse."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9043",
+    "summary": "Discord test build: Go Live sends the game's own sound with the picture.",
+    "added": [
+      "Go Live (the game only, or the whole screen) now streams the game's sound too: stereo, 48 kHz, 128 kbit/s Opus, taken from the engine's audio unit (new engine patch 0201) after the game's volume and before Discord's voices are added, so people in the call do not hear themselves back on the stream. When the game is silent the stream sends Opus silence, as before. The test picture keeps sending silence."
+    ],
+    "changed": [
+      "The Discord audio library build (tools/build_discord_audio.sh) now applies patches 0200 and 0201."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9042",
+    "summary": "Discord test build: Go Live can stream just the game (its own picture and shape, no controls or menus) or the whole screen.",
+    "added": [
+      "In-game menu > Discord now offers two ways to Go Live. \"The game only\" streams the game window's own picture: no touch controls, no in-game menu, no overlay, and the game's own resolution and aspect ratio (scaled down to fit 1280x720 when bigger, black bars if its shape changes), copied on the GPU from the window's Metal layer as each frame is presented. \"The whole screen\" is the 9041 way (ReplayKit): everything on screen, controls and menus included, with iOS's screen-recording prompt. DXMT and Vulkan games both present into the tapped layer; OpenGL games are not covered yet. Sound is still silence."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9041",
+    "summary": "Discord test build: Go Live with this game streams what is on the screen (picture only, no game sound yet).",
+    "added": [
+      "In-game menu > Discord > Go Live with this game: streams what Porthole draws on the screen (the game, plus the touch controls and menu when they are shown) into the voice channel, scaled to fit 1280x720 at 30 pictures a second. It uses ReplayKit's in-app capture, so iOS asks whether Porthole may record the screen each time and shows its recording indicator; nothing from other apps is captured. The stream still carries silence for sound: the game's sound comes next. Settings > Discord keeps the moving test picture."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9040",
+    "summary": "Discord test build: Go Live shows a picture in the iPad app (the stream's silent sound track was the missing piece); picture format back to plain.",
+    "added": [],
+    "changed": [
+      "The Go Live test stream keeps the silent sound track added in 9037 and drops the picture-format variants (they all worked once the sound track was there). The log's stream update line now says whether the stream is paused and how many viewers it has."
+    ],
+    "fixed": [
+      "Go Live pictures showed black inside Discord's iPad app (but fine in picture-in-picture and in the web app): the app needs a sound track beside the picture. Streams now send Opus silence on theirs. The picture appears about 3 to 4 seconds after the stream starts, at about the time Discord sends its stream update."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9039",
+    "summary": "Discord test build: the stream's picture format says which colours it uses (BT.709), in case the iPad app's own view needs that to show it.",
+    "added": [
+      "Go Live's picture format can now carry a colour description (BT.709, limited range) in its header; four variants cycle per start (as before; with colour; colour + constrained flags + no SEI; colour at 1080p). The iPad app shows the stream in picture-in-picture but black inside the app; a viewer that reads colour information from decoded pictures and finds none would draw black."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9038",
+    "summary": "Discord test build: the log shows which picture sizes the viewer's app asks for (in the app versus picture-in-picture).",
+    "added": [
+      "Each time a viewer's app changes what it wants to see, the log line [discord-stream] a viewer asks for video now ends with the picture sizes it asks for. The iPad app shows the stream in picture-in-picture but black inside the app; this shows whether the two ask for different things."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9037",
+    "summary": "Discord test build: Go Live sends a silent sound track beside the picture (the picture already shows in Discord on a computer).",
+    "added": [
+      "Go Live's stream connection now sends Opus silence (encrypted like all stream sound) on its sound track, 20 ms at a time. In Discord's web app the picture already decoded and showed (1080p, none dropped); only the iPad app showed black, and Discord's mobile app may wait for sound before it shows a picture."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9036",
+    "summary": "Discord test build: Go Live tries a different picture format on each start, to find the one the viewer shows.",
+    "added": [
+      "Each time Go Live starts it uses the next of five picture variants (as before; constrained-baseline flags and no SEI; the encoder's own SPS; 640x360; 1920x1080). The log line [discord-stream] VARIANT n says which, and the number is drawn on the test picture. Start Go Live several times and tell which variant, if any, shows a picture."
+    ],
+    "changed": [],
+    "fixed": [
+      "Build 9035 asked Discord for a stream without end-to-end encryption; Discord refuses that (close code 4017), so streams did not start at all in 9035. Encryption is back on."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9035",
+    "summary": "Discord test build: Go Live tries once without end-to-end encryption, to tell an encryption problem from a display problem.",
+    "added": [],
+    "changed": [
+      "Go Live's stream connection says it does not do end-to-end encryption (max_dave_protocol_version 0). Discord may refuse it or switch the stream to unencrypted; the log shows which. If a picture then appears for the viewer, the encryption of the pictures is what the viewer cannot open."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9034",
+    "summary": "Discord test build: Go Live announces its picture as a screen stream, as Discord's own clients do.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Go Live told Discord the picture was a plain video (a camera) instead of a screen stream in its video announcement (opcode 12), while its first message named it a screen. A viewer's app may therefore not have put the picture in the stream window (black panel although the pictures arrive and decode). It now says \"screen\" in both."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9033",
+    "summary": "Discord test build: after the encrypted group of a call or stream is reset, this account now joins the new group.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "When the end-to-end encrypted group of a stream or call was started over (someone left and came back), the welcome that put this account into the new group was ignored as \"already in the encrypted group\", so pictures and sound kept being encrypted with the old group's keys, which the other side cannot open. The reset now clears that state."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9032",
+    "summary": "Discord test build: Go Live checks its own pictures with the phone's decoder, to find why the viewer shows black.",
+    "added": [
+      "Go Live decodes the first eight pictures it sends with the phone's own video decoder and writes their size and brightness to the log ([discord-stream] self-decode lines). If they are lit, the black picture is on the viewer's side or in transit. It also logs the stream's paused/viewer fields and which encryption keys arrived."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9016",
+    "summary": "DISCORD TEST BUILD 16. Discord in the in-game menu. Not for anyone but the maintainer's test account.",
+    "added": [
+      "A Discord tab in the in-game menu (when Discord features are on in Settings > Discord and you are signed in): your servers' voice channels to join, mute and leave, and the friends who are online. It works at any point in a game, so a call can be started and ended from inside the game without having been in one when it launched."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9015",
+    "summary": "DISCORD TEST BUILD 15. Porthole is one audio source: Discord's sound and the microphone go through the game engine's single audio unit. Not for anyone but the maintainer's test account.",
+    "added": [
+      "Discord voice no longer runs a second audio engine. The sound of the channel is mixed by the app into the same audio unit the game's sound comes out of (new driver, patch 0200), and the microphone is read on that unit, so a game and a call share one audio source that the app controls: the call is heard while the game is paused or muted for the background, and starting a game during a call keeps the call.",
+      "The log says 'one audio source: endpoint running at N Hz, microphone on' and, every 5 seconds, what the microphone and the call did."
+    ],
+    "changed": [
+      "Echo cancelling is gone for now (it needs a different audio unit): use headphones."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9014",
+    "summary": "DISCORD TEST BUILD 14. Voice: no 3-second wait for the microphone with headphones. Not for anyone but the maintainer's test account.",
+    "added": [],
+    "changed": [
+      "Echo cancelling is only switched on when the sound comes out of the phone's own speaker; with headphones or a headset it stopped the microphone from delivering anything, so the first seconds of talking were lost. The log says which it chose.",
+      "The library's repeated 'decrypt failed' lines are logged once every 5 seconds."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9013",
+    "summary": "DISCORD TEST BUILD 13. Voice: microphone fixes and silence frames. Not for anyone but the maintainer's test account.",
+    "added": [],
+    "changed": [
+      "The microphone path takes the format iOS gives it now, and if the microphone gives nothing for 3 seconds the audio restarts without echo cancelling. The audio restarts by itself after a call, a route change or an interruption."
+    ],
+    "fixed": [
+      "Discord's silence frames (sent unencrypted between speech) are no longer counted as failed end-to-end checks."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9012",
+    "summary": "DISCORD TEST BUILD 12. Voice: other people's sound is recognised, microphone diagnostics. Not for anyone but the maintainer's test account.",
+    "added": [
+      "The log now says what the microphone does every 5 seconds: frames heard, the loudest level, how many counted as talking, and why nothing was sent."
+    ],
+    "changed": [],
+    "fixed": [
+      "Sound from people already in the channel when you joined was dropped as 'from unknown speakers': the message that says whose sound is whose arrives before the sound connection exists, so it is kept and handed over."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9011",
+    "summary": "DISCORD TEST BUILD 11. Voice with sound. Not for anyone but the maintainer's test account.",
+    "added": [
+      "Voice (test) now carries sound: your microphone is sent (Opus, then Discord's end-to-end encryption, then AES-GCM RTP) and the channel's sound is played. A mute switch is in the Voice section. Asks for microphone access the first time. Use headphones: no echo cancelling for a loudspeaker yet.",
+      "The log says every 5 seconds how many sound packets were sent, received, opened, played and rejected, and at which step."
+    ],
+    "changed": [
+      "While voice owns the audio session (play and record), the background keep-alive leaves its category alone."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9010",
+    "summary": "DISCORD TEST BUILD 10. The Discord connection survives leaving the app. Not for anyone but the maintainer's test account.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Leaving Porthole (even for a second, to another app or the lock screen) no longer cuts the Discord connection and any voice channel you are in: while signed in, Porthole keeps itself running in the background the way it does for downloads (silent audio that mixes with other apps; limited by the background-download setting, 60 minutes by default). When that time is over, or iOS ends the app, it connects again when you come back."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9009",
+    "summary": "DISCORD TEST BUILD 9. Voice handshake fix: one key package only. Not for anyone but the maintainer's test account.",
+    "added": [],
+    "changed": [
+      "The voice row says when you are alone in the channel (the encrypted group starts when someone joins) and when it is encrypted."
+    ],
+    "fixed": [
+      "With someone else already in the channel, the handshake worked up to a point but the server then sent a second welcome this account could not use: the extra key package sent after the external sender made the server add this account twice. Only one key package is sent now, and a welcome that arrives after the group is already joined is ignored instead of reported as a failure."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9008",
+    "summary": "DISCORD TEST BUILD 8. Voice handshake: sends the key package again once the external sender is known, logs more. Not for anyone but the maintainer's test account.",
+    "added": [
+      "After the voice server's external sender arrives, Porthole sends its key package again and logs whether the encryption library has keys for this account yet; the library's own messages are logged too."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9007",
+    "summary": "DISCORD TEST BUILD 7. More logging of the voice handshake. Not for anyone but the maintainer's test account.",
+    "added": [
+      "The log now lists every voice-server message and every step of the encryption handshake (sizes and results only, no keys), so a stuck join shows where it stopped."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9006",
+    "summary": "DISCORD TEST BUILD 6. Voice, step 2: the end-to-end encryption handshake. Not for anyone but the maintainer's test account.",
+    "added": [
+      "Joining a voice channel now does Discord's end-to-end encryption (DAVE) handshake through the library: the protocol version, key package, proposals, commits and welcomes, following Discord's reference flow. The Voice (test) row shows Accepted (encrypted) when the group is joined. Still no sound."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9005",
+    "summary": "DISCORD TEST BUILD 5. Discord's end-to-end encryption library is in the app. Not for anyone but the maintainer's test account.",
+    "added": [
+      "Discord's own open-source encryption library for calls (libdave, with mlspp and OpenSSL) is built for iOS and linked in. Settings > Discord > Voice (test) shows a line that says whether it started and made a key. Joining a call still stops at the encryption step; the next build speaks the protocol with it."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9004",
+    "summary": "DISCORD TEST BUILD 4. Fixes the connection error after the app was in the background. Not for anyone but the maintainer's test account.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Coming back to the app after it was in the background no longer shows a connection error and asks you to sign in again: iOS closes the connection in the background, so Porthole now connects again by itself when you return (and retries on its own if the connection drops while you are in the app). Only Discord saying the sign-in is no longer valid asks you to sign in again. The Try again button uses the saved sign-in first."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9003",
+    "summary": "DISCORD TEST BUILD 3. Voice, step 1: join a voice channel without sound. Not for anyone but the maintainer's test account.",
+    "added": [
+      "Settings > Discord > Voice (test): your servers' voice channels; tap one to join. Porthole connects to Discord's voice server, finds its address and reads the session key, then says whether Discord accepted it. No sound yet. Discord says calls need end-to-end encryption (DAVE) since March 2026, so this step shows what it does with a client that does not do DAVE."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9002",
+    "summary": "DISCORD TEST BUILD 2. Two more ways to sign in. Not for anyone but the maintainer's test account.",
+    "added": [
+      "Settings > Discord > Sign in with email and password: Discord's own login page inside Porthole (password, captcha and two-step code go to Discord's page, not to Porthole); the account's sign-in token is kept in the Keychain and the page's cookies are discarded.",
+      "While a QR code is showing: Open in the Discord app on this device, for when the code cannot be scanned from another device."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9001",
+    "summary": "DISCORD TEST BUILD 1. Not for anyone but the maintainer's test account. Everything in 1.3.138, plus Settings > Discord (experimental).",
+    "added": [
+      "Settings > Accounts > Discord (experimental): a warning and a switch (off by default), sign-in by QR code (scanned with the Discord app on another device), and your friends with their status and what they are playing, kept up to date. Porthole says what it is to Discord and does not pretend to be the official app. Discord's terms do not allow third-party clients: an account used with this can be limited or banned. Use a test account."
+    ],
+    "changed": [],
+    "fixed": []
   },
   {
     "version": "1.3.138",
@@ -9301,5 +10823,170 @@
     "fixed": [
       "Taps and drags moved the cursor by tiny relative amounts; pointer events now carry the absolute flag the runtime requires."
     ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9017",
+    "summary": "DISCORD TEST BUILD 17. Joining a call now reports what Discord answers, and retries once.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "A join that Discord never answered stayed on \"joining\" and left you in the channel without sound; the app now logs each step, leaves and joins again after 6 seconds, and says so if Discord still does not answer."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9018",
+    "summary": "DISCORD TEST BUILD 18. Voice in a running game: the pump runs at top priority, keeps more sound ready, and the log says what the speaker side is doing.",
+    "added": [
+      "The log now shows the speaker side of a call (loudest sound sent to the output, how often the output ran dry, late pump ticks, the route, the volume) and when the microphone is muted or the audio route changes."
+    ],
+    "changed": [
+      "The voice pump runs at the highest priority and keeps 120 ms of sound ready while a game runs, so a game that keeps every core busy cannot starve it."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9019",
+    "summary": "DISCORD TEST BUILD 19. The call no longer goes quiet when your microphone is muted, and a join that Discord ignores reconnects to Discord.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Discord stopped sending the call's sound about 25 seconds after the microphone was muted, because nothing was sent to its voice server any more. A small packet every few seconds keeps the call open.",
+      "When Discord does not answer a join (a dead connection to Discord), the app now connects to Discord again and asks once more, and the log says what the connection heard."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9020",
+    "summary": "DISCORD TEST BUILD 20. Game and call volume sliders.",
+    "added": [
+      "Two sliders to set which one is louder while you are in a call: the game (10 to 200 percent) and the call (0 to 200 percent). They are in Settings > Discord (Voice) and in the Discord tab of the in-game menu, with left / right for a controller. The game goes back to its own volume when you leave the call."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9021",
+    "summary": "DISCORD TEST BUILD 21. Who is in the call and who is talking, as a list and as an overlay over the game.",
+    "added": [
+      "The people in your call with their Discord pictures and a green ring round whoever is talking: in Settings > Discord (Voice), in the Discord tab of the in-game menu, and as an overlay over a running game (on by default while you are in a call). The Discord tab sets the overlay's corner and size, and can show only who is talking."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9022",
+    "summary": "DISCORD TEST BUILD 22. Discord connects when the app starts.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "Discord only connected after Settings > Discord was opened; with Discord features on and a saved sign-in it now connects as soon as the app starts."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9023",
+    "summary": "DISCORD TEST BUILD 23. The Discord overlay sits inside the game's picture.",
+    "added": [],
+    "changed": [],
+    "fixed": [
+      "The Discord overlay was placed in a corner of the whole screen, which in portrait is the black area above or below the game; it now sits in the corner of the game's own picture, like Discord's overlay."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9024",
+    "summary": "DISCORD TEST BUILD 24. Go Live test: streams a moving test picture into the voice channel you are in.",
+    "added": [
+      "A Go Live (test picture) button in the Discord tab of the in-game menu and in Settings > Discord, shown while you are in a call. It asks Discord for a stream, opens the stream's own connection, and sends a moving 720p test picture (hardware H.264, end-to-end encrypted) so another account can watch it. The game's own picture comes in a later build. The log lines to read start with [discord-stream]."
+    ],
+    "changed": [],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9025",
+    "summary": "DISCORD TEST BUILD 25. Go Live test: three ways of sending the picture (each press tries the next), and the log reads Discord's feedback.",
+    "added": [
+      "The Go Live log now reads the feedback Discord sends back (picture loss, bandwidth) and shows how the first key frame looks before and after encryption."
+    ],
+    "changed": [
+      "Go Live uses the video numbers the working open-source clients use (H.264 as 101). Each press of Go Live tries the next of three ways of sending the packets (with the playout-delay extension id 6, without it, with id 5) and says which in the menu and the log. A new key frame is sent whenever the encryption keys change, a viewer asks for the picture, or Discord reports picture loss."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9026",
+    "summary": "DISCORD TEST BUILD 26. Go Live test: the packet format Discord did not answer with picture-loss requests is now the only one, and the log shows what the server reports about the stream.",
+    "added": [
+      "The Go Live log now shows the server's receiver report (how far our packets got, losses, jitter), its bandwidth estimate, and one line for every other kind of feedback."
+    ],
+    "changed": [
+      "Go Live always sends the playout-delay extension with id 5 (the format Discord answered without asking for new key frames); the three-way try is gone."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9027",
+    "summary": "DISCORD TEST BUILD 27. Go Live test: the stream is now announced as a screen share (it was announced as a camera), and the log names which stream the server's reports are about.",
+    "added": [
+      "Go Live now sends the speaking message a screen share sends, and the log shows which stream each receiver report from Discord is about."
+    ],
+    "changed": [
+      "The stream announcement says \"screen\" instead of \"video\", as Discord's own screen sharing does."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9031",
+    "summary": "Discord test build: the in-game menu is rebuilt (the 1.3.149 layout) with the Discord tab in it.",
+    "added": [],
+    "changed": [
+      "In-game menu (from 1.3.149): each tab is a short list of rows with the value each setting has now, and a row with options opens a page with a Back button. Back (the button, B, or a swipe to the right) goes out of a page first and closes the menu from the list. The Discord tab is unchanged inside."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9030",
+    "summary": "Discord test build: the in-game menu fits five tabs and its Back to launch screen button no longer covers the title.",
+    "added": [],
+    "changed": [
+      "In-game menu (from 1.3.148): the tabs are one row of equal boxes with the icon and a one-line label, the chosen choice has a soft highlight, and the Processor card is shorter, with its long explanation behind a tap."
+    ],
+    "fixed": [
+      "In-game menu: \"Performance\" no longer breaks into \"Performa\" and \"nce\" now that the Discord tab makes five.",
+      "The \"Back to launch screen\" button is no longer drawn over the menu's title; it stays in the part of the screen the open menu leaves."
+    ]
+  },
+  {
+    "version": "1.3.138",
+    "build": "9029",
+    "summary": "Discord test build: Go Live pictures are prepared the way Discord's own clients prepare them, and checked.",
+    "added": [],
+    "changed": [
+      "Go Live: the encoder's parameter set (SPS) is rewritten to say \"no frame reordering\" (a viewer's decoder otherwise holds pictures back), and the pictures use 3-byte start codes, as Discord's own clients send them.",
+      "Go Live: the first six encrypted pictures are opened again with this account's own keys and the log says whether they decrypt to the same bytes (self-check lines), with the first bytes of each."
+    ],
+    "fixed": []
+  },
+  {
+    "version": "1.3.138",
+    "build": "9028",
+    "summary": "DISCORD TEST BUILD 28. Go Live now connects to Discord's stream server the way Discord's own apps do (a WebRTC connection), because the plain-UDP way never got a single report on the video from the server.",
+    "added": [
+      "Go Live uses a WebRTC connection (libdatachannel) with resend answers and sender reports; the log shows the connection steps, the offer, and what Discord does with the pictures."
+    ],
+    "changed": [
+      "The stream announcement says \"video\" again, as the working open-source client does."
+    ],
+    "fixed": []
   }
 ]

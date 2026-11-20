@@ -1,0 +1,137 @@
+PORTHOLE 1.4.0 "ALL HANDS ON DECK" - CHANGELOG
+==============================================
+
+Everything below is what changed since the public 1.3.0. It was built and tested as 107 private builds, 1.4.1 (871) to 1.4.107 (981), and they are folded into this one list. It also contains the 1.3.1 fixes (Steam Cloud saves, Amazon Games as a report source, a clearer failed-JIT message).
+The engine is f8ceca8-r0: the 1.3.0 engine with the Madeira Nightly 0.2.29 work merged into Wine, FEX, DXMT and Dock, plus two Discord patches (the voice bridge and the game-audio tap) and a Direct3D 12 memory diagnostic. Compatibility badges are tied to the engine, so every game starts at "Not yet tested" again until people have played it on this version.
+Sections: HEADLINES, ADDED, CHANGED, FIXED, GAMES WE WORKED ON, KNOWN LIMITS.
+
+
+HEADLINES
+---------
+* Discord inside Porthole (experimental, off until you turn it on): a Social tab with your servers, channels, direct messages and forums; voice calls with your game's sound in the call; banners over the game for messages and calls; your game shown on your profile; and a viewer for other people's Go Live streams. Porthole is not an official Discord client and Discord's terms do not allow third-party clients: an account used with one can be limited or banned.
+* A rebuilt in-game menu: on a phone it fills the screen with tabs down the side and is see-through so the game shows behind it; on an iPad it is a floating card you can drag to any size.
+* Controls made easy: pick how every game is controlled once (starter layouts drawn as pictures), a new "Universal" layout that suits most games, an on-screen game controller with a second layout, a controls card for each game, left-handed mode, button size and a quick layout switch in the game. The layout editor works on several controls at once.
+* Test your controls: Settings > Controls can test a controller (drawn in 3D for DualSense, DualShock 4 and Xbox pads), a keyboard and a mouse, and set a deadzone for a stick that drifts.
+* Interactive tutorials that point at the real buttons, a first-run setup where you choose how you play, and a tour of the in-game menu on your first game.
+* Play on a TV or monitor on a cable: the game fills that screen and the controls stay on the device.
+* A new engine: the Madeira Nightly 0.2.29 merge, with fixes for memory and the JIT pool, and for the launchers' browser components.
+* Steam: games on an external drive are found and added by themselves, a download region can be chosen, and updating or repairing a game asks only for the space it really needs.
+
+
+ADDED
+-----
+
+Discord (the Social tab; switch it on in its settings, behind the gear; experimental)
+* Sign in on discord.com's own page (Porthole never sees your password, captcha or two-step code) or by scanning a code with the Discord app on another device. Only the account's sign-in token is kept, in the Keychain. A warning is shown before you can turn Discord on, and one more the first time you send a message.
+* Discord itself once you are signed in: servers down the side (in the order of your own Discord, with their pictures), channels in the categories the server made, who is in each voice channel, a friends view with who is online and what they play. Only the channels your account may open are listed. Works by touch, with a controller and with a keyboard and mouse. Held sideways on a phone the screen is tightened so a chat gets as much height as possible.
+* Reading and writing: text and announcement channels (the latest 50 messages, live updates, more earlier ones on request, up to 600 kept in memory), direct messages and group chats, forums and threads, replies, reactions, editing and deleting your own messages, typing indicators, link cards, stickers, a full-screen picture viewer, lines between days, and a jump to the message a reply answers. Messages are kept in memory only, never saved, and forgotten when you sign out; the text of a message is never written to the log.
+* People: tap a picture or a name for a profile card (banner, pronouns, status, the game they play, about me, account age, shared servers and friends), with Message and Call.
+* Voice: join a channel and see who is talking, Mute, Deafen, microphone sensitivity with a level bar, a volume (0 to 200 percent) and a mute for each person (for you alone), push to talk (hold the microphone button over the game), and an experimental echo reduction for speakers. See which friends are in a voice channel and join them with one tap. Call friends in direct messages and group chats and answer incoming calls. The game's sound can go into the call, and Go Live can stream the game's picture and sound to a channel, with quality presets.
+* Over the game: banners for messages (Mentions, Direct messages or Everything; tap to open the in-game menu on that conversation and reply) and incoming calls (Join and Decline on the banner), also over the app between games. Banners are safe for the game: one at a time, never while you stream, touches only inside their own card.
+* A red count on the Social tab, on Messages, on each conversation, server and channel for the Discord messages waiting.
+* Show what I am doing in Porthole (off until you turn it on): "Firewatch on Porthole" while a game runs, and browsing, downloading or adjusting settings otherwise.
+* Go Live viewer (experimental): a red LIVE mark shows on people who are streaming; tap their tile and Watch. The stream opens full screen with its sound; a pacing button switches Steady, Sender clock and Instant. Only H.264 streams can be shown.
+* Closing Porthole from the app switcher leaves your voice channel, ends your stream and shows you offline.
+* Steam's friends list joins Discord in the Social tab (who is online and what they are playing).
+* The libraries behind the Discord features (libdave, mlspp, OpenSSL, libdatachannel, libjuice, libsrtp, usrsctp, Opus and the rest) are listed in Settings > About > Licences with their licence texts and where their source is.
+
+Controls
+* Settings > Controls > Default controls: choose once how every game is controlled; every game with no controls of its own starts with it. Starter layouts (Universal, Gamepad, Action, Point and click, Platformer) are chosen from a picture of each, and Try it opens the layout on a sample game screen with the real on-screen controls. Edit opens the editor right there.
+* Universal: the new default for most games: a W A S D stick with Shift, Space and Ctrl, the mouse buttons, E and R in a tight arc in the bottom right corner, Esc, Tab, the mouse wheel, the full keyboard, and a Look / Mouse switch. The right of the screen is left free to drag the mouse or look around. It replaces Mouse and keys and First person, so there is one layout to learn.
+* The on-screen game controller (Xbox, PlayStation, Nintendo Switch or Super Nintendo types) is a default choice too, with a second layout, Corner sticks, drawn for an iPad.
+* On iPads, while on-screen controls are in use, the game's picture moves to the top edge and the controls sit under it; the performance numbers and the people in a Discord call go into the free space in the middle of the controller. A layout of your own can place the picture (nine positions, 50 to 100 percent) and the two overlays. The picture keeps clear of the screen's rounded corners.
+* A controls card for each game ("In use now": the layout drawn, with Try it, Edit and Change layout), a layout switch in the in-game menu's Controls tab, and a note about buttons that overlap or are too small to hit.
+* Button size (Automatic, Smaller, Normal, Larger, Largest) and Left-handed (every layout flipped left to right; shared layouts are not turned round). Layouts keep their phone-sized spacing on a big screen.
+* Slide a finger across buttons: sliding from one held on-screen button to the next lets go of the first and presses the second without lifting.
+* The layout editor works on several controls at once: draw a box or tap Select to pick them, then move, scale, Align, Space evenly, Flip, resize, copy and delete together. Mirror the whole layout, copy controls to another layout, a Nudge pad, red rings on overlapping buttons and orange on ones too small to hit, and an exact size you can type.
+* Test controller: the connected controller drawn live, in 3D for a DualSense, DualShock 4 or Xbox pad (drag to turn, pinch to zoom, double-tap to reset; the PlayStation pads follow the real controller's motion). Sticks and drift: both sticks as dials, a two-second drift check, and a deadzone for each stick of each controller (0 to 50 percent) that also stops a drifting stick walking Porthole's menus. Test keyboard and mouse: every key lights while held; a pad shows mouse movement, five buttons and the wheel. These pages keep the controller and keyboard to themselves while you test.
+* Credits for the three 3D models (CC BY 4.0) are in Settings > About > Licences and CREDITS.md.
+
+In the game
+* The in-game menu on a phone fills the screen: tabs down the left held sideways, one column, and a background you can see the game through (Game tab > This menu > Background, 30 to 100 percent). On an iPad it is a floating card with a big Close button, tabs along the top and roomier rows; drag its edge handle to any size or tap the expand button. The Discord tab is grouped into pages, with a ringing call, the call you are in and new messages on top. Eco mode is a switch on the Power page.
+* Input lag and Screen delay numbers for the performance overlay (In-game menu > Overlay details). Screen delay is how long a picture takes from the game asking for it until it is on the screen; Input lag is an estimate put together from measurements (shown with a ~). Both work in plain and desktop sessions, and nothing is watched while they are off.
+* Turn to landscape when a game starts (Settings > Display > Orientation, on unless switched off; a game's page can override it).
+* Play on a connected display (Settings > Display > Other screens, on by default): with a TV or monitor on a cable (USB-C or Lightning to HDMI) the game's picture goes to that screen and the touch controls, the menu and the keyboard stay on the device.
+
+Steam and stores
+* Steam games on an external drive: Porthole offers to look for Steam games on a drive you connect, adds the games it finds to your library, shows them only while the drive is connected (their tiles and settings are kept) and follows the drive live while the app is open. Choosing an SSD library folder also accepts the drive itself or a PC's SteamLibrary folder.
+* Settings > Steam > Downloads > Download region: choose which of Valve's download servers (22 cities) a game comes from, or leave it on Automatic.
+* Start from Steam's saved sign-in (Settings > Steam > Starting games, on): once a game has started online, its next starts use what Steam saved: about ten seconds faster. Steam renews it with an online start, which happens by itself two weeks after the last one. A game's page has "Steam sign-in: Online every time" for multiplayer and achievements.
+* Epic games: games with online anti-cheat (Easy Anti-Cheat, BattlEye, EQU8, PunkBuster, GameGuard) say so on their page as soon as the download starts, and Epic's login refusal ("corrective action required") says what to do.
+* Amazon Games is a compatibility-report source.
+
+Setup, help and look
+* First-run setup has a new "Make it yours" step: Controls, Colours and sound, Picture and power, and Helpers, with every default already chosen, or "Just the essentials" to skip it. Each choice is the setting itself.
+* Interactive tutorials (Settings > Setup, tutorials and tips): Find your way around, Add a game, Sign in to a store, Install a game from Steam, Play a game and tune it, Turn on swap, Set up your controls, Get JIT working, Back up your saves and The game menu. Each dims the screen, glows around the real button, says what it does and moves on as you tap it, from tab to tab and into sheets. The first game you run offers a tour of the in-game menu.
+* A Community and links page in Settings (X, Discord, GitHub, the website, the documentation, the compatibility list, what's new, privacy, and Tell a friend) and a Follow on X row in Report a problem.
+* Home and a game's page share one picture, so going between them is smooth; a light blur behind Home; the game in the first slot of Home's row is the chosen one and larger, follows scrolling, and has Play always there; the top bar blends into the screen under it; a game's page is easier to read on light pictures. Discord and achievement pop-ups have a new look. Alerts on Home sit in one row beside the layout picker.
+
+Automatic fixes
+* A game set to Run directly that needs Steam's client (it logs that Steam was not found and ends at once with exit code 53) is offered "Start this game through Steam".
+* A game that starts but whose Epic login is refused gets a plain explanation.
+
+For people who tune games
+* A diagnostic for where the GPU memory of Direct3D 12 games goes: engine line gpu-attr = 1 (off unless asked for; it slows allocations a little).
+* upload-swap-min-kb = N (default 8192): Direct3D 12 CPU-visible buffers of N KB or more live on the file tier, which iOS does not charge to the app. A smaller number moves more buffers and could cost speed. The memory report now counts Direct3D 12 texture heaps.
+* An experiment for launcher games with a memory-hungry browser helper: env.MADEIRA_DOCK_TRIM = SocialClubHelper.exe@GTA5_Enhanced.exe closes the helper after the game's window has been up for a while (timings changed with env.MADEIRA_DOCK_TRIM_AFTER_S and env.MADEIRA_DOCK_TRIM_GRACE_S). Nothing happens unless the line is there.
+
+A new engine
+* Wine, FEX, DXMT and Dock take in the Madeira Nightly 0.2.29 work. It includes choosing automatically whether to copy a 64-bit program's image, JIT pool and address-space handling fixes, reuse of process socket slots, a stricter check of WoW64 parameters, handling of the launchers' browser (CEF) helpers, and a safer code-invalidation path for Mono games in FEX.
+* A program the launcher starts itself starts in the game's install folder, as Valve's client would start it.
+
+
+CHANGED
+-------
+* Discord moved out of Settings into the Social tab, and the Friends button on Home opens the Social tab; the Engine page left the in-game menu.
+* The eight on-screen controller layouts (Standard, Xbox, PlayStation, Nintendo Switch, Mirrored, Retro, Racing, Minimal) are gone: there are two layouts (the original and Corner sticks), and the controller type only changes the names and colours on the buttons.
+* Settings > Controls is much shorter: Default controls first, then three doors (Controller, Keyboard and mouse, Touch screen) and one "Test and troubleshoot" row. Settings search finds each setting on its new page. Display, Performance, Controls and Appearance share their Resolution, Power mode, Turn to landscape, Button size, Left-handed and colour scheme rows with setup.
+* A game you set controls for keeps them; only games with no controls of their own follow your default.
+* The Home row snaps: the game in the first slot is the chosen one and the row scrolls to it when you tap another.
+* Choosing an SSD library folder accepts the drive itself or a folder with a Steam library inside it.
+* A program's start options typed with the iOS keyboard reach it as typed (curly quotes, long dashes and ellipses are made plain, and the log says so).
+* A failed attempt to switch JIT on says what to do and names the real cause when Porthole can see it (signed without the VPN permission, "Use LocalDevVPN instead" on with no VPN, no own link and no VPN).
+* Updating, resuming or repairing a Steam game checks only the space it really needs, and says how much more is needed when there is not enough.
+* When a tutorial ends you land back on the tutorials page.
+* Settings pages: a page you open always starts at its top, and only a page you go back to keeps its place.
+
+
+FIXED
+-----
+* Steam Cloud saves that Steam sends packed in other ways (zip, gzip, zlib, Zstandard, VZip, short headers) now download; a cut-short link is fetched once more and a failed file says what it looked like in the log.
+* The Steam sign-in is updated in place in the Keychain, so a save that is cut short can no longer leave you without one.
+* A Steam game started from an external drive now hides the launch screen once its window is up (it stayed up for six minutes).
+* The Swap row of the performance readout showed what had been handed out of the sparse swap file, far above the cap, with a false "Swap is almost full" warning. It now shows what is on the disk.
+* A GOG or itch.io setup that could not start now shows why (it only said the installer did not install the game).
+* Pairing from Settings no longer gives up after about 35 seconds while the silent sound keeps Porthole running.
+* The Epic cloud-save check used a host name that no longer exists; it uses Epic's current one.
+* An Epic game starts with the same command line Epic's own launcher gives it (including -epicsandboxid, an ownership token for games that check one, and the extra arguments Epic's catalog lists).
+* Stores: after searching and tapping a game, the keyboard no longer stays over the game's page.
+* Discord Go Live: stopping a stream while pictures were still being sent could crash.
+* Discord banners can be tapped (every touch went through to the game).
+* A voice channel with more people than fit the screen scrolls.
+* A Discord server can no longer lose all its channels by mistake, and a malformed address in a request can no longer crash the app.
+* Watching a stream: the picture now opens (the end-to-end check failed on every key frame), freezes are far fewer (lost packets are asked for again), the first picture shows sooner, and motion is smoother.
+* Closing Porthole no longer leaves Discord thinking you are still in a call.
+* The Display page listed "Play on a connected display" twice.
+* Tutorials: highlights land exactly on the right button; they scroll to what they point at, pick the right game and the swap sizes; a step that only explains something no longer lets you touch the screen.
+* Controls: on an iPad Universal was spread over the whole screen; layouts now keep phone-sized spacing. The performance numbers and Discord call land where the editor shows their spots. The Platformer's B button no longer touches the screen's edge; the Point and click hotkeys are spaced for larger buttons.
+* The top bar fits on a phone held sideways (the last section was cut off) and never scrolls sideways.
+* Test controller and Test keyboard and mouse no longer move around Porthole while you test.
+* The 3D controller's buttons are solid, its sticks lean as a whole, and the stick bases stay still.
+
+
+GAMES WE WORKED ON
+------------------
+* BeamNG.drive: its Bin64 program now starts in the game's install folder.
+* Final Fantasy IX with the Memoria patcher: start options with curly quotes no longer end in "File not found".
+* Green Hell and Ultimate Marvel vs. Capcom 3 (games that log that Steam was not found and exit at once with code 53): offered "Start this game through Steam".
+* Grand Theft Auto V Enhanced: diagnostics and two opt-in memory experiments (the gpu-attr census, upload-swap-min-kb, and closing the Social Club helper). Epic games with online anti-cheat now say up front that it does not run on Porthole.
+
+
+KNOWN LIMITS
+------------
+* Discord is experimental and unofficial. Watching Go Live streams and the echo reduction are the least proven parts. Go Live does not work from calls in direct messages and group chats yet, a stream can only be watched in H.264, and watching from inside a running game is not built.
+* The 3D controllers need a controller connected to show anything; an Xbox pad has no motion sensors, so its drawing only turns with your finger.
+* Games with online anti-cheat (Easy Anti-Cheat, BattlEye and others) do not run online on Porthole.
+* Games that were not playable before (Red Dead Redemption 2, Black Ops III, Ubisoft Connect games) still are not; see the 1.2.0 and 1.3.0 notes.
+* Compatibility badges start again for this engine: every game shows "Not yet tested" until someone has played it.

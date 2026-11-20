@@ -1,0 +1,77 @@
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -524,7 +524,30 @@
+         }
+     }
+ }
++
++/* Porthole game audio tap (Discord branch, patch 0201): the game's own mix, for Discord Go Live. The render callback copies what the game sent (after its volume and the
++ * clamp, before the background mute and before Discord's voice is added, so call voices are not in it) into a lock-free ring of interleaved stereo float frames at the
++ * endpoint's rate; the app reads it (porthole_game_audio_read). Off until the app starts it. Nothing in here blocks the real-time thread. */
++#define PV_TAP_FRAMES 16384u    /* frames, power of two: about 340 ms at 48 kHz */
++static float g_pv_tap[PV_TAP_FRAMES * 2];
++static _Atomic uint64_t g_pv_tap_w, g_pv_tap_r, g_pv_tap_drops;
++static _Atomic int g_pv_tap_on;
+ 
++static void ios_pv_tap_write(const float *out, UInt32 nframes, UInt32 ch)
++{
++    uint64_t w = atomic_load_explicit(&g_pv_tap_w, memory_order_relaxed);
++    uint64_t r = atomic_load_explicit(&g_pv_tap_r, memory_order_acquire);
++    uint64_t room = PV_TAP_FRAMES - (w - r);
++    uint64_t n = room < nframes ? room : nframes, i;
++    for (i = 0; i < n; i++) {
++        float l = out[i * ch], rr = ch > 1 ? out[i * ch + 1] : l;
++        g_pv_tap[((w + i) & (PV_TAP_FRAMES - 1)) * 2] = l;
++        g_pv_tap[((w + i) & (PV_TAP_FRAMES - 1)) * 2 + 1] = rr;
++    }
++    if (n < nframes) atomic_fetch_add_explicit(&g_pv_tap_drops, nframes - n, memory_order_relaxed);
++    atomic_store_explicit(&g_pv_tap_w, w + n, memory_order_release);
++}
++
+ /* Madeira MADEIRA_AUDIO_GAIN: the game's volume at the endpoint, in percent of what the game sends, for a game that is too
+  * loud or too quiet next to the rest of the phone's sound. Unset: 100, and the render callback does one comparison and nothing else. 10 to 200 is
+  * taken (200 is twice the game's level; the callback's clamp keeps the sum inside full scale); anything else is ignored, so a typing slip never
+@@ -947,6 +970,7 @@
+         else if (out[k] < -1.0f) { out[k] = -1.0f; clamped++; }
+     }
+     if (clamped) atomic_fetch_add_explicit(&g_dev.clamped, clamped, memory_order_relaxed);
++    if (atomic_load_explicit(&g_pv_tap_on, memory_order_relaxed)) ios_pv_tap_write(out, nframes, dev_ch);      /* the game's own mix for Go Live */
+     if (atomic_load_explicit(&g_bg_mute, memory_order_relaxed))
+         memset(out, 0, total * sizeof(float));
+     if (atomic_load_explicit(&g_pv_active, memory_order_relaxed)) {   /* the voice goes in last: not muted, not paused */
+@@ -1339,9 +1363,35 @@
+     size_t n = avail < max_frames ? (size_t)avail : max_frames, i;
+     for (i = 0; i < n; i++) dst[i] = g_pv_cap[(r + i) & (PV_RING - 1)];
+     atomic_store_explicit(&g_pv_cap_r, r + n, memory_order_release);
++    return n;
++}
++
++/* App: the game's own sound for Go Live (patch 0201). Start empties the ring and turns the tap on; read gives interleaved stereo float frames at porthole_voice_rate(). */
++void porthole_game_audio_start(void)
++{
++    atomic_store_explicit(&g_pv_tap_r, atomic_load_explicit(&g_pv_tap_w, memory_order_acquire), memory_order_release);
++    atomic_store_explicit(&g_pv_tap_drops, 0, memory_order_relaxed);
++    atomic_store_explicit(&g_pv_tap_on, 1, memory_order_release);
++}
++
++void porthole_game_audio_stop(void) { atomic_store_explicit(&g_pv_tap_on, 0, memory_order_release); }
++
++size_t porthole_game_audio_read(float *dst, size_t max_frames)
++{
++    uint64_t r = atomic_load_explicit(&g_pv_tap_r, memory_order_relaxed);
++    uint64_t w = atomic_load_explicit(&g_pv_tap_w, memory_order_acquire);
++    uint64_t avail = w - r;
++    size_t n = avail < max_frames ? (size_t)avail : max_frames, i;
++    for (i = 0; i < n; i++) {
++        dst[i * 2] = g_pv_tap[((r + i) & (PV_TAP_FRAMES - 1)) * 2];
++        dst[i * 2 + 1] = g_pv_tap[((r + i) & (PV_TAP_FRAMES - 1)) * 2 + 1];
++    }
++    atomic_store_explicit(&g_pv_tap_r, r + n, memory_order_release);
+     return n;
+ }
+ 
++uint64_t porthole_game_audio_drops(void) { return atomic_load_explicit(&g_pv_tap_drops, memory_order_relaxed); }
++
+ void porthole_voice_stats(uint64_t *cap_drops, uint64_t *play_short, uint64_t *render_errs)
+ {
+     if (cap_drops) *cap_drops = atomic_load_explicit(&g_pv_cap_drops, memory_order_relaxed);

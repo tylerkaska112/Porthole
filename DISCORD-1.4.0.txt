@@ -1,0 +1,41 @@
+@everyone Porthole 1.4.0 "All Hands on Deck" is out ⚓   (DRAFT: not posted; the download links are filled in at release time)
+
+The headline: **Discord, inside Porthole.** Plus a rebuilt in-game menu, much easier controls, and interactive tutorials.
+
+**What's new in 1.4.0**
+• **Discord (experimental, off until you turn it on):** servers, channels, DMs and forums in a new Social tab; voice calls with your game's sound in the call; banners over the game; "playing on Porthole" on your profile; and a viewer for Go Live streams
+• **A rebuilt in-game menu:** fills a phone's screen, see-through so the game shows behind it, and a resizable floating card on iPad
+• **Controls made easy:** pick how every game is controlled once, starter layouts, a Universal default, a second on-screen pad layout, left-handed mode, and an editor that works on several controls at once
+• **Test your controls:** a 3D DualSense, DualShock 4 or Xbox pad that moves with the real one, plus keyboard and mouse tests and a stick deadzone
+• **Tutorials** that point at the real buttons, and a first-run setup where you choose how you play
+• **TV or monitor on a cable:** the game fills that screen, the controls stay on your device
+• **Steam:** games on an external drive are found by themselves, and an update only asks for the space it really needs
+
+⚠️ **About Discord:** Porthole is not an official Discord client. Discord's terms do not allow third-party clients, and an account used with one can be limited or banned. Use an account you can afford to lose. Porthole tells Discord what it is.
+
+Compatibility badges start again for this version, so every game shows "Not yet tested" until someone has played it. A report after you play helps everyone.
+
+Details in the next message 👇
+
+--------8<--------
+
+**💬 Discord**
+• **Sign in** on discord.com's own page or by scanning a code with the Discord app. Porthole never sees your password; only the sign-in token is kept, in the Keychain
+• **Text:** channels, DMs and group chats, forums and threads; replies, reactions, editing and deleting your own messages, typing indicators, link cards, stickers, a picture viewer
+• **Voice:** join a channel, deafen, microphone sensitivity, a volume and a mute for each person, push to talk. Your game's sound can go into the call
+• **Over the game:** banners for messages and calls with Join and Decline on them
+• **Go Live:** a LIVE mark on people streaming, and a viewer for their streams (experimental)
+• **Closing the app** from the app switcher leaves your call and shows you offline
+• One switch turns all of it on or off, and it is off until you do
+
+**🎮 Controls and the menu**
+• **Settings > Controls > Default controls:** choose once; starter layouts from a picture of each (Universal, Gamepad, Action, Point and click, Platformer)
+• **Universal** is the new default for most games; the on-screen controller has a Corner sticks layout; on iPad the picture moves above the controls
+• **A controls card for each game** and a quick layout switch in the game
+• **The in-game menu** is see-through and fills a phone; on iPad it is a card you can drag to any size
+• **Input lag and Screen delay** numbers for the performance overlay
+
+**🧭 Also**
+• Tutorials and a longer first-run setup; a Community and links page; Steam download region; Epic games start the way Epic's launcher starts them; Steam Cloud saves Steam sends packed in other ways now download
+
+Something wrong? **Settings > Report a problem** sends the log (cleaned of names, e-mail and public IPs; you can read it first). Thanks for testing 🙏

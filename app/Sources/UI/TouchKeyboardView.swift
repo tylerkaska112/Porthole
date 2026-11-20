@@ -203,9 +203,26 @@ private final class KeyCap: UIView, TakesHUDTouches {
         label.textColor = stickyState == .off ? .white : .black
     }
 
+    /// The key this finger slid onto (SlideAcross): it is the one that is down now, and lifting lets it go.
+    private weak var slidTo: KeyCap?
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { setPressedVisual(true); onDown?(key) }
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { setPressedVisual(false); onUp?(key) }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { setPressedVisual(false); onUp?(key) }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard SlideAcross.enabled, !key.isModifier, let touch = touches.first, let parent = superview else { return }
+        let p = touch.location(in: parent)
+        let current = slidTo ?? self
+        // A key the finger is well inside (a few points in, so a finger resting on the gap does not flicker between two).
+        guard let target = parent.subviews.compactMap({ $0 as? KeyCap }).first(where: { $0 !== current && !$0.key.isModifier && $0.frame.insetBy(dx: 4, dy: 4).contains(p) }) else { return }
+        current.setPressedVisual(false); current.onUp?(current.key)
+        target.setPressedVisual(true); target.onDown?(target.key)
+        slidTo = target === self ? nil : target
+    }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { finish() }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { finish() }
+    private func finish() {
+        if let target = slidTo { slidTo = nil; target.setPressedVisual(false); target.onUp?(target.key); return }
+        setPressedVisual(false); onUp?(key)
+    }
     /// The key looks pressed while the finger is on it; the keyboard sets `down` itself for keys that really are down.
     private func setPressedVisual(_ on: Bool) { guard !key.isModifier else { return }; down = on; restyle() }
 }

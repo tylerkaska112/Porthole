@@ -1,0 +1,14 @@
+3D model of the DualShock 4 controller
+====================================
+
+The 3D controller shown in Settings > Controls > Test controller is based on the model
+
+    "DualShock 4 PlayStation Controller" by shaielwolf
+    https://skfb.ly/oPRAI
+
+licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):
+http://creativecommons.org/licenses/by/4.0/   (legal code: https://creativecommons.org/licenses/by/4.0/legalcode)
+
+Changes made by Porthole: the model was turned to Porthole's axes and centred, split into the parts that move in the app (the sticks, the face buttons, the D-pad keys, the bumpers, the triggers, the touchpad and the small buttons), each part was given a pivot, the parts that do not move were joined, and the model was converted to USD with its textures kept as separate files. The textures are the model's own. The conversion script is tools/dualsense/prepare_dualshock4.py in Porthole's source.
+
+DualShock, PlayStation and Sony are trademarks of Sony Interactive Entertainment Inc. Porthole is not affiliated with or endorsed by Sony or by the author of the model. The model is shown only to picture a controller that is being tested.

@@ -37,6 +37,9 @@ struct EngineStats: Equatable {
                 stats.swapPeakMB = number(after: "peak=", in: line)
                 stats.swapFileUsedMB = number(after: " file=", in: line)
                 if let slash = line.range(of: " file="), let cap = line[slash.upperBound...].firstIndex(of: "/") { stats.swapFileCapMB = number(at: line.index(after: cap), in: line) }
+                // `file=` is how far into the swap file the engine has handed out ranges: the file is sparse, so in the broad and wide modes it runs to tens of GB while little
+                // of it is on the disk. The cap (the number after the slash) limits what is really on the disk, which the line gives as `disk=` in those modes: that is the figure to show.
+                if let disk = number(after: " disk=", in: line) { stats.swapFileUsedMB = disk }
                 stats.swapRefused = number(after: "refused=", in: line)
                 if let r = line.range(of: "coverage=") { stats.swapCoverage = String(line[r.upperBound...].prefix { $0 != " " }) }
             } else if !haveFootprint, line.contains("[footprint]") {

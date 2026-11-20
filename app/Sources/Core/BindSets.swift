@@ -26,6 +26,14 @@ struct TouchControlSpec: Codable, Equatable, Identifiable {
     var shape: String?
     /// A colour for a key or mouse button (nil is the usual dark one); a name from `colours`.
     var colour: String?
+    /// A spot for an overlay the layout wants somewhere of its own: the performance numbers or the people in a Discord call. It draws nothing while playing (the overlay itself does, centred on this
+    /// point, as big as this control is wide compared with `overlayBase`); in the editor it is a chip to move and resize. An older build does not know the action and leaves the control out.
+    static let overlayActions = ["overlay-perf", "overlay-discord"]
+    static let overlayBase = 110.0
+    var isOverlay: Bool { Self.overlayActions.contains(action) }
+    var overlayName: String { action == "overlay-perf" ? "Performance" : "Discord call" }
+    /// How much bigger or smaller than usual the overlay is drawn.
+    var overlayScale: Double { min(max(size / Self.overlayBase, 0.5), 2) }
     static let shapes = ["round", "rounded", "square"]
     static let colours = ["red", "orange", "yellow", "green", "blue", "purple", "white"]
 
@@ -38,6 +46,7 @@ struct TouchControlSpec: Codable, Equatable, Identifiable {
     /// What a small picture of the control shows (the layouts list and the shared layouts).
     var faceText: String {
         if isStick { return action == "stick-arrows" ? "\u{2191}\u{2190}\u{2192}\u{2193}" : "WASD" }
+        if isOverlay { return action == "overlay-perf" ? "FPS" : "Call" }
         switch action { case "stick-ls": return "LS"; case "stick-rs": return "RS"; case "dpad-pad": return "+"; default: return label }
     }
 
@@ -81,9 +90,13 @@ struct TouchLayout: Codable, Equatable {
     var haptics = true
     /// The editor does not move, resize or delete controls while this is on (the settings of a control can still be changed).
     var locked = false
+    /// Where this layout wants the game's picture (PictureBand); nil = automatic.
+    var picture: PicturePlacement?
     static let opacityRange = 0.25...1.0
 
-    init(controls: [TouchControlSpec] = [], look: Bool = false, opacity: Double = 1, haptics: Bool = true, locked: Bool = false) { self.controls = controls; self.look = look; self.opacity = opacity; self.haptics = haptics; self.locked = locked }
+    init(controls: [TouchControlSpec] = [], look: Bool = false, opacity: Double = 1, haptics: Bool = true, locked: Bool = false, picture: PicturePlacement? = nil) {
+        self.controls = controls; self.look = look; self.opacity = opacity; self.haptics = haptics; self.locked = locked; self.picture = picture
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         controls = try c.decodeIfPresent([TouchControlSpec].self, forKey: .controls) ?? []
@@ -91,6 +104,7 @@ struct TouchLayout: Codable, Equatable {
         opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
         haptics = try c.decodeIfPresent(Bool.self, forKey: .haptics) ?? true
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        picture = try c.decodeIfPresent(PicturePlacement.self, forKey: .picture)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -98,17 +112,24 @@ struct TouchLayout: Codable, Equatable {
         if opacity != 1 { try c.encode(opacity, forKey: .opacity) }
         if !haptics { try c.encode(haptics, forKey: .haptics) }
         if locked { try c.encode(locked, forKey: .locked) }
+        if let picture { try c.encode(picture, forKey: .picture) }
     }
-    enum CodingKeys: String, CodingKey { case controls, look, opacity, haptics, locked }
+    enum CodingKeys: String, CodingKey { case controls, look, opacity, haptics, locked, picture }
 
     static let maxControls = 40
     static let sizeRange = 32.0...160.0
+    /// The part of the screen the right thumb rests on and drags in (to look around, or to move the mouse), as fractions of the screen's usable area: right of the middle and left of the corner where the right
+    /// thumb's buttons go. A drag on any empty part of the screen works, so this is the least a layout leaves free; the editor draws it so a layout can be planned around it, and the layouts Porthole ships keep
+    /// every control out of it.
+    static let lookZone = CGRect(x: 0.45, y: 0.22, width: 0.32, height: 0.75)
 
     /// What a shared file may contain: known actions only, positions and sizes in range, short labels, at most `maxControls`.
     func sanitized() -> TouchLayout {
         var out: [TouchControlSpec] = []
+        var overlays = Set<String>()
         for var c in controls.prefix(Self.maxControls) {
-            guard c.isStick || c.pad != nil || (PadActions.list + PadActions.touchOnly).contains(where: { $0.id == c.action && $0.id != "none" }) else { continue }
+            guard c.isStick || c.pad != nil || c.isOverlay || (PadActions.list + PadActions.touchOnly).contains(where: { $0.id == c.action && $0.id != "none" }) else { continue }
+            if c.isOverlay, !overlays.insert(c.action).inserted { continue }          // one of each
             c.label = String(c.label.filter { !$0.isNewline && $0 != "\u{0}" }.prefix(8))
             c.mode = TouchControlSpec.modes.contains(c.mode) ? c.mode : "tap"
             c.x = c.x.isFinite ? min(max(c.x, 0.02), 0.98) : 0.5
@@ -116,28 +137,17 @@ struct TouchLayout: Codable, Equatable {
             c.size = c.size.isFinite ? min(max(c.size, Self.sizeRange.lowerBound), Self.sizeRange.upperBound) : 54
             var seen = Set<String>()
             c.with = c.with.filter { TouchControlSpec.comboModifiers.contains($0) && $0 != c.action && seen.insert($0).inserted }
-            if c.isStick || c.pad != nil { c.with = [] }
+            if c.isStick || c.pad != nil || c.isOverlay { c.with = [] }
+            if c.isOverlay { c.label = ""; c.mode = "tap" }
             if case .key = PadActions.action(c.action) {} else { c.with = [] }      // a combo is for a key control
-            if let s = c.shape, !TouchControlSpec.shapes.contains(s) || c.isStick || c.pad != nil { c.shape = nil }
-            if let k = c.colour, !TouchControlSpec.colours.contains(k) || c.isStick || c.pad != nil { c.colour = nil }
+            if let s = c.shape, !TouchControlSpec.shapes.contains(s) || c.isStick || c.pad != nil || c.isOverlay { c.shape = nil }
+            if let k = c.colour, !TouchControlSpec.colours.contains(k) || c.isStick || c.pad != nil || c.isOverlay { c.colour = nil }
             out.append(c)
         }
         let o = opacity.isFinite ? min(max(opacity, Self.opacityRange.lowerBound), Self.opacityRange.upperBound) : 1
-        return TouchLayout(controls: out, look: look, opacity: o, haptics: haptics, locked: locked)
+        return TouchLayout(controls: out, look: look, opacity: o, haptics: haptics, locked: locked, picture: picture?.sanitized())
     }
 
-    /// Starting points for the editor, close to the built-in layouts.
-    static var mouseAndKeys: TouchLayout {
-        TouchLayout(controls: [
-            TouchControlSpec(label: "", action: "stick-wasd", x: 0.12, y: 0.74, size: 104),
-            TouchControlSpec(label: "E", action: "key-E", x: 0.93, y: 0.78, size: 46),
-            TouchControlSpec(label: "F", action: "key-F", x: 0.85, y: 0.78, size: 46),
-            TouchControlSpec(label: "Tab", action: "tab", x: 0.93, y: 0.62, size: 46),
-            TouchControlSpec(label: "Esc", action: "esc", x: 0.85, y: 0.62, size: 46),
-            TouchControlSpec(label: "Space", action: "space", mode: "hold", x: 0.77, y: 0.78, size: 56),
-            TouchControlSpec(label: "Shift", action: "shift", mode: "latch", x: 0.77, y: 0.62, size: 50),
-        ], look: false)
-    }
     /// A gamepad: both sticks, the D-pad, A B X Y, bumpers, triggers, Menu and View, placed like an Xbox controller. Every control can be moved, resized or removed, and keys and mouse
     /// buttons added to it (a mixed layout).
     static var gamepad: TouchLayout {
@@ -150,18 +160,6 @@ struct TouchLayout: Codable, Equatable {
             pad("pad-lb", 0.10, 0.10, 46), pad("pad-lt", 0.20, 0.10, 46), pad("pad-rb", 0.90, 0.10, 46), pad("pad-rt", 0.80, 0.10, 46),
             pad("pad-back", 0.43, 0.10, 40), pad("pad-start", 0.57, 0.10, 40),
         ], look: false)
-    }
-    static var firstPerson: TouchLayout {
-        TouchLayout(controls: [
-            TouchControlSpec(label: "", action: "stick-wasd", x: 0.13, y: 0.72, size: 120),
-            TouchControlSpec(label: "FIRE", action: "lmb", x: 0.90, y: 0.80, size: 76),
-            TouchControlSpec(label: "ALT", action: "rmb", x: 0.79, y: 0.80, size: 76),
-            TouchControlSpec(label: "Jump", action: "space", mode: "hold", x: 0.90, y: 0.58, size: 60),
-            TouchControlSpec(label: "Use", action: "key-E", x: 0.79, y: 0.58, size: 54),
-            TouchControlSpec(label: "Duck", action: "ctrl", mode: "hold", x: 0.27, y: 0.84, size: 54),
-            TouchControlSpec(label: "Run", action: "shift", mode: "hold", x: 0.27, y: 0.66, size: 54),
-            TouchControlSpec(label: "R", action: "key-R", x: 0.70, y: 0.88, size: 46),
-        ], look: true)
     }
 }
 

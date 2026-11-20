@@ -678,13 +678,26 @@ final class SteamCMBackend: SteamContentBackend {
     }
 
     func servers(completion: @escaping ([SteamCDNServer]) -> Void) {
-        let cell = cm.cellID
-        var request = URLRequest(url: URL(string: "\(SteamAPI.host)/IContentServerDirectoryService/GetServersForSteamPipe/v1/?cell_id=\(cell)&max_servers=24&format=json")!)
-        request.timeoutInterval = 20
-        session.dataTask(with: request) { data, _, _ in
-            let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-            DispatchQueue.main.async { completion(SteamCDN.parse((json?["response"] as? [String: Any]) ?? [:])) }
-        }.resume()
+        // The region the person chose (Settings > Steam > Download region); when it gives no usable server, Steam's own choice is asked instead.
+        let chosen = SteamDownloadRegion.chosen()
+        func ask(cell: Int, fallback: Int?) {
+            var request = URLRequest(url: URL(string: "\(SteamAPI.host)/IContentServerDirectoryService/GetServersForSteamPipe/v1/?cell_id=\(cell)&max_servers=24&format=json")!)
+            request.timeoutInterval = 20
+            session.dataTask(with: request) { data, _, _ in
+                let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+                let found = SteamCDN.parse((json?["response"] as? [String: Any]) ?? [:])
+                DispatchQueue.main.async {
+                    if found.isEmpty, let fallback {
+                        SteamLog.event("[steam-region] no server answered for region \(cell): using Steam's own choice")
+                        ask(cell: fallback, fallback: nil)
+                    } else {
+                        if let chosen, cell == chosen { SteamLog.event("[steam-region] \(found.count) server(s) in \(SteamDownloadRegion.name(forCell: cell) ?? "region \(cell)")") }
+                        completion(found)
+                    }
+                }
+            }.resume()
+        }
+        if let chosen { ask(cell: chosen, fallback: cm.cellID) } else { ask(cell: cm.cellID, fallback: nil) }
     }
 
     func fetch(_ url: URL, completion: @escaping (Result<Data, SteamContentError>) -> Void) {

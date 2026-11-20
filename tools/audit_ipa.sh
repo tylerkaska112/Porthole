@@ -50,7 +50,9 @@ DLLS="$(find "$APP" -ipath '*x86_64-vcruntime*' -name '*.dll' | wc -l | tr -d ' 
 
 # Anything of the builder's, anywhere in any file (binary or text). In a private build the maintainer's own bundle id / server are allowed.
 # Short generic words and whole mail domains match innocent text in binaries and third-party licences; the specific names are what matter.
-PATTERNS="$(grep -v -E '^\s*(#|$)' "$HERE/tools/public_banned.txt" | grep -v -E '^@' | awk 'length($0) >= 8')"
+# The list of names is the maintainer's own and is not in the public source (export_public.sh leaves it out): without it this check is skipped, and says so.
+BANNED_LIST="$HERE/tools/public_banned.txt"; [ -f "$BANNED_LIST" ] || { echo "– name check skipped (no tools/public_banned.txt in this source)"; BANNED_LIST=/dev/null; }
+PATTERNS="$(grep -v -E '^\s*(#|$)' "$BANNED_LIST" | grep -v -E '^@' | awk 'length($0) >= 8')"
 HITS=0
 while IFS= read -r pattern; do
   [ -z "$pattern" ] && continue
@@ -66,7 +68,7 @@ while IFS= read -r pattern; do
   fi
   if [ -n "$files" ]; then fail "'$pattern' found in: $(echo "$files" | sed "s|$APP/||" | head -3 | tr '\n' ' ')"; HITS=1; fi
 done <<< "$PATTERNS"
-[ "$HITS" = 0 ] && ok "none of the maintainer's names, servers or paths appear in any file"
+[ "$HITS" = 0 ] && [ "$BANNED_LIST" != /dev/null ] && ok "none of the maintainer's names, servers or paths appear in any file"
 
 [ "$BAD" = 0 ] && echo "▸ clean" || echo "▸ NOT clean"
 exit "$BAD"

@@ -21,6 +21,7 @@
 #import <UIKit/UIKit.h>
 #import <ImageIO/ImageIO.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import "GameCapture.h"
 #import <Metal/Metal.h>
 #include "WiniosCursor.h"
 #import <os/log.h>
@@ -1202,6 +1203,28 @@ void winios_set_desktop_rect(double x, double y, double w, double h, int set) {
     });
 }
 
+/* Porthole 0103 (external display): the view the compositor is added to instead of the app's key window. Swift sets it to a view in the window of a
+ * connected AirPlay or cable display while a game runs there, and back to nil when the display goes away. A compositor that already exists is moved. */
+static __weak UIView *g_comp_container;
+static UIWindow *winios_key_window(void) {
+    for (UIWindow *w in UIApplication.sharedApplication.windows) {
+        if (w.isKeyWindow) return w;
+    }
+    return UIApplication.sharedApplication.windows.firstObject;
+}
+void winios_set_compositor_container(void *container_uiview) {
+    UIView *container = (__bridge UIView *)container_uiview;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        g_comp_container = container;
+        if (!g_compositor_view) return;
+        UIView *target = container ?: winios_key_window();
+        if (!target || g_compositor_view.superview == target) return;
+        [g_compositor_view removeFromSuperview];
+        [target addSubview:g_compositor_view];
+        winios_layout_compositor();
+    });
+}
+
 void winios_set_compositor_frame(double x, double y, double w, double h) {
     dispatch_async(dispatch_get_main_queue(), ^{
         CGRect f = CGRectMake(x, y, w, h);
@@ -1406,7 +1429,7 @@ static void winios_ensure_compositor(void) {
         g_compositor_view.backgroundColor = UIColor.clearColor;
         g_compositor_view.opaque = NO;
         g_comp_game = YES;
-        [win addSubview:g_compositor_view];
+        [(g_comp_container ?: win) addSubview:g_compositor_view];
         winios_layout_compositor();
         fprintf(stderr, "[winios] game-mode window overlay attached (MADEIRA_GAME_WINDOWS=0 disables)\n");
         fflush(stderr);
@@ -1439,7 +1462,7 @@ static void winios_ensure_compositor(void) {
     g_desk_bg = [CALayer layer];
     g_desk_bg.backgroundColor = [UIColor colorWithRed:0.0 green:0.502 blue:0.502 alpha:1.0].CGColor;
     [g_compositor_view.layer addSublayer:g_desk_bg];
-    [win addSubview:g_compositor_view];
+    [(g_comp_container ?: win) addSubview:g_compositor_view];
     winios_layout_compositor();
     fprintf(stderr, "[winios] compositor attached inside presentation frame\n");
     fflush(stderr);
@@ -1683,6 +1706,12 @@ uint64_t madeira_shown_frame_count(void) {
     id<CAMetalDrawable> drawable = [super nextDrawable];
     if (drawable && __atomic_load_n(&_windowHidden, __ATOMIC_RELAXED))
         atomic_fetch_add_explicit(&g_hidden_layer_frames, 1, memory_order_relaxed);   /* madeira_shown_frame_count */
+    if (drawable) {
+        /* Discord Go Live (GameCapture.m): note which window is drawing; while a capture runs, copy the game window's picture once it is presented. */
+        porthole_game_note_drawable(self, __atomic_load_n(&_windowHidden, __ATOMIC_RELAXED) != 0);
+        if (porthole_game_capture_wants(self))
+            [drawable addPresentedHandler:^(id<MTLDrawable> presented) { porthole_game_capture_presented((id<CAMetalDrawable>)presented); }];
+    }
     return drawable;
 }
 @end

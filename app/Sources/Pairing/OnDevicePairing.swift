@@ -66,6 +66,14 @@ final class OnDevicePairing {
         task.expirationHandler = { [weak self] in
             Task { @MainActor in
                 guard let self, self.isRunning else { return }
+                // iOS ends this task after about half a minute (the Hub's logs show 35 s), long before most people have found the right row in Settings. The silent sound keeps
+                // Porthole running without it, so only give up when there is no sound to keep it running.
+                if self.keepAlive.isRunning {
+                    LogStore.shared.log("[pairing] iOS ended its background task; the silent sound keeps Porthole running, so it keeps listening")
+                    (self.continuedTask as? BGContinuedProcessingTask)?.setTaskCompleted(success: true)
+                    self.continuedTask = nil
+                    return
+                }
                 self.fail("The app ran out of background time before the iPhone connected. Tap Start and go to Settings straight away.")
             }
         }
@@ -187,6 +195,8 @@ final class SilentAudioKeepAlive {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var running = false
+    /// The silence is playing (the app is being kept running).
+    var isRunning: Bool { running }
 
     func start() {
         guard !running else { return }
