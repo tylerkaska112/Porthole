@@ -315,6 +315,7 @@ struct SteamSettingsPage: View {
     @AppStorage(SessionController.dockDesktopKey) private var dockDesktop = true
     @AppStorage(SessionController.cloudDownloadKey) private var cloudDownload = true
     @AppStorage(DockOffline.savedSignInKey) private var savedSignIn = true
+    @AppStorage(DockOffline.alwaysOfflineKey) private var alwaysOffline = false
     @AppStorage("f4.advanced") private var advanced = false
     @State private var clientInstalled = MadeiraDock.clientInstalled
     @State private var clientBusy = false
@@ -403,6 +404,9 @@ struct SteamSettingsPage: View {
                 ToggleRow(id: "st-saved-signin", symbol: "bolt.badge.checkmark.fill", title: "Start from Steam's saved sign-in",
                           info: "On: once a game has started online, the next starts use what Steam saved: no new sign-in and no ownership check each time, about ten seconds faster. Steam renews the saved sign-in with an online start, which happens by itself after two weeks or when Steam could not use it. In such a start Steam is offline, so what needs a connection inside the game (multiplayer, Steam achievements) does not work: a game's own page can ask for an online sign-in every time. Off: every start signs in online, as before.",
                           isOn: $savedSignIn)
+                ToggleRow(id: "st-always-offline", symbol: "wifi.slash", title: "Start Steam games offline",
+                          info: "On: Steam starts every game from its saved offline sign-in even when you are connected to the internet. Steam is then offline inside the game, so multiplayer and Steam achievements do not work. It only works after a game has started online once; until then (and when Steam's saved sign-in is old or refused) the game starts online, which saves a new one. A game's own page can choose online or offline for that game. Off: Steam signs in online unless there is no connection.",
+                          isOn: $alwaysOffline)
             }
             SettingsGroup(title: "Steam Cloud", note: "Your game saves on Steam's servers.") {
                 ToggleRow(id: "st-cloud", symbol: "icloud.and.arrow.down.fill", title: "Download my cloud saves before a game starts",

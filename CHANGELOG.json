@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.4.1",
+    "build": "983",
+    "summary": "Steam: a switch to start games offline even when you are connected to the internet.",
+    "added": [
+      "Settings > Steam > Starting games > Start Steam games offline: Steam starts every game from its saved offline sign-in even with an internet connection. Multiplayer and Steam achievements do not work in such a start. It needs the game to have started online once; until then, or when Steam's saved sign-in is older than two weeks or was refused, the game starts online and saves a new one.",
+      "A game's page, Steam sign-in: a new choice, Offline every time, for that game alone."
+    ]
+  },
+  {
     "version": "1.4.0",
     "build": "982",
     "summary": "All Hands on Deck: Discord inside Porthole (experimental, off until you turn it on), a rebuilt in-game menu, much easier controls, interactive tutorials and a new engine.",

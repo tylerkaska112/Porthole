@@ -78,7 +78,7 @@ struct GameSettings: Codable, Equatable {
     var preciseMath: Bool?
     var dockDesktop: Bool?
     var lookSensitivity: Double?    // first-person look speed (screen points -> mouse counts)
-    var steamSignIn: Int?           // 0 = start from Steam's saved sign-in when it is ready, 1 = sign in online every time; nil follows Settings > Steam
+    var steamSignIn: Int?           // 0 = start from Steam's saved sign-in when it is ready, 1 = sign in online every time, 2 = start offline from the saved sign-in even with a network; nil follows Settings > Steam
     var autoLandscape: Int?         // 1 = turn to landscape when the game starts and hold it, 0 = any orientation; nil follows Settings > Display
     var resolution: String?         // DisplayResolution id ("1280x720", "screen720"); nil follows the app-wide setting
     var isEmpty: Bool { self == GameSettings() }

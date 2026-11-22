@@ -266,9 +266,9 @@ struct GamePage: View {
                     if g.launchDirect != true, DockOffline.enabled {
                         OfflineMarkRow(appID: dockID)
                         OverrideRow(id: "gp-signin", symbol: "person.badge.key.fill", title: "Steam sign-in",
-                                    info: "Saved sign-in: after the game has started online once, later starts use what Steam saved (no new sign-in or ownership check; Steam is offline inside the game, so multiplayer and Steam achievements do not work). Online every time: Steam signs in online at each start. Default follows Settings > Steam.",
-                                    value: s.steamSignIn, globalText: DockOffline.savedSignInWanted ? "Saved sign-in when ready" : "Online every time",
-                                    options: [(0, "Saved sign-in when ready"), (1, "Online every time")]) { v in setting(g) { $0.steamSignIn = v } }
+                                    info: "Saved sign-in: after the game has started online once, later starts use what Steam saved (no new sign-in or ownership check; Steam is offline inside the game, so multiplayer and Steam achievements do not work). Online every time: Steam signs in online at each start. Offline every time: Steam starts offline from its saved sign-in even with a connection (online only when Steam has nothing saved yet). Default follows Settings > Steam.",
+                                    value: s.steamSignIn, globalText: DockOffline.alwaysOfflineWanted ? "Offline every time" : (DockOffline.savedSignInWanted ? "Saved sign-in when ready" : "Online every time"),
+                                    options: [(0, "Saved sign-in when ready"), (1, "Online every time"), (2, "Offline every time")]) { v in setting(g) { $0.steamSignIn = v } }
                     }
                 }
                 OverrideRow(id: "gp-res", symbol: "display", title: "Resolution", info: "The size of the screen this game sees. Default follows Settings > Display. Applies the next time the game starts.",

@@ -652,8 +652,10 @@ enum DockOffline {
     // session in which Valve's client could log the account on offline (`verified`), for at most `savedMaxAge` after that start (the next start goes online and renews it), and
     // never again after Steam refused it once (`forceOnline`: the next start is online). The in-game Steam features that need a connection (multiplayer, achievements) do not
     // work in such a session: a game's own page can ask for an online sign-in every time.
-    static let savedSignInKey = "f4.dockSavedSignIn", forceOnlineKey = "madeiraDockForceOnline"
+    static let savedSignInKey = "f4.dockSavedSignIn", forceOnlineKey = "madeiraDockForceOnline", alwaysOfflineKey = "f4.dockAlwaysOffline"
     static var savedSignInWanted: Bool { UserDefaults.standard.object(forKey: savedSignInKey) as? Bool ?? true }
+    /// Settings > Steam > "Start Steam games offline": the offline sign-in is used whenever Steam can, with or without a network (off by default).
+    static var alwaysOfflineWanted: Bool { UserDefaults.standard.object(forKey: alwaysOfflineKey) as? Bool ?? false }
     /// True when the host was asked for an offline logon only because the app chose to (a network was there).
     private(set) static var sessionChoseSaved = false
     /// The game's own choice for the start about to be configured (set by the session before MadeiraDock.configure).
@@ -663,9 +665,9 @@ enum DockOffline {
         set { UserDefaults.standard.set(Array(newValue), forKey: forceOnlineKey) }
     }
 
-    /// Whether this start may use Steam's saved sign-in with a network; `override` is the game's own choice (0 saved sign-in, 1 online every time).
+    /// Whether this start may use Steam's saved sign-in with a network; `override` is the game's own choice (0 saved sign-in, 1 online every time, 2 offline every time).
     static func savedStart(appID: Int, override: Int?, now: Date = Date()) -> (use: Bool, why: String) {
-        SavedSignInRule.decide(enabled: enabled, override: override, settingOn: savedSignInWanted, forcedOnline: forcedOnline.contains(appID),
+        SavedSignInRule.decide(enabled: enabled, override: override, settingOn: savedSignInWanted, alwaysOffline: alwaysOfflineWanted, forcedOnline: forcedOnline.contains(appID),
                                accountSaved: accountSaved != nil, verified: verified(appID), now: now)
     }
 

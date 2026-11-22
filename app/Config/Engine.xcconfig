@@ -4,4 +4,4 @@ PORTHOLE_ENGINE_MADEIRA = f8ceca8
 PORTHOLE_ENGINE_REVISION = 0
 PORTHOLE_ENGINE_ID = f8ceca8-r0
 // The inputs this engine was recorded from; tools/engine.sh check compares against them.
-PORTHOLE_ENGINE_INPUTS = 9a9ec8c7e2a2bc6716f32b2c01bf70842ab5dc14e9d7770bcdab5eeec81160e6
+PORTHOLE_ENGINE_INPUTS = 3d8af54f4bc6e5043d57a161f227144a0a21d7a46a1c123e94e0820f141b98ac
